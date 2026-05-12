@@ -1,0 +1,86 @@
+\documentclass[nochapter]{tcd-msc-hpc}
+\thesis{MSc in High-performance Computing}
+\school{School of Mathematics}
+
+%Fill in this information with details about yourself and your project
+\title{Communication-Avoiding Krylov Subspace Methods for Option Pricing}
+\shorttitle{CAKSM for Option Pricing}
+\author{Kevin Knights}
+\studentID{25378095}
+\firstsupervisor{Kirk M. Soodhalter}
+%\secondsupervisor{}
+\submissiondate{Date your submitted your thesis}
+\signaturefile{sig.png}%file containing your signature for plagiarism pledge
+\signaturewidth{0.3}%as a percentage between 0 and 1 to adjust signature size
+\codelink{https://github.com/kevinknights29/caksm}
+
+\begin{document}
+\maketitle
+
+\newpage
+
+\makeplagiarismpage
+
+\newpage
+
+\section*{Acknowledgements}
+Write acknowledgements to your supervisor, classmates, friends, family, partner\ldots anyone who supported you during the MSc.
+
+\newpage
+\begin{abstract}
+\section*{Abstract}
+Write a summary of your project.
+
+\lipsum[2-4]
+\\
+\newline
+\textbf{Keywords:} keyword1, keyword2, keyword3,\ldots
+\end{abstract}
+\vspace{8pt}
+\tableofcontents
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}\label{sec:intro}
+Trefethen and Bau wrote a book \cite{trefethen-1997}.  This is an example of a citation.  You can also cite specific parts of a reference \cite[Chapter 12]{trefethen-1997}.
+Here is an example of an equation
+\begin{equation}
+    Ax
+    =
+    b
+    \label{eq:matrix-equation}
+\end{equation}
+You can also insert a figure, such as \Cref{fig:sample}.
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\linewidth]{numerical-integration.png}
+    \caption{An example of numerical integration.}
+    \label{fig:sample}
+\end{figure}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{Section example}\label{sec:Theory}
+\lipsum[2-4]
+
+Here is how you would reference a section, such as \Cref{sec:intro}.  You can cite an equation so it appears as a hyperlink equation number in parentheses (i.e., brackets) via \eqref{eq:matrix-equation}.
+\subsection{Subsection example}
+
+Here is another equation,
+\begin{equation}
+    By=c
+\end{equation}
+
+\newpage
+\addcontentsline{toc}{section}{Lists}
+%\listofalgorithms
+%\listoflistings
+%\listoffigures
+%\listoftables
+
+\newpage
+\addcontentsline{toc}{section}{References}
+\bibliographystyle{plainurl}
+\bibliography{Bibliography.bib}
+
+\end{document}
