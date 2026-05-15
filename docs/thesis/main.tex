@@ -14,6 +14,15 @@
 \signaturewidth{0.3}%as a percentage between 0 and 1 to adjust signature size
 \codelink{https://github.com/kevinknights29/caksm}
 
+% Imports
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{mathtools}
+\usepackage{bm}
+\usepackage{booktabs}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\mat}[1]{\mathbf{#1}}
+
 \begin{document}
 \maketitle
 
@@ -30,8 +39,6 @@ Write acknowledgements to your supervisor, classmates, friends, family, partner\
 \begin{abstract}
 \section*{Abstract}
 Write a summary of your project.
-
-\lipsum[2-4]
 \\
 \newline
 \textbf{Keywords:} keyword1, keyword2, keyword3,\ldots
@@ -41,28 +48,265 @@ Write a summary of your project.
 \newpage
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Introduction}\label{sec:intro}
-Trefethen and Bau wrote a book \cite{trefethen-1997}.  This is an example of a citation.  You can also cite specific parts of a reference \cite[Chapter 12]{trefethen-1997}.
-Here is an example of an equation
+After spatial discretization, the semi-discrete system takes the affine form
 \begin{equation}
-    Ax
-    =
-    b
-    \label{eq:matrix-equation}
+  \frac{d\vect{u}}{d\tau} = \mat{A}\vect{u} + \vect{b}, \qquad \vect{u}(\tau_0) = \vect{u}_0.
+  \label{eq:ode}
 \end{equation}
-You can also insert a figure, such as \Cref{fig:sample}.
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.5\linewidth]{numerical-integration.png}
-    \caption{An example of numerical integration.}
-    \label{fig:sample}
-\end{figure}
 
+\noindent
+Following Niesen \& Wright, the inhomogeneity is absorbed into an
+\emph{extended system}: define
+\[
+  \widetilde{\mat{A}} =
+  \begin{bmatrix} \mat{A} & \vect{b} \\ \vect{0}^T & 0 \end{bmatrix}
+  \in \R^{(N+1)\times(N+1)},
+  \qquad
+  \widetilde{\vect{v}} =
+  \begin{bmatrix} \vect{u}_k \\ 1 \end{bmatrix}
+  \in \R^{N+1},
+\]
+so that the exact solution at time $\tau_0 + h$ is encoded in the first $N$ components of $e^{h\widetilde{\mat{A}}}\widetilde{\vect{v}}$.
+
+The Krylov approximation proceeds via the Arnoldi iteration on $\widetilde{\mat{A}}$ with starting vector $\widetilde{\vect{v}}$, producing an orthonormal basis $\mat{V}_m$ and an upper Hessenberg matrix $\overline{\mat{H}}_m \in \R^{(m+1)\times m}$.  Dropping the last row gives $\mat{H}_m \in \R^{m\times m}$, and the approximation reads
+\begin{equation}
+  e^{h\widetilde{\mat{A}}}\widetilde{\vect{v}}
+  \;\approx\;
+  \beta\, \mat{V}_m\, e^{h \mat{H}_m} \vect{e}_1,
+  \qquad
+  \beta = \|\widetilde{\vect{v}}\|.
+  \label{eq:krylov_approx}
+\end{equation}
+
+Algorithm~\ref{alg:krylov_exp} provides the full adaptive procedure.
+
+\begin{algorithm}[htbp]
+\caption{Adaptive Krylov Exponential Integrator for
+$\vect{u}' = \mat{A}\vect{u} + \vect{b}$}
+\label{alg:krylov_exp}
+\KwIn{Matrix $\mat{A} \in \R^{N \times N}$, vector
+      $\vect{b} \in \R^N$, initial condition $\vect{u}_0$,
+      final time $T$, time-step $\Delta\tau$,
+      tolerance $\texttt{tol}$}
+\KwOut{Solution snapshots $\{\vect{u}_k\}_{k=0}^{K}$ at
+       $\tau_k = k\,\Delta\tau$}
+$\tau \gets 0$\;
+\For{$k = 0, 1, \ldots, K-1$}{
+  $h \gets \min(\Delta\tau,\; T - \tau)$\;
+  $m \gets 1$;\quad $\texttt{err} \gets \infty$\;
+  \BlankLine
+  \tcc{Form extended system}
+  $\widetilde{\mat{A}} \gets
+     \begin{bmatrix} \mat{A} & \vect{b} \\[2pt]
+     \vect{0}^T & 0 \end{bmatrix}
+     \in \R^{(N+1)\times(N+1)}$\;
+  $\widetilde{\vect{v}} \gets
+     \begin{bmatrix} \vect{u}_k \\ 1 \end{bmatrix}
+     \in \R^{N+1}$\;
+  \BlankLine
+  \tcc{Adaptive Krylov loop}
+  \While{$m \le N+1$}{
+    Run $m$ steps of Arnoldi on
+        $(\widetilde{\mat{A}},\,\widetilde{\vect{v}})$
+        $\;\Rightarrow\;$
+        $\mat{V}_{m+1},\; \overline{\mat{H}}_m$
+        \tcp{Algorithm~\ref{alg:arnoldi}}
+    Store $\bar{h}_{m+1,m} \gets [\overline{\mat{H}}_m]_{m+1,m}$
+        \tcp{sub-diagonal entry}
+    $\mat{H}_m \gets \overline{\mat{H}}_m(1{:}m,\;1{:}m)$
+        \tcp{drop last row}
+    $\beta \gets \|\widetilde{\vect{v}}\|$\;
+    $\vect{f} \gets e^{h\,\mat{H}_m}\,\vect{e}_1$
+        \tcp{small $m\times m$ matrix exponential}
+    $\vect{w} \gets \beta\;\mat{V}_m\;\vect{f}$
+        \tcp{Krylov approximation in full space}
+    \BlankLine
+    \tcc{A posteriori error estimate}
+    $\texttt{err} \gets |\bar{h}_{m+1,m}|\;\cdot\;|[\vect{f}]_m|$\;
+    \If{$\texttt{err} < \texttt{tol}$}{
+      \textbf{break}\;
+    }
+    $m \gets m + 1$\;
+  }
+  $\vect{u}_{k+1} \gets \vect{w}(1{:}N)$
+      \tcp{extract first $N$ components}
+  $\tau \gets \tau + h$\;
+}
+\end{algorithm}
+
+\begin{algorithm}[htbp]
+\caption{Arnoldi Iteration}
+\label{alg:arnoldi}
+\KwIn{Matrix $\widetilde{\mat{A}} \in \R^{(N+1) \times (N+1)}$,
+      vector $\widetilde{\vect{v}} \in \R^{N+1}$,
+      subspace dimension $m$,
+      breakdown tolerance $\texttt{tol}$}
+\KwOut{Orthonormal basis $\mat{V}_{m+1} \in \R^{(N+1)\times(m+1)}$,
+       upper Hessenberg $\overline{\mat{H}}_m \in \R^{(m+1)\times m}$}
+$\beta \gets \|\widetilde{\vect{v}}\|$;\quad
+$\vect{v}_1 \gets \widetilde{\vect{v}} / \beta$\;
+\For{$j = 1, \ldots, m$}{
+  $\vect{w} \gets \widetilde{\mat{A}}\,\vect{v}_j$\;
+  \For{$i = 1, \ldots, j$}{
+    \tcp{Modified Gram--Schmidt}
+    $h_{i,j} \gets \vect{v}_i^T \vect{w}$\;
+    $\vect{w} \gets \vect{w} - h_{i,j}\,\vect{v}_i$\;
+  }
+  $h_{j+1,j} \gets \|\vect{w}\|$\;
+  \If{$h_{j+1,j} < \texttt{tol}$}{
+    \textbf{break} \tcp{Invariant subspace found (happy breakdown)}
+  }
+  $\vect{v}_{j+1} \gets \vect{w} / h_{j+1,j}$\;
+}
+\end{algorithm}
+
+The dominant cost of the Krylov exponential integrator is the Arnoldi
+iteration (Algorithm~\ref{alg:arnoldi}).
+Each step~$j$ requires:
+\begin{enumerate}
+  \item One sparse matrix--vector product
+        $\vect{w} = \widetilde{\mat{A}}\vect{v}_j$, costing $\mathcal{O}(N)$.
+  \item Orthogonalization against all previous vectors $\vect{v}_1, \ldots, \vect{v}_j$,
+        costing $\mathcal{O}(jN)$.
+\end{enumerate}
+
+\noindent
+Crucially, step~$j$ cannot begin until $\vect{v}_j$ is available, which in turn requires step~$j-1$ to have completed. This creates a \emph{strictly sequential data dependency} that prevents straightforward parallelization of the Arnoldi iteration across the Krylov dimension~$m$.
+
+While the individual SpMV and inner products within each step can be parallelized (data-parallel), this ``inner parallelism'' scales poorly beyond a moderate number of cores due to communication overhead and synchronization barriers in the orthogonalization phase.
+
+We discuss three complementary strategies, each targeting a different aspect of the computation.
+
+\subsection{Strategy 1: Communication-Avoiding Krylov Methods (s-step / CA-Arnoldi)}
+
+The classical Arnoldi algorithm performs one SpMV and one global synchronization (for the inner products) per iteration.
+Communication-avoiding (CA) Krylov methods, also known as \emph{$s$-step} methods, break this bottleneck by computing $s$ basis vectors simultaneously before orthogonalizing them as a block.
+
+The key idea is to replace the sequential computation
+$\vect{v}, \mat{A}\vect{v}, \mat{A}^2\vect{v}, \ldots, \mat{A}^s\vect{v}$ (which is embarrassingly parallel in the SpMV sense) with a single communication phase.  The resulting ``basis'' is then orthogonalized using a tall-skinny QR (TSQR) factorization, which requires only $\mathcal{O}(\log p)$ messages on $p$ processors instead of the $\mathcal{O}(s)$ synchronizations of the classical method.
+
+\medskip
+\noindent\textbf{Advantages for our problem:}
+\begin{itemize}
+  \item $\mat{A}$ is sparse with $\mathcal{O}(1)$ nonzeros per row, so the
+        $s$ SpMVs are cheap and highly parallelizable.
+  \item The matrix is symmetric (or near-symmetric), so the Lanczos variant
+        can be used, reducing storage and orthogonalization cost.
+  \item The Krylov dimension $m$ is typically small ($m \approx 10$--$30$),
+        so even modest values of $s = 3$--$5$ can significantly reduce
+        communication.
+\end{itemize}
+
+\noindent\textbf{Challenges:}
+\begin{itemize}
+  \item The computed basis $\{\vect{v}, \mat{A}\vect{v}, \ldots, \mat{A}^s\vect{v}\}$
+        becomes increasingly ill-conditioned as $s$ grows (the vectors
+        converge toward the dominant eigenvector).  This limits $s$ in
+        practice.
+  \item Newton or Chebyshev polynomial bases can mitigate the
+        conditioning issue, at the cost of additional tuning parameters.
+\end{itemize}
+
+\subsection{Strategy 2: Rational Krylov Subspaces}
+
+Rather than using the polynomial Krylov subspace
+$\mathcal{K}_m(\mat{A}, \vect{v}) = \mathrm{span}\{\vect{v}, \mat{A}\vect{v}, \ldots, \mat{A}^{m-1}\vect{v}\}$,
+a \emph{rational Krylov subspace} uses shifted inverses:
+\begin{equation}
+  \mathcal{Q}_{m+1}(\mat{A}, \vect{v}, q_m)
+  = q_m(\mat{A})^{-1}\,\mathrm{span}\{\vect{v}, \mat{A}\vect{v}, \ldots, \mat{A}^m \vect{v}\},
+\end{equation}
+where $q_m(z) = \prod_{j=1}^m (z - \xi_j)$ and the $\xi_j$ are called \emph{poles}
+or \emph{shifts}.  When the poles are distinct and not eigenvalues of $\mat{A}$, an equivalent characterization is
+\[
+  \mathcal{Q}_{m+1}(\mat{A}, \vect{v})
+  = \mathrm{span}\bigl\{\vect{v},\;
+    (\mat{A} - \xi_1 I)^{-1}\vect{v},\;
+    (\mat{A} - \xi_2 I)^{-1}\vect{v},\;\ldots,\;
+    (\mat{A} - \xi_m I)^{-1}\vect{v}\bigr\}.
+\]
+
+\noindent
+The crucial observation is that the vectors
+$(\mat{A} - \xi_j I)^{-1}\vect{v}$ for different shifts $\xi_j$ can be computed \emph{independently and in parallel}.  This replaces the sequential data dependency of the polynomial Arnoldi iteration with $m$ independent linear solves.
+
+\medskip
+\noindent\textbf{Connection to exponential integration:}
+Rational Krylov subspaces are known to provide superior approximations to $e^{h\mat{A}}\vect{v}$ compared to polynomial Krylov subspaces of the same dimension, particularly when the eigenvalues of $\mat{A}$ span several orders of magnitude---precisely the situation arising from PDE discretizations.  For a matrix with eigenvalues in $(-\infty, 0]$, rational approximants to $e^z$ (such as Pad\'e approximants) converge geometrically, whereas polynomial approximants converge only algebraically.
+
+\medskip
+\noindent\textbf{Advantages for our problem:}
+\begin{itemize}
+  \item The shifted systems $(\mat{A} - \xi_j I)\vect{x} = \vect{v}$ share
+        the same sparsity pattern as $\mat{A}$.  If a direct solver is used,
+        the symbolic factorization can be reused across shifts; only the
+        numerical factorization must be repeated.
+  \item The matrix $\mat{A}$ is symmetric negative semi-definite, so
+        choosing real negative shifts $\xi_j < 0$ ensures that
+        $(\mat{A} - \xi_j I)$ is symmetric negative definite, hence
+        nonsingular. Iterative solvers (e.g.\ CG with a suitable
+        preconditioner) are applicable.
+  \item With $p$ processors and $m$ poles, the ideal parallel speedup is
+        $\min(p, m)$, limited only by the orthogonalization phase.
+\end{itemize}
+
+\noindent\textbf{Challenges:}
+\begin{itemize}
+  \item The naive parallel construction (computing all shifted solves from the
+        same starting vector $\vect{v}$) yields a basis whose condition number
+        can grow \emph{exponentially} with $m$, leading to loss of
+        orthogonality in finite arithmetic (Berljafa \& G\"uttel, 2017).
+  \item The \emph{near-optimal continuation pairs} framework of
+        Berljafa \& G\"uttel addresses this by choosing continuation
+        vectors that keep the pre-orthogonalized basis well-conditioned,
+        at the cost of a cheap approximate solve per iteration.
+  \item The choice and number of poles $\xi_j$ requires problem-specific
+        tuning. For the matrix exponential, asymptotically optimal poles
+        on the negative real axis are known (related to best rational
+        approximations to $e^z$ on $(-\infty, 0]$).
+\end{itemize}
+
+\subsection{Strategy 3: Combined Approach}
+
+The two strategies above are not mutually exclusive. One could apply
+$s$-step techniques \emph{within} a rational Krylov framework:
+
+\begin{enumerate}
+  \item Partition the $m$ poles into groups of size $p$ (the number of
+        processors).
+  \item Within each group, solve the $p$ shifted systems in parallel
+        (rational Krylov parallelism).
+  \item Use $s$-step techniques to reduce communication in the
+        orthogonalization phase across groups.
+\end{enumerate}
+
+\noindent
+Table~\ref{tab:comparison} summarizes the three strategies.
+
+\begin{table}[htbp]
+\centering
+\caption{Comparison of parallelization strategies for Krylov exponential
+integration.}
+\label{tab:comparison}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Strategy} & \textbf{Parallelism} & \textbf{Communication} & \textbf{Stability} \\
+\midrule
+Classical Arnoldi     & Inner (SpMV, dots) & $\mathcal{O}(m)$ syncs
+                      & Stable \\
+$s$-step / CA-Arnoldi & Block SpMV         & $\mathcal{O}(m/s)$ syncs
+                      & $s$-dependent \\
+Rational Krylov       & Across shifts      & $\mathcal{O}(m/p)$ syncs
+                      & Requires care \\
+Combined              & Both               & Minimal
+                      & Problem-specific \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \newpage
 \section{Section example}\label{sec:Theory}
-\lipsum[2-4]
-
 Here is how you would reference a section, such as \Cref{sec:intro}.  You can cite an equation so it appears as a hyperlink equation number in parentheses (i.e., brackets) via \eqref{eq:matrix-equation}.
 \subsection{Subsection example}
 

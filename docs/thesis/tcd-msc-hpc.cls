@@ -86,7 +86,7 @@
     \cfoot[page~\thepage~of~\pageref*{LastPage}]{page~\thepage~of~\pageref*{LastPage}}
 \else
     \chead[]{\ifx\hpcmsc@shorttitle\empty{\@title}\else{\hpcmsc@shorttitle}\fi}
-    \lfoot[]{\@title}
+    \lfoot[]{}
     \cfoot[page~\thepage~of~\pageref*{LastPage}]{page~\thepage~of~\pageref*{LastPage}}
 \fi
 \rfoot[]{}
@@ -94,6 +94,7 @@
 % Configure the appearance of the title page.
 \renewcommand{\maketitle}{%
         \begin{titlepage}
+            \thispagestyle{empty}
             \begin{figure}
             \centering
                 \includegraphics[width=.8\textwidth]{Trinity_Main_Logo.jpg}
