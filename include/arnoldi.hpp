@@ -1,13 +1,18 @@
-//
-// Implementation of Arnoldi's Algorithm
-// Created by Kevin Knights on 2/26/26.
-//
+/**
+ * @file arnoldi.hpp
+ * @brief Implementation of Arnoldi's Algorithm
+ * @author Kevin Knights
+ * @date 2026-02-26
+ * @version 1.0
+ */
 #pragma once
 
+#include <limits>
 #include <print>
-#include "../eigen/Eigen/Dense"
 
+#include <Eigen/Dense>
 
+// Type aliases
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
@@ -27,6 +32,39 @@ using Eigen::VectorXd;
 std::tuple<MatrixXd, MatrixXd> arnoldi(
     const MatrixXd& A,
     const VectorXd& v0,
-    long m,
-    double tolerance = std::numeric_limits<double>::epsilon()
-    );
+    const long m,
+    const double tolerance = std::numeric_limits<double>::epsilon()
+    ) {
+    // Checks
+    if (A.rows() != A.cols())
+        throw std::invalid_argument("Matrix A must be square.");
+    if (v0.size() != A.rows())
+        throw std::invalid_argument("v0 size must match A dimensions.");
+    if (m <= 0 || m > A.rows())
+        throw std::invalid_argument("m must satisfy 0 < m <= n.");
+
+    // Algorithm
+    const long n = A.rows();
+    MatrixXd V(n, m); // n x m matrix whose column-vectors form a basis of \mathcal{K}
+    MatrixXd H = MatrixXd::Zero(m + 1, m); // (m + 1) x m Hessenberg matrix
+
+    V.col(0) = v0.normalized();
+
+    for (long j = 0; j < m; ++j) {
+        VectorXd w_j = A * V.col(j); // column vector of basis \mathcal{L}
+        for (long i = 0; i <= j; ++i) {
+            H(i, j) = w_j.dot(V.col(i));
+            w_j -= H(i, j) * V.col(i);
+        }
+        H(j + 1, j) =  w_j.norm();
+        if (H(j + 1, j) <= tolerance) {
+            std::println("[INFO] Arnoldi breakdown at j={}: h_{{j+1,j}} approx 0.0", j);
+            break;
+        }
+
+        if (j + 1 < m) {
+            V.col(j + 1) = w_j / H(j + 1, j);
+        }
+    }
+    return {V, H};
+}

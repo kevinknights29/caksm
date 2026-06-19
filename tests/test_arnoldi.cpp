@@ -9,15 +9,14 @@
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
+// Helpers
 // Checks that all columns of V are mutually orthonormal
 static bool isOrthonormal(const MatrixXd& V, double tol = 1e-9) {
     const MatrixXd gram = V.transpose() * V;
     return (gram - MatrixXd::Identity(V.cols(), V.cols())).norm() < tol;
 }
 
-// ── Input Validation ─────────────────────────────────────────────────────────
+// Input Validation
 
 TEST_CASE("arnoldi throws on non-square matrix", "[arnoldi][validation]") {
     MatrixXd A(3, 4);
@@ -39,7 +38,7 @@ TEST_CASE("arnoldi throws when m is out of range", "[arnoldi][validation]") {
     REQUIRE_THROWS_AS(arnoldi(A, v0, -1), std::invalid_argument);
 }
 
-// ── Output Shape ─────────────────────────────────────────────────────────────
+// Output Shape
 
 TEST_CASE("arnoldi returns correctly shaped matrices", "[arnoldi][shape]") {
     constexpr long n = 8, m = 4;
@@ -54,7 +53,7 @@ TEST_CASE("arnoldi returns correctly shaped matrices", "[arnoldi][shape]") {
     REQUIRE(H.cols() == m);
 }
 
-// ── Mathematical Properties ───────────────────────────────────────────────────
+// Mathematical Properties
 
 TEST_CASE("V columns are orthonormal", "[arnoldi][orthonormality]") {
     // Run for several random matrices to increase confidence
@@ -145,7 +144,7 @@ TEST_CASE("First column of V matches normalized v0", "[arnoldi][initialization]"
     REQUIRE_THAT((V.col(0) - v0.normalized()).norm(), WithinAbs(0.0, 1e-12));
 }
 
-// ── Edge Cases ───────────────────────────────────────────────────────────────
+// Edge Cases
 
 TEST_CASE("Works with m = 1", "[arnoldi][edge]") {
     constexpr long n = 5;
