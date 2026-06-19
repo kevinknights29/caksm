@@ -1,142 +1,542 @@
-//
-// Created by Kevin Knights on 2/27/26.
-//
+/**
+ * @file main.cpp
+ * @brief European option pricer (basket call and rainbow min-call) using five
+ *        PDE-based numerical methods on a 3-asset log-price grid.
+ *
+ *        Methods:
+ *          CN: Crank-Nicolson (\theta = 0.5)
+ *          ADI_DR: Alternating Direction Implicit, Douglas-Rachford (\theta = 0.5)
+ *          ADI_HV: Alternating Direction Implicit, Hundsdorfer-Verwer (\theta = 0.5)
+ *          ME: Matrix Exponential (Al-Mohy and Higham scaling-and-squaring)
+ *          KSM_EI: Krylov Subspace Method / Exponential integrator
+ *
+ *        Usage:
+ *          ./pricer --benchmark
+ *          ./pricer --benchmark --option rainbow
+ *          ./pricer --benchmark --n 20 --steps 100
+ *
+ * @author Kevin Knights
+ * @version 1.0
+ * @date 2026-06-16
+ */
+
+#include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
-#include <limits>
 #include <print>
-#include <ranges>
-#include "../eigen/Eigen/Dense"
-#include "../eigen/unsupported/Eigen/MatrixFunctions"
-#include "../include/arnoldi.hpp"
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 
-using Eigen::MatrixXd;
-using Eigen::VectorXd;
+#include <Eigen/Sparse>
+#include <Eigen/SparseLU>
+#include <unsupported/Eigen/MatrixFunctions>
 
+#include "me_theta.hpp"
+#include "pde_operators.hpp"
 
-template<>
-struct std::formatter<MatrixXd> : std::formatter<std::string> {
-    auto format(const MatrixXd& m, std::format_context& ctx) const {
-        std::ostringstream oss;
-        oss << m;
-        return std::formatter<std::string>::format(oss.str(), ctx);
-    }
+// Types
+enum class EuropeanOptionType {
+    CALL_BASKET,
+    CALL_MIN_RAINBOW,
 };
 
+struct Config {
+    int n = 15; ///< grid points per spatial dimension
+    int temporal_steps = 100;
+    double strike_price = 100.0;
+    double risk_free_rate = 0.04;
+    double t_final = 1.0;
+    std::array<double, 3> sigma = {0.30, 0.35, 0.40};
+    std::array<double, 3> rho_off = {0.50, 0.50, 0.50};  // rho01, rho02, rho12
+    std::array<double, 3> weight = {1.0/3, 1.0/3, 1.0/3};
+    std::array<double, 3> initial_prices = {100.0, 100.0, 100.0};
+    double alpha = 2.85;
+    EuropeanOptionType option_type = EuropeanOptionType::CALL_BASKET;
+    bool benchmark = false;
+};
 
-int main()
+// Solver: Crank-Nicolson
+/**
+ * @brief Price a European option via the Crank-Nicolson scheme (\theta = 0.5).
+ *
+ * Solves  (I - h/2 A) u_{n+1} = (I + h/2 A) u_n + h/2 (b(\tau_n) + b(\tau_{n+1}))
+ * backward in pseudo-time \tau from 0 to T.
+ *
+ * @param sys  Assembled PDE system (grid, A, B, u_0).
+ * @param cfg  Simulation parameters.
+ * @return     Estimated option price at the initial spot.
+ */
+[[nodiscard]] double solve_cn(const PDESystem& sys, const Config& cfg)
 {
-    /// 1-D Heat Equation
-    /// Problem Parameters
-    constexpr long l {1};
-    constexpr double alpha {0.1};
-    constexpr double t_init {0.0};
-    constexpr double t_final {1.0};
-    // Initial Conditions
-    // Gaussian pulse
-    auto gaussian_pulse = [](const double x) {
-        constexpr double center = 0.5;  // Center in [0,1] domain!
-        constexpr double width = 0.1;
-        return std::exp(-std::pow(x - center, 2) / (2 * width * width));
+    const int N = sys.N;
+    const double dt = cfg.t_final / cfg.temporal_steps;
+
+    SpMat IN(N, N);
+    IN.setIdentity();
+    const SpMat LHS_mat = IN - (dt / 2.0) * sys.A;
+    const SpMat RHS_mat = IN + (dt / 2.0) * sys.A;
+
+    Eigen::SparseLU<SpMat> lu;
+    lu.compute(LHS_mat);
+    if (lu.info() != Eigen::Success)
+        throw std::runtime_error("CN: sparse LU factorisation failed");
+
+    VecXd u = sys.u0;
+    double t_curr = 0.0;
+
+    for (int step = 0; step < cfg.temporal_steps; ++step) {
+        const double h = std::min(dt, cfg.t_final - t_curr);
+        const double tau_curr = t_curr;
+        const double tau_next = tau_curr + h;
+
+        VecXd rhs = RHS_mat * u;
+
+        if (sys.has_forcing) {
+            const VecXd b_curr = sys.B * make_s_vec(tau_curr);
+            const VecXd b_next = sys.B * make_s_vec(tau_next);
+            rhs += (h / 2.0) * (b_curr + b_next);
+        }
+
+        u = lu.solve(rhs);
+        t_curr += h;
+    }
+    return extract_price(u, sys.grid, cfg.initial_prices);
+}
+
+// Solver: ADI Douglas-Rachford
+/**
+ * @brief Price a European option via the Douglas-Rachford ADI scheme (\theta = 0.5).
+ *
+ * Stage 1 (repeated for each direction l = 1, 2, 3):
+ *   Y_0 = u_n + h (A u_n + b(\tau_n))
+ *   (I - \theta h A_l) Y_l = Y_{l-1} - \theta h A_l u_n + \theta h (b_l(\tau_{n+1}) - b_l(\tau_n))
+ *   u_{n+1} = Y_3
+ *
+ * @param sys  Assembled PDE system.
+ * @param cfg  Simulation parameters.
+ * @return     Estimated option price.
+ */
+[[nodiscard]] double solve_adi_dr(const PDESystem& sys, const Config& cfg)
+{
+    const int N = sys.N;
+    const double dt = cfg.t_final / cfg.temporal_steps;
+    constexpr double theta = 0.5;
+
+    SpMat IN(N, N);
+    IN.setIdentity();
+
+    // Precompute per-direction LU factors
+    Eigen::SparseLU<SpMat> lu[3];
+    for (int d = 0; d < 3; ++d) {
+        lu[d].compute(IN - theta * dt * sys.A_adi[d + 1]);
+        if (lu[d].info() != Eigen::Success)
+            throw std::runtime_error("ADI-DR: sparse LU factorisation failed");
+    }
+
+    // Reconstruct full operator for the explicit predictor stage
+    SpMat A_full = sys.A_adi[0] + sys.A_adi[1] + sys.A_adi[2] + sys.A_adi[3];
+
+    VecXd u = sys.u0;
+    double t_curr = 0.0;
+
+    for (int step = 0; step < cfg.temporal_steps; ++step) {
+        const double h        = std::min(dt, cfg.t_final - t_curr);
+        const double tau_curr = t_curr;
+        const double tau_next = tau_curr + h;
+
+        const VecXd s_curr = make_s_vec(tau_curr);
+        const VecXd s_next = make_s_vec(tau_next);
+
+        // Y_0 = u_n + h F(\tau_n, u_n)
+        VecXd Y = u + h * (A_full * u + (sys.has_forcing ? VecXd(sys.B * s_curr)
+                                                          : VecXd::Zero(N)));
+
+        // Sequential direction solves
+        for (int l = 0; l < 3; ++l) {
+            VecXd rhs_l = Y - theta * h * (sys.A_adi[l + 1] * u);
+            if (sys.has_forcing) {
+                rhs_l += theta * h * (sys.B_adi[l] * s_next
+                                     - sys.B_adi[l] * s_curr);
+            }
+            Y = lu[l].solve(rhs_l);
+        }
+
+        u = Y;
+        t_curr += h;
+    }
+    return extract_price(u, sys.grid, cfg.initial_prices);
+}
+
+// Solver: ADI Hundsdorfer-Verwer
+/**
+ * @brief Price a European option via the Hundsdorfer-Verwer ADI scheme
+ *        (\theta = 0.5, \sigma_HV = 0.5).
+ *
+ * Two-stage correction on top of the Douglas-Rachford predictor:
+ *   Stage 2: \tilde{Y}_0 = Y_0^{DR} + \sigma_HV h (F(\tau_{n+1}, u^{DR}) − F(\tau_n, u_n))
+ *            (I − \theta h A_l) \tilde{Y}_l = tilde{Y}_{l−1} − theta h A_l u^{DR}
+ *
+ * @param sys  Assembled PDE system.
+ * @param cfg  Simulation parameters.
+ * @return     Estimated option price.
+ */
+[[nodiscard]] double solve_adi_hv(const PDESystem& sys, const Config& cfg)
+{
+    const int N = sys.N;
+    const double dt = cfg.t_final / cfg.temporal_steps;
+    constexpr double theta  = 0.5;
+    constexpr double sig_hv = 0.5;
+
+    SpMat IN(N, N);
+    IN.setIdentity();
+
+    Eigen::SparseLU<SpMat> lu[3];
+    for (int d = 0; d < 3; ++d) {
+        lu[d].compute(IN - theta * dt * sys.A_adi[d + 1]);
+        if (lu[d].info() != Eigen::Success)
+            throw std::runtime_error("ADI-HV: sparse LU factorisation failed");
+    }
+
+    SpMat A_full = sys.A_adi[0] + sys.A_adi[1] + sys.A_adi[2] + sys.A_adi[3];
+
+    VecXd u = sys.u0;
+    double t_curr = 0.0;
+
+    for (int step = 0; step < cfg.temporal_steps; ++step) {
+        const double h = std::min(dt, cfg.t_final - t_curr);
+        const double tau_curr = t_curr;
+        const double tau_next = tau_curr + h;
+
+        const VecXd s_curr = make_s_vec(tau_curr);
+        const VecXd s_next = make_s_vec(tau_next);
+
+        // Stage 1: Douglas-Rachford predictor
+        VecXd F_curr = A_full * u + (sys.has_forcing ? VecXd(sys.B * s_curr)
+                                                      : VecXd::Zero(N));
+        VecXd Y = u + h * F_curr;  // Y_0
+
+        for (int l = 0; l < 3; ++l) {
+            VecXd rhs_l = Y - theta * h * (sys.A_adi[l + 1] * u);
+            if (sys.has_forcing)
+                rhs_l += theta * h * (sys.B_adi[l] * s_next - sys.B_adi[l] * s_curr);
+            Y = lu[l].solve(rhs_l);
+        }
+        const VecXd u_stage1 = Y;  // u^{DR}
+
+        // Stage 2: HV correction
+        VecXd F_next = A_full * u_stage1 + (sys.has_forcing ? VecXd(sys.B * s_next)
+                                                             : VecXd::Zero(N));
+        // \tilde{Y}_0 = Y_0^{DR} + \sigma_HV h (F_next - F_curr)
+        // Y_0^{DR} = u + h*F_curr
+        VecXd Yt = (u + h * F_curr) + sig_hv * h * (F_next - F_curr);
+
+        for (int l = 0; l < 3; ++l) {
+            const VecXd rhs_l = Yt - theta * h * (sys.A_adi[l + 1] * u_stage1);
+            Yt = lu[l].solve(rhs_l);
+        }
+
+        u = Yt;
+        t_curr += h;
+    }
+    return extract_price(u, sys.grid, cfg.initial_prices);
+}
+
+// Solver: Matrix Exponential
+/**
+ * @brief Price a European option via the matrix exponential method
+ *        (Al-Mohy and Higham scaling-and-squaring with Taylor polynomial).
+ *
+ * Computes u(T) = exp(T \tilde{A}) v_0 using s internal substeps of size T/s,
+ * each approximated by the degree-m* Taylor polynomial with early termination.
+ *
+ * For basket options the augmented system \tilde{A} = [[A, B]; [0, K]] encodes the
+ * time-varying boundary forcing autonomously.  For rainbow options A is used
+ * directly (no forcing, no augmentation).
+ *
+ * @param sys  Assembled PDE system.
+ * @param cfg  Simulation parameters.
+ * @return     Estimated option price.
+ */
+[[nodiscard]] double solve_me(const PDESystem& sys, const Config& cfg)
+{
+    const int N = sys.N;
+    constexpr int p = 3;
+
+    SpMat A_op;
+    VecXd v;
+
+    if (sys.has_forcing) {
+        A_op = build_A_tilde(sys.A, sys.B, N);
+        v.resize(N + p);
+        v.head(N) = sys.u0;
+        v.tail(p) = make_s_vec(0.0);
+    } else {
+        A_op = sys.A;
+        v    = sys.u0;
+    }
+
+    const auto [m_star, s] = me_select_m_s(A_op, cfg.t_final);
+    const double scale = cfg.t_final / s;
+
+    for (int sub = 0; sub < s; ++sub) {
+        VecXd prev = v;
+        VecXd rsum = v;
+
+        for (int k = 1; k <= m_star; ++k) {
+            const VecXd curr = (scale / k) * (A_op * prev);
+            rsum += curr;
+
+            // Early exit when the last two terms are negligible relative to the sum
+            const double c_prev = prev.lpNorm<Eigen::Infinity>();
+            const double c_curr = curr.lpNorm<Eigen::Infinity>();
+            const double c_rsum = rsum.lpNorm<Eigen::Infinity>();
+            if (c_rsum > 0.0 && (c_prev + c_curr) < 1e-12 * c_rsum)
+                break;
+
+            prev = curr;
+        }
+        v = rsum;
+    }
+
+    const VecXd u = sys.has_forcing ? VecXd(v.head(N)) : v;
+    return extract_price(u, sys.grid, cfg.initial_prices);
+}
+
+// Solver: Krylov Subspace Method / Exponential Integrator
+/**
+ * @brief Price a European option via the Krylov subspace exponential integrator.
+ *
+ * At each time step, approximates exp(h \tilde{A}) \tilde{v} via an incrementally-built
+ * Arnoldi decomposition:
+ *   \tilde{A} \approx V_m H_m V_m^T, exp(h \tilde{A}) \tilde{v} \approx \beta V_m exp(h H_m) e_1
+ *
+ * The Krylov dimension m is grown until the error estimate
+ *   \epsilon = \beta |h_{m+1,m}| |f_m| < tolerance
+ * is satisfied (Niessen and Wright criterion).
+ *
+ * @param sys  Assembled PDE system.
+ * @param cfg  Simulation parameters.
+ * @return     Estimated option price.
+ */
+[[nodiscard]] double solve_ksm_ei(const PDESystem& sys, const Config& cfg)
+{
+    const int N = sys.N;
+    const int p = 3;
+    const double dt = cfg.t_final / cfg.temporal_steps;
+    constexpr double tol   = 1e-8;
+    constexpr int m_max = 50;
+    constexpr double breakdown_tol = 1e-14;
+
+    const bool is_basket = sys.has_forcing;
+    const int aug_N = is_basket ? N + p : N;
+
+    const SpMat A_op = is_basket ? build_A_tilde(sys.A, sys.B, N) : sys.A;
+
+    // Arnoldi workspace (preallocated; columns filled incrementally)
+    MatXd V(aug_N, m_max + 1);
+    MatXd H_full = MatXd::Zero(m_max + 1, m_max);
+
+    VecXd u = sys.u0;
+    double t_curr = 0.0;
+
+    for (int step = 0; step < cfg.temporal_steps; ++step) {
+        const double h    = std::min(dt, cfg.t_final - t_curr);
+        const double tau0 = t_curr;
+
+        // Augmented start vector \tilde{v} = [u_k; s(\tau_0)]  (or just u_k for rainbow)
+        VecXd v_tilde(aug_N);
+        if (is_basket) {
+            v_tilde.head(N) = u;
+            v_tilde.tail(p) = make_s_vec(tau0);
+        } else {
+            v_tilde = u;
+        }
+
+        const double beta = v_tilde.norm();
+        if (beta < breakdown_tol) {
+            t_curr += h;
+            continue;
+        }
+
+        V.col(0) = v_tilde / beta;
+        H_full.setZero();
+
+        bool converged = false;
+
+        for (int j = 0; j < m_max; ++j) {
+            // Arnoldi step: w = A V[:,j], then orthogonalize
+            VecXd w = A_op * V.col(j);
+            for (int i = 0; i <= j; ++i) {
+                H_full(i, j) = w.dot(V.col(i));
+                w -= H_full(i, j) * V.col(i);
+            }
+            H_full(j + 1, j) = w.norm();
+
+            if (H_full(j + 1, j) < breakdown_tol) {
+                // Invariant subspace reached (exact in this Krylov space)
+                const MatXd H_m = H_full.topLeftCorner(j + 1, j + 1);
+                const VecXd f = (h * H_m).exp().col(0);
+                const VecXd w_res = beta * V.leftCols(j + 1) * f;
+                u = is_basket ? VecXd(w_res.head(N)) : w_res;
+                converged = true;
+                break;
+            }
+
+            // Convergence check before extending basis
+            const MatXd H_m = H_full.topLeftCorner(j + 1, j + 1);
+            const VecXd f = (h * H_m).exp().col(0);
+            const double err = beta * std::abs(H_full(j + 1, j)) * std::abs(f[j]);
+
+            if (err < tol) {
+                const VecXd w_res = beta * V.leftCols(j + 1) * f;
+                u = is_basket ? VecXd(w_res.head(N)) : w_res;
+                converged = true;
+                break;
+            }
+
+            if (j + 1 < m_max)
+                V.col(j + 1) = w / H_full(j + 1, j);
+        }
+
+        if (!converged) {
+            // Use the full m_max-dimensional Krylov approximation
+            const MatXd H_m = H_full.topLeftCorner(m_max, m_max);
+            const VecXd f = (h * H_m).exp().col(0);
+            const VecXd w_res = beta * V.leftCols(m_max) * f;
+            u = is_basket ? VecXd(w_res.head(N)) : w_res;
+        }
+
+        t_curr += h;
+    }
+    return extract_price(u, sys.grid, cfg.initial_prices);
+}
+
+// CLI
+/**
+ * @brief Parse command-line arguments into a Config struct.
+ *
+ * Supported flags:
+ *   --benchmark             Run all methods for both option types.
+ *   --option  basket|rainbow  Select option type (default: basket).
+ *   --n       N             Grid points per dimension (default: 15).
+ *   --steps   M             Temporal steps (default: 100).
+ *   --help                  Print usage and exit.
+ *
+ * @param args  Full argv span including program name at index 0.
+ * @return      Populated Config struct.
+ * @throws std::invalid_argument on unknown flags or missing values.
+ */
+Config parse_args(std::span<const char* const> args)
+{
+    Config cfg;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const std::string_view arg = args[i];
+        auto next = [&]() -> std::string_view {
+            if (++i >= args.size())
+                throw std::invalid_argument("Missing value for " + std::string(arg));
+            return args[i];
+        };
+        if      (arg == "--benchmark") cfg.benchmark = true;
+        else if (arg == "--n")         cfg.n              = std::stoi(std::string(next()));
+        else if (arg == "--steps")     cfg.temporal_steps = std::stoi(std::string(next()));
+        else if (arg == "--option") {
+            const auto opt = next();
+            if      (opt == "basket")  cfg.option_type = EuropeanOptionType::CALL_BASKET;
+            else if (opt == "rainbow") cfg.option_type = EuropeanOptionType::CALL_MIN_RAINBOW;
+            else throw std::invalid_argument("Unknown option type: " + std::string(opt));
+        }
+        else if (arg == "--help") {
+            std::println("Usage: ./pricer --benchmark [--option basket|rainbow]");
+            std::println("               [--n N] [--steps M]");
+            std::exit(0);
+        }
+        else throw std::invalid_argument("Unknown flag: " + std::string(arg));
+    }
+    return cfg;
+}
+
+// Benchmark runner
+/**
+ * @brief Run all five methods for a given option type and print a results table.
+ *
+ * Builds the PDE system once and shares it across all solvers.  Each method is
+ * timed and its price printed next to the known reference value.
+ *
+ * @param cfg         Simulation configuration (n, steps, option type, etc.).
+ * @param option_type Option type to price.
+ */
+void run_benchmark(const Config& cfg, EuropeanOptionType option_type)
+{
+    const bool rainbow = (option_type == EuropeanOptionType::CALL_MIN_RAINBOW);
+
+    const std::string_view opt_label = rainbow ? "Rainbow min-call" : "Basket call";
+    const double reference           = rainbow ? 4.4450 : 13.2449;
+
+    std::println("\n {}", opt_label);
+    std::println("  Parameters: n={}, steps={}, K={:.0f}, r={:.2f}, T={:.1f}",
+                 cfg.n, cfg.temporal_steps,
+                 cfg.strike_price, cfg.risk_free_rate, cfg.t_final);
+    std::println("  sigma=[{:.2f},{:.2f},{:.2f}]  rho_off=[{:.1f},{:.1f},{:.1f}]",
+                 cfg.sigma[0], cfg.sigma[1], cfg.sigma[2],
+                 cfg.rho_off[0], cfg.rho_off[1], cfg.rho_off[2]);
+    std::println("  Reference price: {:.4f}\n", reference);
+    std::println("  {:<12} {:>10}  {:>8}  {:>10}", "Method", "Price", "Error", "Time(ms)");
+    std::println("  {}", std::string(46, '-'));
+
+    // Build PDE system (shared across all solvers for this option type)
+    std::println("  [Building PDE system...]");
+    const PDESystem sys = build_pde_system(
+        cfg.n, cfg.strike_price, cfg.risk_free_rate, cfg.t_final,
+        cfg.sigma, cfg.rho_off, cfg.weight, cfg.initial_prices,
+        cfg.alpha, rainbow);
+
+    struct Run {
+        std::string_view name;
+        double (*fn)(const PDESystem&, const Config&);
     };
-    // Boundary Conditions
-    // Insulated bar at both ends
-    constexpr double left_boundary {0.0};
-    constexpr double right_boundary {0.0};
 
-    /// Spatial Parameters
-    constexpr long spatial_steps {10};
-    constexpr double delta_x {l / static_cast<double>(spatial_steps - 1)};
-    const VectorXd x {VectorXd::LinSpaced(spatial_steps, double{0}, double{l})};
+    const Run runs[] = {
+        {"CN",      solve_cn},
+        {"ADI-DR",  solve_adi_dr},
+        {"ADI-HV",  solve_adi_hv},
+        {"ME",      solve_me},
+        {"KSM-EI",  solve_ksm_ei},
+    };
 
-    /// Temporal Parameters
-    constexpr long temporal_steps {10};
-    constexpr double delta_t {t_final / static_cast<double>(temporal_steps)};
-    const VectorXd t {VectorXd::LinSpaced(temporal_steps, t_init, t_final)};
-
-    /// Stability Check
-    constexpr double r {alpha * delta_t / (delta_x * delta_x)};
-    std::println("Stability parameter r = alpha delta_t / (delta_x)^2 = {:.6f}", r);
-
-    /// Constructing Matrix A
-    // Number of interior points (excluding boundaries)
-    constexpr long n_interior {spatial_steps - 2};
-    MatrixXd A {MatrixXd::Zero(n_interior, n_interior)};
-    // Triangular matrix produced from centered difference discretization
-    for (auto i {0}; i < A.rows(); i++) {
-        for (auto j {0}; j < A.cols(); j++) {
-            if (i == j) {
-                A(i, j) = -2.0;
-            }
-            if (j - i == 1) {
-                A(i, j) = 1.0;
-            }
-            if (i - j == 1) {
-                A(i, j) = 1.0;
-            }
-        }
+    for (const auto& run : runs) {
+        const auto t0    = std::chrono::steady_clock::now();
+        const double price = run.fn(sys, cfg);
+        const auto t1    = std::chrono::steady_clock::now();
+        const double ms  = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        const double err = std::abs(price - reference);
+        std::println("  {:<12} {:>10.4f}  {:>8.4f}  {:>10.1f}", run.name, price, err, ms);
     }
-    A = alpha / (delta_x * delta_x) * A;
+    std::println("");
+}
 
-    /// Constructing b vector
-    VectorXd b {VectorXd::Zero(n_interior)};
-    b(0) = left_boundary;
-    b(n_interior - 1) = right_boundary;
+int main(const int argc, char* argv[])
+{
+    try {
+        const Config cfg = parse_args(
+            std::span<const char* const>(argv, static_cast<std::size_t>(argc)));
 
-    /// Constructing Matrix U
-    MatrixXd U {MatrixXd::Zero(temporal_steps + 1, n_interior)};
-    U.row(0) = x.segment(1, n_interior).unaryExpr(gaussian_pulse).transpose();
-
-    // Krylov Exponential Integrator
-    double t_current = t_init;
-    for (long time_step = 0; time_step < temporal_steps; ++time_step) {
-        constexpr double tolerance = 1e-6;
-        std::println("=== Time step {} (t = {:.4f}) ===", time_step, t_current);
-        // Step 1: Define time step, m and err
-        const double h = std::min(delta_t, t_final - t_current);
-        long m {1};
-        double err {std::numeric_limits<double>::max()};
-
-        // Step 2: Form the extended system (to handle b):
-        MatrixXd A_tilde = MatrixXd::Zero(n_interior + 1, n_interior + 1);
-        A_tilde.block(0, 0, n_interior, n_interior) = A;
-        A_tilde.block(0, n_interior, n_interior, 1) = b;
-        VectorXd v_tilde {VectorXd::Ones(n_interior + 1)};
-        v_tilde.segment(0, n_interior) = U.row(time_step).transpose();
-
-        // Adaptive loop
-        VectorXd w {VectorXd::Zero(m)};
-        while (m <= n_interior + 1) {
-            // Step 3: Run Arnoldi iteration
-            auto [V, H] = arnoldi(A_tilde, v_tilde, m, tolerance);
-            const double subdiagonal_entry_H {H(H.rows() - 1, H.cols() - 1)}; // storing for error estimate
-            H.conservativeResize(H.rows() - 1, H.cols()); // drops last row of \overline{H}_m
-
-            // Step 4: Compute approximation
-            const double beta = v_tilde.norm();
-            VectorXd mat_exp_vector {(h * H).exp().col(0)};
-            w = beta * V * mat_exp_vector;
-
-            // Step 5: Error estimation
-            const double scalar {VectorXd::Unit(m, m - 1).transpose() * mat_exp_vector};
-            err = std::abs(subdiagonal_entry_H) * std::abs(scalar);
-            if (err < tolerance) {
-                std::println("[INFO] Error = {:.4e} ({:.4e}) with subspace K_m = {}!",
-                err, tolerance, m);
-            };
-            m += 1; // Increase Krylov dimension
-        }
-        if (err >= tolerance) {
-            std::println("[WARN] Did not converge! Error = {:.4e} ({:.4e})", err, tolerance);
+        if (!cfg.benchmark) {
+            std::println("No action specified. Use --benchmark to run all methods.");
+            std::println("Run with --help for usage information.");
+            return EXIT_SUCCESS;
         }
 
-        // Step 6: Store results
-        U.row(time_step + 1) = w(Eigen::seqN(0, n_interior)).transpose();
-        t_current += h;
+        std::println("European Option PDE Pricer [Benchmark]");
+        run_benchmark(cfg, EuropeanOptionType::CALL_BASKET);
+        run_benchmark(cfg, EuropeanOptionType::CALL_MIN_RAINBOW);
+
+    } catch (const std::exception& e) {
+        std::println(std::cerr, "Error: {}", e.what());
+        return EXIT_FAILURE;
     }
-
-    // Check results
-    std::println("[INFO] matrix U:\n{}", U);
-
     return EXIT_SUCCESS;
 }
