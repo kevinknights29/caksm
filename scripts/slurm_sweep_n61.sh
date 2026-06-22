@@ -18,6 +18,8 @@ GRID_N=61
 module load gcc/15.2.0-gcc-8.5.0-r7c4jsu
 module load cmake/3.31.9-gcc-15.2.0-ylutpfi
 echo "Loaded GCC and CMake"
+echo "  CC  = $(which gcc)  ($(gcc --version | head -1))"
+echo "  CXX = $(which g++)  ($(g++ --version | head -1))"
 
 # Build
 WORK_DIR=$(pwd)
@@ -29,6 +31,8 @@ echo "Working directory: $WORK_DIR"
 echo "Configuring..."
 if ! cmake -B "$WORK_DIR/build" \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER="$(which gcc)" \
+        -DCMAKE_CXX_COMPILER="$(which g++)" \
         -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
         -S "$WORK_DIR"; then
     echo "CMake configuration failed!"
