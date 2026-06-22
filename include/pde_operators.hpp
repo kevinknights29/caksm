@@ -521,6 +521,36 @@ inline double extract_price(const VecXd& u, const Grid& g,
 }
 
 /**
+ * @brief Extract the 9x9x9 = 729 option values centered at the nearest-grid spot.
+ *
+ * Centered at the closest grid node to log(s0) in each dimension, with half=4
+ * giving a [-4, +4] window per axis. Ordering matches the flat index
+ * gid = i3*n^2 + i2*n + i1 (i1 fastest).
+ */
+inline VecXd extract_cube(const VecXd& u, const Grid& g,
+                           const std::array<double, 3>& s0)
+{
+    constexpr int half = 4;
+    const int n = g.n;
+
+    int spot[3];
+    for (int d = 0; d < 3; ++d) {
+        Eigen::Index idx = 0;
+        (g.x[d].array() - std::log(s0[d])).cwiseAbs().minCoeff(&idx);
+        spot[d] = static_cast<int>(idx);
+    }
+
+    VecXd cube(9 * 9 * 9);
+    int ci = 0;
+    for (int k = spot[2] - half; k <= spot[2] + half; ++k)
+        for (int j = spot[1] - half; j <= spot[1] + half; ++j)
+            for (int i = spot[0] - half; i <= spot[0] + half; ++i)
+                cube[ci++] = u[k * n * n + j * n + i];
+
+    return cube;
+}
+
+/**
  * @brief Build the augmented matrix \tilde{A} = [[A, B], [0, K]] for ME/KSM basket.
  *
  * K is the 3 x 3 nilpotent shift [[0,1,0],[0,0,1],[0,0,0]] that propagates the
