@@ -16,7 +16,7 @@
  *          ./pricer --benchmark --n 20 --steps 100
  *
  * @author Kevin Knights
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-16
  */
 
@@ -24,6 +24,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
+#include <format>
+#include <fstream>
 #include <iostream>
 #include <print>
 #include <span>
@@ -47,6 +50,8 @@ enum class EuropeanOptionType {
 struct Config {
     int n = 15; ///< grid points per spatial dimension
     int temporal_steps = 100;
+    int ei_steps = 100; ///< KSM-EI substeps (= temporal_steps unless --tol given)
+    double tol_ei = 1e-8; ///< KSM-EI convergence tolerance
     double strike_price = 100.0;
     double risk_free_rate = 0.04;
     double t_final = 1.0;
@@ -56,7 +61,8 @@ struct Config {
     std::array<double, 3> initial_prices = {100.0, 100.0, 100.0};
     double alpha = 2.85;
     EuropeanOptionType option_type = EuropeanOptionType::CALL_BASKET;
-    bool benchmark = false;
+    bool benchmark   = false;
+    bool export_csv  = false;
 };
 
 // Solver: Crank-Nicolson
@@ -70,7 +76,7 @@ struct Config {
  * @param cfg  Simulation parameters.
  * @return     Estimated option price at the initial spot.
  */
-[[nodiscard]] double solve_cn(const PDESystem& sys, const Config& cfg)
+[[nodiscard]] VecXd solve_cn(const PDESystem& sys, const Config& cfg)
 {
     const int N = sys.N;
     const double dt = cfg.t_final / cfg.temporal_steps;
@@ -104,7 +110,7 @@ struct Config {
         u = lu.solve(rhs);
         t_curr += h;
     }
-    return extract_price(u, sys.grid, cfg.initial_prices);
+    return u;
 }
 
 // Solver: ADI Douglas-Rachford
@@ -120,7 +126,7 @@ struct Config {
  * @param cfg  Simulation parameters.
  * @return     Estimated option price.
  */
-[[nodiscard]] double solve_adi_dr(const PDESystem& sys, const Config& cfg)
+[[nodiscard]] VecXd solve_adi_dr(const PDESystem& sys, const Config& cfg)
 {
     const int N = sys.N;
     const double dt = cfg.t_final / cfg.temporal_steps;
@@ -168,7 +174,7 @@ struct Config {
         u = Y;
         t_curr += h;
     }
-    return extract_price(u, sys.grid, cfg.initial_prices);
+    return u;
 }
 
 // Solver: ADI Hundsdorfer-Verwer
@@ -184,7 +190,7 @@ struct Config {
  * @param cfg  Simulation parameters.
  * @return     Estimated option price.
  */
-[[nodiscard]] double solve_adi_hv(const PDESystem& sys, const Config& cfg)
+[[nodiscard]] VecXd solve_adi_hv(const PDESystem& sys, const Config& cfg)
 {
     const int N = sys.N;
     const double dt = cfg.t_final / cfg.temporal_steps;
@@ -242,7 +248,7 @@ struct Config {
         u = Yt;
         t_curr += h;
     }
-    return extract_price(u, sys.grid, cfg.initial_prices);
+    return u;
 }
 
 // Solver: Matrix Exponential
@@ -261,10 +267,11 @@ struct Config {
  * @param cfg  Simulation parameters.
  * @return     Estimated option price.
  */
-[[nodiscard]] double solve_me(const PDESystem& sys, const Config& cfg)
+[[nodiscard]] VecXd solve_me(const PDESystem& sys, const Config& cfg)
 {
     const int N = sys.N;
     constexpr int p = 3;
+    constexpr double method_tolerance = 6e-8; // fixed - single precision tolerance
 
     SpMat A_op;
     VecXd v;
@@ -294,7 +301,7 @@ struct Config {
             const double c_prev = prev.lpNorm<Eigen::Infinity>();
             const double c_curr = curr.lpNorm<Eigen::Infinity>();
             const double c_rsum = rsum.lpNorm<Eigen::Infinity>();
-            if (c_rsum > 0.0 && (c_prev + c_curr) < 1e-12 * c_rsum)
+            if (c_rsum > 0.0 && (c_prev + c_curr) < method_tolerance * c_rsum)
                 break;
 
             prev = curr;
@@ -302,8 +309,7 @@ struct Config {
         v = rsum;
     }
 
-    const VecXd u = sys.has_forcing ? VecXd(v.head(N)) : v;
-    return extract_price(u, sys.grid, cfg.initial_prices);
+    return sys.has_forcing ? VecXd(v.head(N)) : v;
 }
 
 // Solver: Krylov Subspace Method / Exponential Integrator
@@ -322,12 +328,12 @@ struct Config {
  * @param cfg  Simulation parameters.
  * @return     Estimated option price.
  */
-[[nodiscard]] double solve_ksm_ei(const PDESystem& sys, const Config& cfg)
+[[nodiscard]] VecXd solve_ksm_ei(const PDESystem& sys, const Config& cfg)
 {
     const int N = sys.N;
     const int p = 3;
-    const double dt = cfg.t_final / cfg.temporal_steps;
-    constexpr double tol   = 1e-8;
+    const double dt = cfg.t_final / cfg.ei_steps;
+    const double tol = cfg.tol_ei;
     constexpr int m_max = 50;
     constexpr double breakdown_tol = 1e-14;
 
@@ -343,8 +349,8 @@ struct Config {
     VecXd u = sys.u0;
     double t_curr = 0.0;
 
-    for (int step = 0; step < cfg.temporal_steps; ++step) {
-        const double h    = std::min(dt, cfg.t_final - t_curr);
+    for (int step = 0; step < cfg.ei_steps; ++step) {
+        const double h = std::min(dt, cfg.t_final - t_curr);
         const double tau0 = t_curr;
 
         // Augmented start vector \tilde{v} = [u_k; s(\tau_0)]  (or just u_k for rainbow)
@@ -412,7 +418,70 @@ struct Config {
 
         t_curr += h;
     }
-    return extract_price(u, sys.grid, cfg.initial_prices);
+    return u;
+}
+
+// Referee: Matrix Exponential (high-accuracy ODE reference)
+/**
+ * @brief Compute the ODE reference solution via the matrix exponential method.
+ *
+ * Uses fixed parameters m=55 (maximum Taylor degree) and theta=9.9 to choose
+ * the substep count s = ceil(T * ||A_tilde||_1 / theta), with early-termination
+ * tolerance 1.1e-16 (= 2^-53, machine epsilon).  This matches the Python
+ * reference implementation exactly.
+ *
+ * @param sys  Assembled PDE system.
+ * @param cfg  Simulation parameters.
+ * @return     Full N-length solution vector at time T.
+ */
+[[nodiscard]] VecXd compute_me_referee(const PDESystem& sys, const Config& cfg)
+{
+    constexpr int    m_me      = 55;
+    constexpr double theta_ref = 9.9;
+    constexpr double tolerance = 1.1e-16;  // 2^-53
+
+    const int N = sys.N;
+    constexpr int p = 3;
+
+    SpMat A_op;
+    VecXd v;
+
+    if (sys.has_forcing) {
+        A_op = build_A_tilde(sys.A, sys.B, N);
+        v.resize(N + p);
+        v.head(N) = sys.u0;
+        v.tail(p) = make_s_vec(0.0);  // [0, 0, 1] at tau=0
+    } else {
+        A_op = sys.A;
+        v    = sys.u0;
+    }
+
+    const double norm_1 = sparse_1norm(A_op);
+    const int s_me = std::max(1, static_cast<int>(
+        std::ceil(cfg.t_final * norm_1 / theta_ref)));
+    const double scale = cfg.t_final / s_me;
+
+    std::println("  [ME referee: m={}, s={}]", m_me, s_me);
+
+    for (int sub = 0; sub < s_me; ++sub) {
+        VecXd prev = v;
+        VecXd rsum = v;
+        for (int k = 1; k <= m_me; ++k) {
+            const VecXd curr = (scale / k) * (A_op * prev);
+            rsum += curr;
+
+            const double c_prev = prev.lpNorm<Eigen::Infinity>();
+            const double c_curr = curr.lpNorm<Eigen::Infinity>();
+            const double c_rsum = rsum.lpNorm<Eigen::Infinity>();
+            if (c_rsum > 0.0 && (c_prev + c_curr) < tolerance * c_rsum)
+                break;
+
+            prev = curr;
+        }
+        v = rsum;
+    }
+
+    return sys.has_forcing ? VecXd(v.head(N)) : v;
 }
 
 // CLI
@@ -433,6 +502,7 @@ struct Config {
 Config parse_args(std::span<const char* const> args)
 {
     Config cfg;
+    bool tol_given = false;
     for (std::size_t i = 1; i < args.size(); ++i) {
         const std::string_view arg = args[i];
         auto next = [&]() -> std::string_view {
@@ -440,9 +510,14 @@ Config parse_args(std::span<const char* const> args)
                 throw std::invalid_argument("Missing value for " + std::string(arg));
             return args[i];
         };
-        if      (arg == "--benchmark") cfg.benchmark = true;
+        if      (arg == "--benchmark") cfg.benchmark   = true;
+        else if (arg == "--export")    cfg.export_csv  = true;
         else if (arg == "--n")         cfg.n              = std::stoi(std::string(next()));
         else if (arg == "--steps")     cfg.temporal_steps = std::stoi(std::string(next()));
+        else if (arg == "--tol") {
+            cfg.tol_ei = std::stod(std::string(next()));
+            tol_given  = true;
+        }
         else if (arg == "--option") {
             const auto opt = next();
             if      (opt == "basket")  cfg.option_type = EuropeanOptionType::CALL_BASKET;
@@ -451,11 +526,18 @@ Config parse_args(std::span<const char* const> args)
         }
         else if (arg == "--help") {
             std::println("Usage: ./pricer --benchmark [--option basket|rainbow]");
-            std::println("               [--n N] [--steps M]");
+            std::println("               [--n N] [--steps M] [--tol T] [--export]");
+            std::println("  --steps M   temporal steps for CN, ADI-DR, ADI-HV, KSM-EI");
+            std::println("  --tol T     KSM-EI convergence tolerance (default 1e-8);");
+            std::println("              when given, KSM-EI uses the default step count");
+            std::println("              regardless of --steps");
+            std::println("  --export    write results to caksm_export_<timestamp>.csv");
             std::exit(0);
         }
         else throw std::invalid_argument("Unknown flag: " + std::string(arg));
     }
+    // When --tol is given, KSM-EI ignores --steps and uses the default count (100)
+    cfg.ei_steps = tol_given ? 100 : cfg.temporal_steps;
     return cfg;
 }
 
@@ -469,7 +551,8 @@ Config parse_args(std::span<const char* const> args)
  * @param cfg         Simulation configuration (n, steps, option type, etc.).
  * @param option_type Option type to price.
  */
-void run_benchmark(const Config& cfg, EuropeanOptionType option_type)
+void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
+                   std::ofstream* csv = nullptr)
 {
     const bool rainbow = (option_type == EuropeanOptionType::CALL_MIN_RAINBOW);
 
@@ -483,9 +566,8 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type)
     std::println("  sigma=[{:.2f},{:.2f},{:.2f}]  rho_off=[{:.1f},{:.1f},{:.1f}]",
                  cfg.sigma[0], cfg.sigma[1], cfg.sigma[2],
                  cfg.rho_off[0], cfg.rho_off[1], cfg.rho_off[2]);
+    std::println("  KSM-EI: tol={:.2e}, steps={}", cfg.tol_ei, cfg.ei_steps);
     std::println("  Reference price: {:.4f}\n", reference);
-    std::println("  {:<12} {:>10}  {:>8}  {:>10}", "Method", "Price", "Error", "Time(ms)");
-    std::println("  {}", std::string(46, '-'));
 
     // Build PDE system (shared across all solvers for this option type)
     std::println("  [Building PDE system...]");
@@ -494,9 +576,18 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type)
         cfg.sigma, cfg.rho_off, cfg.weight, cfg.initial_prices,
         cfg.alpha, rainbow);
 
+    // Compute high-accuracy ODE reference (ME referee, m=55, tol=2^-53)
+    std::println("  [Computing ME referee...]");
+    const VecXd ref_u    = compute_me_referee(sys, cfg);
+    const VecXd ref_cube = extract_cube(ref_u, sys.grid, cfg.initial_prices);
+
+    std::println("  {:<12} {:>10}  {:>10}  {:>10}  {:>10}",
+                 "Method", "Price", "PDE Err", "ODE Err", "Time(ms)");
+    std::println("  {}", std::string(60, '-'));
+
     struct Run {
         std::string_view name;
-        double (*fn)(const PDESystem&, const Config&);
+        VecXd (*fn)(const PDESystem&, const Config&);
     };
 
     const Run runs[] = {
@@ -508,12 +599,31 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type)
     };
 
     for (const auto& run : runs) {
-        const auto t0    = std::chrono::steady_clock::now();
-        const double price = run.fn(sys, cfg);
-        const auto t1    = std::chrono::steady_clock::now();
-        const double ms  = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        const double err = std::abs(price - reference);
-        std::println("  {:<12} {:>10.4f}  {:>8.4f}  {:>10.1f}", run.name, price, err, ms);
+        const auto t0 = std::chrono::steady_clock::now();
+        const VecXd u = run.fn(sys, cfg);
+        const auto t1 = std::chrono::steady_clock::now();
+
+        const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        const double price = extract_price(u, sys.grid, cfg.initial_prices);
+        const double pde_err = std::abs(price - reference);
+        const double ode_err = (extract_cube(u, sys.grid, cfg.initial_prices) - ref_cube).norm();
+
+        std::println("  {:<12} {:>10.4f}  {:>10.4f}  {:>10.3e}  {:>10.1f}",
+                     run.name, price, pde_err, ode_err, ms);
+
+        if (csv) {
+            *csv << std::format("{},{},{},{},{:.6e},{},{:.6f},{:.6f},{:.6e},{:.3f}\n",
+                                (rainbow ? "rainbow" : "basket"),
+                                cfg.n,
+                                cfg.temporal_steps,
+                                cfg.ei_steps,
+                                cfg.tol_ei,
+                                run.name,
+                                price,
+                                pde_err,
+                                ode_err,
+                                ms);
+        }
     }
     std::println("");
 }
@@ -531,8 +641,24 @@ int main(const int argc, char* argv[])
         }
 
         std::println("European Option PDE Pricer [Benchmark]");
-        run_benchmark(cfg, EuropeanOptionType::CALL_BASKET);
-        run_benchmark(cfg, EuropeanOptionType::CALL_MIN_RAINBOW);
+
+        std::ofstream csv;
+        if (cfg.export_csv) {
+            std::time_t now = std::time(nullptr);
+            char ts[20];
+            std::strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", std::localtime(&now));
+            const std::string csv_path = std::string("caksm_export_") + ts + ".csv";
+            csv.open(csv_path);
+            if (!csv)
+                throw std::runtime_error("Cannot open CSV file: " + csv_path);
+            csv << "option_type,n,temporal_steps,ei_steps,tol_ei,"
+                   "method,price,pde_err,ode_err,time_ms\n";
+            std::println("  Exporting to {}\n", csv_path);
+        }
+
+        std::ofstream* csv_ptr = cfg.export_csv ? &csv : nullptr;
+        run_benchmark(cfg, EuropeanOptionType::CALL_BASKET,       csv_ptr);
+        run_benchmark(cfg, EuropeanOptionType::CALL_MIN_RAINBOW,  csv_ptr);
 
     } catch (const std::exception& e) {
         std::println(std::cerr, "Error: {}", e.what());
