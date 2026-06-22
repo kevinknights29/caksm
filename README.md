@@ -1,4 +1,4 @@
-# caksm — Communication-Avoiding Krylov Subspace Methods for Option Pricing
+# caksm - Communication-Avoiding Krylov Subspace Methods for Option Pricing
 
 PDE-based pricer for two 3-asset European options (basket call and rainbow min-call), written in C++23. 
 Five numerical methods are implemented: Crank-Nicolson, two ADI variants, Matrix Exponential, and a Krylov subspace exponential integrator.
@@ -37,13 +37,29 @@ cd build && ctest --output-on-failure
 ./build/pricer [OPTIONS]
 ```
 
-| Option                     | Default             | Description                                |
-|----------------------------|---------------------|--------------------------------------------|
-| `--benchmark`              | *(required to run)* | Run all five methods for both option types |
-| `--option basket\|rainbow` | `basket`            | Select which option type to price          |
-| `--n N`                    | `15`                | Grid points per spatial dimension          |
-| `--steps M`                | `100`               | Number of temporal steps                   |
-| `--help`                   |                     | Print usage summary and exit               |
+| Option                     | Default             | Description                                                                                                |
+|----------------------------|---------------------|------------------------------------------------------------------------------------------------------------|
+| `--benchmark`              | *(required to run)* | Run all five methods for both option types                                                                 |
+| `--option basket\|rainbow` | `basket`            | Select which option type to price                                                                          |
+| `--n N`                    | `15`                | Grid points per spatial dimension                                                                          |
+| `--steps M`                | `100`               | Temporal steps for CN, ADI-DR, ADI-HV, and KSM-EI (ME selects steps automatically)                         |
+| `--tol T`                  | `1e-8`              | KSM-EI convergence tolerance, when given, KSM-EI uses the default step count (100) regardless of `--steps` |
+| `--help`                   |                     | Print usage summary and exit                                                                               |
+
+### Flag interaction: `--steps` and `--tol`
+
+`--steps` controls the number of temporal substeps for the time-stepping methods. `--tol` controls
+the per-step Krylov convergence criterion for KSM-EI. When both flags are provided, KSM-EI
+uses the given tolerance and reverts to the default step count (100), while CN and the ADI methods
+continue to use `--steps`. This lets you sweep KSM-EI tolerance independently without changing
+the step count used to benchmark the other methods.
+
+| Flags given          | CN / ADI-DR / ADI-HV | KSM-EI steps | KSM-EI tol |
+|----------------------|----------------------|--------------|------------|
+| *(neither)*          | 100                  | 100          | 1e-8       |
+| `--steps M`          | M                    | M            | 1e-8       |
+| `--tol T`            | 100                  | 100          | T          |
+| `--steps M --tol T`  | M                    | 100          | T          |
 
 ### Examples
 
@@ -56,6 +72,16 @@ cd build && ctest --output-on-failure
 
 # Basket only, coarse grid for quick sanity check
 ./build/pricer --benchmark --option basket --n 10 --steps 50
+
+# Sweep KSM-EI tolerance (steps fixed at default 100 for all methods)
+./build/pricer --benchmark --option basket --n 15 --tol 1e-4
+./build/pricer --benchmark --option basket --n 15 --tol 1e-6
+./build/pricer --benchmark --option basket --n 15 --tol 1e-10
+
+# Sweep step count for time-steppers while holding KSM-EI at a fixed tolerance
+./build/pricer --benchmark --option basket --n 15 --steps 50  --tol 1e-8
+./build/pricer --benchmark --option basket --n 15 --steps 100 --tol 1e-8
+./build/pricer --benchmark --option basket --n 15 --steps 200 --tol 1e-8
 ```
 
 ### Sample output
@@ -64,36 +90,54 @@ cd build && ctest --output-on-failure
 European Option PDE Pricer [Benchmark]
 
  Basket call
-  Parameters: n=15, steps=100, K=100, r=0.04, T=1.0
+  Parameters: n=12, steps=50, K=100, r=0.04, T=1.0
   sigma=[0.30,0.35,0.40]  rho_off=[0.5,0.5,0.5]
+  KSM-EI: tol=1.00e-08, steps=50
   Reference price: 13.2449
 
-  Method            Price     Error    Time(ms)
-  ----------------------------------------------
   [Building PDE system...]
-  CN              13.1792    0.0657        90.1
-  ADI-DR          13.1866    0.0583        19.1
-  ADI-HV          13.1792    0.0657        34.6
-  ME              13.1792    0.0657        18.2
-  KSM-EI          13.1792    0.0657        25.2
+  [Computing ME referee...]
+  [ME referee: m=55, s=7082]
+  Method            Price     PDE Err     ODE Err    Time(ms)
+  ------------------------------------------------------------
+  CN               8.4401      4.8048   3.550e-03        22.4
+  ADI-DR           8.4530      4.7919   1.934e-01         6.2
+  ADI-HV           8.4400      4.8049   2.091e-03        10.0
+  ME               8.4400      4.8049   3.248e-11         8.6
+  KSM-EI           8.4400      4.8049   5.208e-11         8.4
 
 
  Rainbow min-call
-  Parameters: n=15, steps=100, K=100, r=0.04, T=1.0
+  Parameters: n=12, steps=50, K=100, r=0.04, T=1.0
   sigma=[0.30,0.35,0.40]  rho_off=[0.5,0.5,0.5]
+  KSM-EI: tol=1.00e-08, steps=50
   Reference price: 4.4450
 
-  Method            Price     Error    Time(ms)
-  ----------------------------------------------
   [Building PDE system...]
-  CN               4.0851    0.3599        85.2
-  ADI-DR           4.0918    0.3532        17.5
-  ADI-HV           4.0852    0.3598        33.1
-  ME               4.0851    0.3599        15.4
-  KSM-EI           4.0851    0.3599        24.9
+  [Computing ME referee...]
+  [ME referee: m=55, s=3]
+  Method            Price     PDE Err     ODE Err    Time(ms)
+  ------------------------------------------------------------
+  CN               2.4151      2.0299   2.872e-03        21.2
+  ADI-DR           2.4182      2.0268   2.243e-01         5.6
+  ADI-HV           2.4152      2.0298   2.929e-03         9.8
+  ME               2.4150      2.0300   9.186e-12         1.6
+  KSM-EI           2.4150      2.0300   4.394e-11         8.1
 ```
 
-Grid error for the rainbow option at n=15 is expected; increase `--n` for higher accuracy.
+The large PDE errors above are due to the coarse grid (n=12); increase `--n` for higher accuracy.
+
+### Error columns
+
+| Column    | Formula                                          | Definition                                       |
+|-----------|--------------------------------------------------|--------------------------------------------------|
+| `PDE Err` | $\|\text{price} − \text{analytical_reference}\|$ | Spatial / Temporal discretization error          |
+| `ODE Err` | $\|\text{u_cube} − \text{u_ref_cube}\|$          | ODE integration error relative to the ME referee |
+
+**ME referee:** before each option type is benchmarked, a high-accuracy matrix-exponential solution is computed 
+with fixed parameters $m=55$ (maximum Taylor degree) and $\theta=9.9$, giving $s = \lceil \dfrac{T \|\tilde{A}\|_1}{\theta} \rceil$
+internal substeps and tolerance $2^{-53} \approx 1.1 \times 10^{-16}$. The ODE error measures how well each solver 
+tracks this reference on the $9 \times 9 \times 9$ grid neighborhood centered on the spot, independently of spatial discretization.
 
 ## Default model parameters
 
@@ -104,20 +148,20 @@ Grid error for the rainbow option at n=15 is expected; increase `--n` for higher
 | Risk-free rate r         | 0.04               | Continuously compounded                                     |
 | Maturity T               | 1.0 year           | Fixed                                                       |
 | Volatilities $\sigma$    | (0.30, 0.35, 0.40) | Per-asset annual vol                                        |
-| Correlations $\rho$      | (0.50, 0.50, 0.50) | Off-diagonal pairs ($\rho_{01}, \rho_{02}, \rho_{03}$)      |
+| Correlations $\rho$      | (0.50, 0.50, 0.50) | Off-diagonal pairs ($\rho_{01}, \rho_{02}, \rho_{12}$)      |
 | Basket weights w         | (1/3, 1/3, 1/3)    | Equal-weight basket                                         |
 | Grid half-width $\alpha$ | 2.85               | Log-price domain $\pm \alpha \sigma \sqrt{T}$ per dimension |
 
 
 ## Numerical methods
 
-| Method   | Scheme                                                | Notes                                       |
-|----------|-------------------------------------------------------|---------------------------------------------|
-| `CN`     | Crank-Nicolson ($\theta = 0.5$)                       | Fully implicit 2nd-order; SparseLU per run  |
-| `ADI-DR` | Douglas-Rachford ADI ($\theta = 0.5$)                 | 3 direction-split solves per step           |
-| `ADI-HV` | Hundsdorfer-Verwer ADI ($\theta = 0.5, \sigma = 0.5$) | DR predictor + HV corrector                 |
-| `ME`     | Matrix Exponential (scaling-and-squaring)             | Taylor polynomial, $\infty$-norm early exit |
-| `KSM-EI` | Krylov subspace exponential integrator                | Incremental Arnoldi; expm on small H_m      |
+| Method   | Scheme                                                | Temporal steps                        | Notes                                                           |
+|----------|-------------------------------------------------------|---------------------------------------|-----------------------------------------------------------------|
+| `CN`     | Crank-Nicolson ($\theta = 0.5$)                       | `--steps`                             | Fully implicit 2nd-order, SparseLU per run                      |
+| `ADI-DR` | Douglas-Rachford ADI ($\theta = 0.5$)                 | `--steps`                             | 3 direction-split solves per step                               |
+| `ADI-HV` | Hundsdorfer-Verwer ADI ($\theta = 0.5, \sigma = 0.5$) | `--steps`                             | DR predictor + HV corrector                                     |
+| `ME`     | Matrix Exponential (scaling-and-squaring)             | automatic                             | Taylor polynomial, $\infty$-norm early exit                     |
+| `KSM-EI` | Krylov subspace exponential integrator                | `--steps` or 100 (when `--tol` given) | Incremental Arnoldi, expm on small $H_m$; tolerance via `--tol` |
 
 ## Model
 
