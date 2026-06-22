@@ -74,3 +74,6 @@ Testing/
 
 # CLion
 .idea/
+
+# Others
+.DS_Store
