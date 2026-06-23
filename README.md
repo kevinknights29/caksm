@@ -43,7 +43,10 @@ cd build && ctest --output-on-failure
 | `--option basket\|rainbow` | `basket`            | Select which option type to price                                                                          |
 | `--n N`                    | `15`                | Grid points per spatial dimension                                                                          |
 | `--steps M`                | `100`               | Temporal steps for CN, ADI-DR, ADI-HV, and KSM-EI (ME selects steps automatically)                         |
-| `--tol T`                  | `1e-8`              | KSM-EI convergence tolerance, when given, KSM-EI uses the default step count (100) regardless of `--steps` |
+| `--tol T`                  | `1e-8`              | KSM-EI convergence tolerance; when given, KSM-EI uses the default step count (100) regardless of `--steps` |
+| `--export`                 |                     | Write per-run results to a timestamped CSV in the working directory                                        |
+| `--save-referee`           |                     | Compute the ME referee for both option types, write binary cache files to `--referee-dir`, then exit       |
+| `--referee-dir DIR`        |                     | In `--benchmark` mode: load pre-computed referee files from `DIR` instead of recomputing them              |
 | `--help`                   |                     | Print usage summary and exit                                                                               |
 
 ### Flag interaction: `--steps` and `--tol`
@@ -60,6 +63,24 @@ the step count used to benchmark the other methods.
 | `--steps M`          | M                    | M            | 1e-8       |
 | `--tol T`            | 100                  | 100          | T          |
 | `--steps M --tol T`  | M                    | 100          | T          |
+
+### Referee caching
+
+The ME referee is the dominant cost for large grids ($n=61$ basket requires $\approx 4.5 \times 10^6$ substeps at $m=55$).
+When running a parameter sweep, compute it once and reuse it for every subsequent benchmark call:
+
+```bash
+# Step 1 — compute and save (runs once, exits after saving)
+./build/pricer --n 31 --save-referee --referee-dir data/n31
+
+# Step 2 — all benchmark runs load from the cache (no recomputation)
+./build/pricer --benchmark --n 31 --steps 128 --referee-dir data/n31
+./build/pricer --benchmark --n 31 --tol 1e-5  --referee-dir data/n31
+```
+
+Cache files are named `referee_n{N}_basket.bin` and `referee_n{N}_rainbow.bin`.
+If `--referee-dir` is given but a file is missing, the referee is computed inline with a warning.
+The sweep scripts (`scripts/sweep_n31.sh`, `scripts/sweep_n61.sh`) do this automatically.
 
 ### Examples
 
@@ -82,9 +103,18 @@ the step count used to benchmark the other methods.
 ./build/pricer --benchmark --option basket --n 15 --steps 50  --tol 1e-8
 ./build/pricer --benchmark --option basket --n 15 --steps 100 --tol 1e-8
 ./build/pricer --benchmark --option basket --n 15 --steps 200 --tol 1e-8
+
+# Full parameter sweep with referee caching and CSV export
+mkdir -p data/n31
+./build/pricer --n 31 --save-referee --referee-dir data/n31
+for steps in 16 32 64 128 256 512 1024; do
+    ./build/pricer --benchmark --n 31 --steps $steps --referee-dir data/n31 --export
+done
 ```
 
 ### Sample output
+
+Without referee cache (`--benchmark --n 12 --steps 50`):
 
 ```
 European Option PDE Pricer [Benchmark]
@@ -103,29 +133,32 @@ European Option PDE Pricer [Benchmark]
   CN               8.4401      4.8048   3.550e-03        22.4
   ADI-DR           8.4530      4.7919   1.934e-01         6.2
   ADI-HV           8.4400      4.8049   2.091e-03        10.0
-  ME               8.4400      4.8049   3.248e-11         8.6
+  ME               8.4400      4.8049   2.142e-06         8.6
   KSM-EI           8.4400      4.8049   5.208e-11         8.4
 
 
  Rainbow min-call
-  Parameters: n=12, steps=50, K=100, r=0.04, T=1.0
-  sigma=[0.30,0.35,0.40]  rho_off=[0.5,0.5,0.5]
-  KSM-EI: tol=1.00e-08, steps=50
-  Reference price: 4.4450
-
-  [Building PDE system...]
-  [Computing ME referee...]
-  [ME referee: m=55, s=3]
-  Method            Price     PDE Err     ODE Err    Time(ms)
-  ------------------------------------------------------------
-  CN               2.4151      2.0299   2.872e-03        21.2
-  ADI-DR           2.4182      2.0268   2.243e-01         5.6
-  ADI-HV           2.4152      2.0298   2.929e-03         9.8
-  ME               2.4150      2.0300   9.186e-12         1.6
-  KSM-EI           2.4150      2.0300   4.394e-11         8.1
+  ...
 ```
 
-The large PDE errors above are due to the coarse grid (n=12); increase `--n` for higher accuracy.
+With referee cache (`--save-referee` run first, then `--benchmark --referee-dir data/n12`):
+
+```
+European Option PDE Pricer [Benchmark]
+  Referee loaded: data/n12/referee_n12_basket.bin
+  Referee loaded: data/n12/referee_n12_rainbow.bin
+
+ Basket call
+  ...
+  [Building PDE system...]
+  [ME referee: loaded from file]
+  Method            Price     PDE Err     ODE Err    Time(ms)
+  ------------------------------------------------------------
+  CN               8.4401      4.8048   3.550e-03        22.4
+  ...
+```
+
+The large PDE errors are due to the coarse grid (n=12); increase `--n` for higher accuracy.
 
 ### Error columns
 
@@ -134,10 +167,11 @@ The large PDE errors above are due to the coarse grid (n=12); increase `--n` for
 | `PDE Err` | $\|\text{price} − \text{analytical_reference}\|$ | Spatial / Temporal discretization error          |
 | `ODE Err` | $\|\text{u_cube} − \text{u_ref_cube}\|$          | ODE integration error relative to the ME referee |
 
-**ME referee:** before each option type is benchmarked, a high-accuracy matrix-exponential solution is computed 
+**ME referee:** before each option type is benchmarked, a high-accuracy matrix-exponential solution is computed
 with fixed parameters $m=55$ (maximum Taylor degree) and $\theta=9.9$, giving $s = \lceil \dfrac{T \|\tilde{A}\|_1}{\theta} \rceil$
-internal substeps and tolerance $2^{-53} \approx 1.1 \times 10^{-16}$. The ODE error measures how well each solver 
+internal substeps and tolerance $2^{-53} \approx 1.1 \times 10^{-16}$. The ODE error measures how well each solver
 tracks this reference on the $9 \times 9 \times 9$ grid neighborhood centered on the spot, independently of spatial discretization.
+For large grids this computation is expensive; use `--save-referee` to cache it once and `--referee-dir` to reuse it across runs.
 
 ## Default model parameters
 
