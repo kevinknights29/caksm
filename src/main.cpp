@@ -23,11 +23,13 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <print>
 #include <span>
 #include <stdexcept>
@@ -61,8 +63,10 @@ struct Config {
     std::array<double, 3> initial_prices = {100.0, 100.0, 100.0};
     double alpha = 2.85;
     EuropeanOptionType option_type = EuropeanOptionType::CALL_BASKET;
-    bool benchmark   = false;
-    bool export_csv  = false;
+    bool benchmark      = false;
+    bool export_csv     = false;
+    bool save_referee   = false;
+    std::string referee_dir = "";
 };
 
 // Solver: Crank-Nicolson
@@ -484,6 +488,34 @@ struct Config {
     return sys.has_forcing ? VecXd(v.head(N)) : v;
 }
 
+// Referee file I/O
+static std::string referee_path(const std::string& dir, int n, bool rainbow)
+{
+    return dir + "/referee_n" + std::to_string(n)
+               + (rainbow ? "_rainbow" : "_basket") + ".bin";
+}
+
+static void save_referee_file(const VecXd& ref, const std::string& path)
+{
+    std::ofstream f(path, std::ios::binary);
+    if (!f) throw std::runtime_error("Cannot write referee file: " + path);
+    const int64_t sz = ref.size();
+    f.write(reinterpret_cast<const char*>(&sz), sizeof(sz));
+    f.write(reinterpret_cast<const char*>(ref.data()), sz * sizeof(double));
+}
+
+// Returns empty vector if file not found; caller treats size()==0 as "not cached".
+static VecXd load_referee_file(const std::string& path)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return {};
+    int64_t sz = 0;
+    f.read(reinterpret_cast<char*>(&sz), sizeof(sz));
+    VecXd ref(sz);
+    f.read(reinterpret_cast<char*>(ref.data()), sz * sizeof(double));
+    return ref;
+}
+
 // CLI
 /**
  * @brief Parse command-line arguments into a Config struct.
@@ -510,10 +542,12 @@ Config parse_args(std::span<const char* const> args)
                 throw std::invalid_argument("Missing value for " + std::string(arg));
             return args[i];
         };
-        if      (arg == "--benchmark") cfg.benchmark   = true;
-        else if (arg == "--export")    cfg.export_csv  = true;
-        else if (arg == "--n")         cfg.n              = std::stoi(std::string(next()));
-        else if (arg == "--steps")     cfg.temporal_steps = std::stoi(std::string(next()));
+        if      (arg == "--benchmark")    cfg.benchmark     = true;
+        else if (arg == "--export")       cfg.export_csv    = true;
+        else if (arg == "--save-referee") cfg.save_referee  = true;
+        else if (arg == "--referee-dir")  cfg.referee_dir   = std::string(next());
+        else if (arg == "--n")            cfg.n              = std::stoi(std::string(next()));
+        else if (arg == "--steps")        cfg.temporal_steps = std::stoi(std::string(next()));
         else if (arg == "--tol") {
             cfg.tol_ei = std::stod(std::string(next()));
             tol_given  = true;
@@ -527,11 +561,17 @@ Config parse_args(std::span<const char* const> args)
         else if (arg == "--help") {
             std::println("Usage: ./pricer --benchmark [--option basket|rainbow]");
             std::println("               [--n N] [--steps M] [--tol T] [--export]");
-            std::println("  --steps M   temporal steps for CN, ADI-DR, ADI-HV, KSM-EI");
-            std::println("  --tol T     KSM-EI convergence tolerance (default 1e-8);");
-            std::println("              when given, KSM-EI uses the default step count");
-            std::println("              regardless of --steps");
-            std::println("  --export    write results to caksm_export_<timestamp>.csv");
+            std::println("               [--referee-dir DIR]");
+            std::println("       ./pricer --save-referee --n N --referee-dir DIR");
+            std::println("  --steps M          temporal steps for CN, ADI-DR, ADI-HV, KSM-EI");
+            std::println("  --tol T            KSM-EI convergence tolerance (default 1e-8);");
+            std::println("                     when given, KSM-EI uses the default step count");
+            std::println("                     regardless of --steps");
+            std::println("  --export           write results to caksm_export_<timestamp>.csv");
+            std::println("  --save-referee     compute ME referee for both option types and");
+            std::println("                     save to DIR/referee_n{{N}}_{{type}}.bin; then exit");
+            std::println("  --referee-dir DIR  in --benchmark mode, load pre-computed referees");
+            std::println("                     from DIR instead of recomputing them");
             std::exit(0);
         }
         else throw std::invalid_argument("Unknown flag: " + std::string(arg));
@@ -552,7 +592,8 @@ Config parse_args(std::span<const char* const> args)
  * @param option_type Option type to price.
  */
 void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
-                   std::ofstream* csv = nullptr)
+                   std::ofstream* csv = nullptr,
+                   const VecXd* preloaded_ref = nullptr)
 {
     const bool rainbow = (option_type == EuropeanOptionType::CALL_MIN_RAINBOW);
 
@@ -576,9 +617,14 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
         cfg.sigma, cfg.rho_off, cfg.weight, cfg.initial_prices,
         cfg.alpha, rainbow);
 
-    // Compute high-accuracy ODE reference (ME referee, m=55, tol=2^-53)
-    std::println("  [Computing ME referee...]");
-    const VecXd ref_u    = compute_me_referee(sys, cfg);
+    VecXd ref_u;
+    if (preloaded_ref && preloaded_ref->size() > 0) {
+        std::println("  [ME referee: loaded from file]");
+        ref_u = *preloaded_ref;
+    } else {
+        std::println("  [Computing ME referee...]");
+        ref_u = compute_me_referee(sys, cfg);
+    }
     const VecXd ref_cube = extract_cube(ref_u, sys.grid, cfg.initial_prices);
 
     std::println("  {:<12} {:>10}  {:>10}  {:>10}  {:>10}",
@@ -634,20 +680,59 @@ int main(const int argc, char* argv[])
         const Config cfg = parse_args(
             std::span<const char* const>(argv, static_cast<std::size_t>(argc)));
 
+        // Save-referee mode
+        if (cfg.save_referee) {
+            if (cfg.referee_dir.empty())
+                throw std::invalid_argument("--save-referee requires --referee-dir <path>");
+            std::println("European Option PDE Pricer [Save Referee]");
+            std::println("  n={}, saving to {}/", cfg.n, cfg.referee_dir);
+            for (const bool rainbow : {false, true}) {
+                const std::string label = rainbow ? "rainbow" : "basket";
+                std::println("\n  Building PDE system ({})...", label);
+                const PDESystem sys = build_pde_system(
+                    cfg.n, cfg.strike_price, cfg.risk_free_rate, cfg.t_final,
+                    cfg.sigma, cfg.rho_off, cfg.weight, cfg.initial_prices,
+                    cfg.alpha, rainbow);
+                std::println("  Computing ME referee ({})...", label);
+                const VecXd ref = compute_me_referee(sys, cfg);
+                const std::string path = referee_path(cfg.referee_dir, cfg.n, rainbow);
+                save_referee_file(ref, path);
+                std::println("  Saved: {}", path);
+            }
+            return EXIT_SUCCESS;
+        }
+
         if (!cfg.benchmark) {
-            std::println("No action specified. Use --benchmark to run all methods.");
+            std::println("No action specified. Use --benchmark or --save-referee.");
             std::println("Run with --help for usage information.");
             return EXIT_SUCCESS;
         }
 
         std::println("European Option PDE Pricer [Benchmark]");
 
+        // Load pre-computed referees if a directory was given
+        std::optional<VecXd> basket_ref, rainbow_ref;
+        if (!cfg.referee_dir.empty()) {
+            auto try_load = [&](bool rainbow) -> std::optional<VecXd> {
+                const std::string path = referee_path(cfg.referee_dir, cfg.n, rainbow);
+                VecXd v = load_referee_file(path);
+                if (v.size() > 0) {
+                    std::println("  Referee loaded: {}", path);
+                    return v;
+                }
+                std::println("  Warning: referee not found at {}, will compute", path);
+                return std::nullopt;
+            };
+            basket_ref  = try_load(false);
+            rainbow_ref = try_load(true);
+        }
+
         std::ofstream csv;
         if (cfg.export_csv) {
             std::time_t now = std::time(nullptr);
             char ts[20];
             std::strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", std::localtime(&now));
-            const std::string csv_path = std::string("caksm_export_") + ts + ".csv";
+            const std::string csv_path = std::format("caksm_export_n{}_{}.csv", cfg.n, ts);
             csv.open(csv_path);
             if (!csv)
                 throw std::runtime_error("Cannot open CSV file: " + csv_path);
@@ -657,8 +742,12 @@ int main(const int argc, char* argv[])
         }
 
         std::ofstream* csv_ptr = cfg.export_csv ? &csv : nullptr;
-        run_benchmark(cfg, EuropeanOptionType::CALL_BASKET,       csv_ptr);
-        run_benchmark(cfg, EuropeanOptionType::CALL_MIN_RAINBOW,  csv_ptr);
+        run_benchmark(cfg, EuropeanOptionType::CALL_BASKET,
+                      csv_ptr,
+                      basket_ref.has_value()  ? &basket_ref.value()  : nullptr);
+        run_benchmark(cfg, EuropeanOptionType::CALL_MIN_RAINBOW,
+                      csv_ptr,
+                      rainbow_ref.has_value() ? &rainbow_ref.value() : nullptr);
 
     } catch (const std::exception& e) {
         std::println(std::cerr, "Error: {}", e.what());
