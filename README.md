@@ -3,6 +3,27 @@
 PDE-based pricer for two 3-asset European options (basket call and rainbow min-call), written in C++23. 
 Five numerical methods are implemented: Crank-Nicolson, two ADI variants, Matrix Exponential, and a Krylov subspace exponential integrator.
 
+## Benchmark plots
+
+The script `scripts/benchmark_plots.py` reproduces Figure 1 from Niesen and Wright: log-log plots of ODE error vs CPU time for all five methods, across both option types and both grid sizes.
+
+It requires sweep data for both `n=31` and `n=61` to have been collected first:
+
+```bash
+sbatch scripts/slurm_sweep_n31.sh   # or: bash scripts/sweep_n31.sh
+sbatch scripts/slurm_sweep_n61.sh   # or: bash scripts/sweep_n61.sh
+```
+
+Once the data is in place, run the script with [`uv`](https://docs.astral.sh/uv/getting-started/installation/), which creates an isolated environment automatically:
+
+```bash
+uv run scripts/benchmark_plots.py
+```
+
+The plot is saved to `scripts/benchmark_plots.png`.
+
+![ODE Error vs CPU time](scripts/benchmark_plots.png)
+
 ## Dependencies
 
 | Library  | Source                           | Purpose                                         |
