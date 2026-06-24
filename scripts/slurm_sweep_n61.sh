@@ -84,7 +84,7 @@ echo "=== Time-stepping sweep (steps = 2^n, n = 4, ..., 10) ==="
 for exp in $(seq 4 10); do
     steps=$((1 << exp))
     echo "  steps=$steps"
-    run_and_collect --benchmark --n "$GRID_N" --steps "$steps" --referee-dir "$DATA_DIR"
+    run_and_collect --benchmark --n "$GRID_N" --steps "$steps" --referee-dir "$DATA_DIR" --skip CN
 done
 
 # KSM-EI tolerance sweep
@@ -96,7 +96,7 @@ echo ""
 echo "=== KSM-EI tolerance sweep (5 log-spaced points: 1e-1 to 1e-7) ==="
 for tol in "1e-1" "3.162e-3" "1e-4" "3.162e-6" "1e-7"; do
     echo "  tol=$tol"
-    run_and_collect --benchmark --n "$GRID_N" --tol "$tol" --referee-dir "$DATA_DIR"
+    run_and_collect --benchmark --n "$GRID_N" --tol "$tol" --referee-dir "$DATA_DIR" --skip CN
 done
 
 # Compile individual CSVs into one file
@@ -104,14 +104,18 @@ echo ""
 echo "Compiling results..."
 COMBINED="$DATA_DIR/caksm_sweep_n${GRID_N}.csv"
 
-first_csv=$(ls "$DATA_DIR"/caksm_export_n${GRID_N}_*.csv 2>/dev/null | sort | head -1)
-if [[ -z "$first_csv" ]]; then
+mapfile -t export_csvs < <(ls "$DATA_DIR"/caksm_export_n${GRID_N}_*.csv 2>/dev/null | sort)
+if [[ ${#export_csvs[@]} -eq 0 ]]; then
     echo "No CSV files found to compile!"
     exit 1
 fi
 
-head -1 "$first_csv" > "$COMBINED"
-for f in $(ls "$DATA_DIR"/caksm_export_n${GRID_N}_*.csv | sort); do
+echo "option_type,n,temporal_steps,ei_steps,tol_ei,method,price,pde_err,ode_err,time_ms" > "$COMBINED"
+for f in "${export_csvs[@]}"; do
+    if [[ ! -s "$f" ]]; then
+        echo "  WARNING: skipping empty file $f"
+        continue
+    fi
     tail -n +2 "$f" >> "$COMBINED"
 done
 
