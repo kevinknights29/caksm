@@ -20,6 +20,7 @@
  * @date 2026-06-16
  */
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -35,6 +36,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <Eigen/Sparse>
 #include <Eigen/SparseLU>
@@ -67,6 +69,7 @@ struct Config {
     bool export_csv     = false;
     bool save_referee   = false;
     std::string referee_dir = "";
+    std::vector<std::string> skip_methods = {};
 };
 
 // Solver: Crank-Nicolson
@@ -546,6 +549,7 @@ Config parse_args(std::span<const char* const> args)
         else if (arg == "--export")       cfg.export_csv    = true;
         else if (arg == "--save-referee") cfg.save_referee  = true;
         else if (arg == "--referee-dir")  cfg.referee_dir   = std::string(next());
+        else if (arg == "--skip")         cfg.skip_methods.emplace_back(next());
         else if (arg == "--n")            cfg.n              = std::stoi(std::string(next()));
         else if (arg == "--steps")        cfg.temporal_steps = std::stoi(std::string(next()));
         else if (arg == "--tol") {
@@ -572,6 +576,9 @@ Config parse_args(std::span<const char* const> args)
             std::println("                     save to DIR/referee_n{{N}}_{{type}}.bin; then exit");
             std::println("  --referee-dir DIR  in --benchmark mode, load pre-computed referees");
             std::println("                     from DIR instead of recomputing them");
+            std::println("  --skip METHOD      omit METHOD from the benchmark table; may be");
+            std::println("                     repeated (e.g. --skip CN --skip ADI-DR)");
+            std::println("                     valid names: CN, ADI-DR, ADI-HV, ME, KSM-EI");
             std::exit(0);
         }
         else throw std::invalid_argument("Unknown flag: " + std::string(arg));
@@ -608,6 +615,11 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
                  cfg.sigma[0], cfg.sigma[1], cfg.sigma[2],
                  cfg.rho_off[0], cfg.rho_off[1], cfg.rho_off[2]);
     std::println("  KSM-EI: tol={:.2e}, steps={}", cfg.tol_ei, cfg.ei_steps);
+    if (!cfg.skip_methods.empty()) {
+        std::print("  Skipping:");
+        for (const auto& m : cfg.skip_methods) std::print(" {}", m);
+        std::println("");
+    }
     std::println("  Reference price: {:.4f}\n", reference);
 
     // Build PDE system (shared across all solvers for this option type)
@@ -645,6 +657,10 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
     };
 
     for (const auto& run : runs) {
+        if (std::ranges::any_of(cfg.skip_methods,
+                [&](const std::string& s) { return s == run.name; }))
+            continue;
+
         const auto t0 = std::chrono::steady_clock::now();
         const VecXd u = run.fn(sys, cfg);
         const auto t1 = std::chrono::steady_clock::now();
