@@ -104,14 +104,18 @@ echo ""
 echo "Compiling results..."
 COMBINED="$DATA_DIR/caksm_sweep_n${GRID_N}.csv"
 
-first_csv=$(ls "$DATA_DIR"/caksm_export_n${GRID_N}_*.csv 2>/dev/null | sort | head -1)
-if [[ -z "$first_csv" ]]; then
+mapfile -t export_csvs < <(ls "$DATA_DIR"/caksm_export_n${GRID_N}_*.csv 2>/dev/null | sort)
+if [[ ${#export_csvs[@]} -eq 0 ]]; then
     echo "No CSV files found to compile!"
     exit 1
 fi
 
-head -1 "$first_csv" > "$COMBINED"
-for f in $(ls "$DATA_DIR"/caksm_export_n${GRID_N}_*.csv | sort); do
+echo "option_type,n,temporal_steps,ei_steps,tol_ei,method,price,pde_err,ode_err,time_ms" > "$COMBINED"
+for f in "${export_csvs[@]}"; do
+    if [[ ! -s "$f" ]]; then
+        echo "  WARNING: skipping empty file $f"
+        continue
+    fi
     tail -n +2 "$f" >> "$COMBINED"
 done
 
