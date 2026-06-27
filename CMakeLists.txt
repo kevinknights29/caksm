@@ -34,10 +34,14 @@ target_link_libraries(caksm INTERFACE Eigen3::Eigen)
 # Main Executable
 add_executable(pricer src/main.cpp)
 target_link_libraries(pricer PRIVATE caksm)
+target_compile_options(pricer PRIVATE -march=native -O3)
+target_compile_definitions(pricer PRIVATE EIGEN_ENABLE_AVX512)
 
 # Profiler Executable (KSM-EI only: memory, timing, roofline)
 add_executable(profiler src/profiler.cpp)
 target_link_libraries(profiler PRIVATE caksm)
+target_compile_options(profiler PRIVATE -march=native -O3)
+target_compile_definitions(profiler PRIVATE EIGEN_ENABLE_AVX512)
 
 # FMA Loop (AVX-512 FP64 peak benchmark, only built on x86 with AVX-512F support)
 include(CheckCXXCompilerFlag)
