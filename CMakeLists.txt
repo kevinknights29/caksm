@@ -35,6 +35,10 @@ target_link_libraries(caksm INTERFACE Eigen3::Eigen)
 add_executable(pricer src/main.cpp)
 target_link_libraries(pricer PRIVATE caksm)
 
+# Profiler Executable (KSM-EI only: memory, timing, roofline)
+add_executable(profiler src/profiler.cpp)
+target_link_libraries(profiler PRIVATE caksm)
+
 # Catch2
 FetchContent_Declare(
         Catch2
