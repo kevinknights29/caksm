@@ -157,14 +157,14 @@ def main() -> None:
     n31_rows = load_sweep(N31_CSV)
     n61_rows = load_sweep(N61_CSV)
 
-    for n, rows, csv_path, slurm_script, bash_script in [
-        (31, n31_rows, N31_CSV, "scripts/slurm_sweep_n31.sh", "scripts/sweep_n31.sh"),
-        (61, n61_rows, N61_CSV, "scripts/slurm_sweep_n61.sh", "scripts/sweep_n61.sh"),
+    for n, rows, csv_path, bash_script in [
+        (31, n31_rows, N31_CSV, "scripts/sweep_n31.sh"),
+        (61, n61_rows, N61_CSV, "scripts/sweep_n61.sh"),
     ]:
         if not rows:
             print(
                 f"ERROR: n={n} sweep data not found at {csv_path}\n"
-                f"  Run the sweep first:  sbatch {slurm_script} or {bash_script}",
+                f"  Run the sweep first: {bash_script}",
                 file=sys.stderr,
             )
             sys.exit(1)

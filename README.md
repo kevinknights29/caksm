@@ -10,8 +10,8 @@ The script `scripts/benchmark_plots.py` reproduces Figure 1 from Niesen and Wrig
 It requires sweep data for both `n=31` and `n=61` to have been collected first:
 
 ```bash
-sbatch scripts/slurm_sweep_n31.sh   # or: bash scripts/sweep_n31.sh
-sbatch scripts/slurm_sweep_n61.sh   # or: bash scripts/sweep_n61.sh
+bash scripts/sweep_n31.sh
+batch scripts/sweep_n61.sh
 ```
 
 Once the data is in place, run the script with [`uv`](https://docs.astral.sh/uv/getting-started/installation/), which creates an isolated environment automatically:
