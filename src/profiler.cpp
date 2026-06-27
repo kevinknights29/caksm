@@ -366,7 +366,7 @@ static void print_roofline_report(const KSMEIStats& st, double bw_gbs)
 
     std::println("\n=== Roofline Model ===");
     std::println("||  Measured bandwidth  : {:.2f} GB/s  (STREAM-Triad, 128 MB)", bw_gbs);
-    std::println("||  Peak FP64 estimate  : {:.1f} GFLOP/s  (single-core arm64; see note)",
+    std::println("||  Peak FP64 estimate  : {:.1f} GFLOP/s",
                  peak_gflops);
     std::println("||  Ridge point         : {:.3f} FLOPs/byte\n||",
                  ridge);
