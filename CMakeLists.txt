@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(caksm LANGUAGES CXX)
+project(caksm LANGUAGES CXX C)
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 23)
@@ -71,3 +71,25 @@ target_link_libraries(arnoldi_tests
 include(CTest)
 include(Catch)
 catch_discover_tests(arnoldi_tests)
+
+# STREAM v5.10 Memory Bandwidth Benchmark (OpenMP multi-threaded)
+#
+# Array size: 100M doubles = 800 MiB/array, 2.4 GiB total across three arrays.
+# Rule: each array must be >= 4x the aggregate LLC. With ~48 MiB L3/socket on
+# the 8358 host, 100M is safely above that ceiling even across two sockets.
+# -mcmodel=medium is required because static data exceeds the 2 GiB small-model
+# limit (~85M elements).
+#
+# Run: ./scripts/stream_sweep.sh for the thread-count sweep (find the bandwidth saturation knee):
+find_package(OpenMP REQUIRED)
+add_executable(stream src/stream.c)
+target_compile_options(stream PRIVATE
+    -O3
+    -march=native
+    -mcmodel=medium
+)
+target_compile_definitions(stream PRIVATE
+    STREAM_ARRAY_SIZE=100000000
+    NTIMES=20
+)
+target_link_libraries(stream PRIVATE OpenMP::OpenMP_C m)
