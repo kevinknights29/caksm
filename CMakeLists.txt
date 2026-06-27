@@ -39,6 +39,16 @@ target_link_libraries(pricer PRIVATE caksm)
 add_executable(profiler src/profiler.cpp)
 target_link_libraries(profiler PRIVATE caksm)
 
+# FMA Loop (AVX-512 FP64 peak benchmark, only built on x86 with AVX-512F support)
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag(-mavx512f CXX_HAS_AVX512F)
+if(CXX_HAS_AVX512F)
+    add_executable(fma-loop src/fma_loop.cpp)
+    target_compile_options(fma-loop PRIVATE -march=native -O3)
+else()
+    message(STATUS "fma-loop skipped: compiler does not support -mavx512f")
+endif()
+
 # Catch2
 FetchContent_Declare(
         Catch2
