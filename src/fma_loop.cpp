@@ -39,6 +39,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <iostream>
 #include <print>
 #include <span>
 #include <stdexcept>
