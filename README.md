@@ -13,6 +13,20 @@ Results were gathered on a [Lambda AI](https://lambda.ai/instances) instance run
 |------------|-------|-------|---------|-------------|--------------|
 | NVIDIA A10 | 24 GB | 30    | 226 GiB | 1.3 TiB SSD | $1.29        |
 
+CPU details (from `lscpu`):
+
+| Property         | Value                                                                                                                                                                       |
+|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Architecture     | x86_64                                                                                                                                                                      |
+| Model name       | [Intel Xeon Platinum 8358 @ 2.60GHz](https://www.intel.com/content/www/us/en/products/sku/212282/intel-xeon-platinum-8358-processor-48m-cache-2-60-ghz/specifications.html) |
+| Sockets          | 30                                                                                                                                                                          |
+| Cores per socket | 1                                                                                                                                                                           |
+| Threads per core | 1                                                                                                                                                                           |
+| L1d cache        | 960 KiB (30 instances)                                                                                                                                                      |
+| L1i cache        | 960 KiB (30 instances)                                                                                                                                                      |
+| L2 cache         | 120 MiB (30 instances)                                                                                                                                                      |
+| L3 cache         | 480 MiB (30 instances)                                                                                                                                                      |
+
 It requires sweep data for both `n=31` and `n=61` to have been collected first:
 
 ```bash
