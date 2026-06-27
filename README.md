@@ -7,11 +7,17 @@ Five numerical methods are implemented: Crank-Nicolson, two ADI variants, Matrix
 
 The script `scripts/benchmark_plots.py` reproduces Figure 1 from Niesen and Wright: log-log plots of ODE error vs CPU time for all five methods, across both option types and both grid sizes.
 
+Results were gathered on a [Lambda AI](https://lambda.ai/instances) instance running an NVIDIA A10 GPU:
+
+| GPU        | VRAM  | vCPUs | RAM     | Storage     | Price/GPU/hr |
+|------------|-------|-------|---------|-------------|--------------|
+| NVIDIA A10 | 24 GB | 30    | 226 GiB | 1.3 TiB SSD | $1.29        |
+
 It requires sweep data for both `n=31` and `n=61` to have been collected first:
 
 ```bash
 bash scripts/sweep_n31.sh
-batch scripts/sweep_n61.sh
+bash scripts/sweep_n61.sh
 ```
 
 Once the data is in place, run the script with [`uv`](https://docs.astral.sh/uv/getting-started/installation/), which creates an isolated environment automatically:
@@ -24,6 +30,26 @@ The plot is saved to `scripts/benchmark_plots.png`.
 
 ![ODE Error vs CPU time](scripts/benchmark_plots.png)
 
+## Requirements
+
+This project requires **GCC 16** (for C++23 support). 
+
+On Ubuntu:
+
+```bash
+sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+sudo apt update
+sudo apt install gcc-16 g++-16
+```
+
+The benchmark plotting script requires [`uv`](https://docs.astral.sh/uv/getting-started/installation/). 
+
+Use `curl` to download the script and execute it with `sh`:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
 ## Dependencies
 
 | Library  | Source                           | Purpose                                         |
@@ -31,7 +57,7 @@ The plot is saved to `scripts/benchmark_plots.png`.
 | `Eigen`  | fetched via CMake `FetchContent` | Sparse linear algebra, dense matrix exponential |
 | `Catch2` | fetched via CMake `FetchContent` | Unit testing framework                          |
 
-No system-level installs are required. CMake downloads Eigen and Catch2 automatically on first configure.
+No system-level installs are required beyond GCC 16. CMake downloads Eigen and Catch2 automatically on first configure.
 
 ## Build
 
