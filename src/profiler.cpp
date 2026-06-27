@@ -357,11 +357,10 @@ static void print_timing_report(const KSMEIStats& st)
 
 static void print_roofline_report(const KSMEIStats& st, double bw_gbs)
 {
-    // Conservative peak FP64 estimate for Apple arm64 (scalar path, 1 core).
-    // Replace with your chip's spec if known (e.g. via sysctl hw.cpufrequency).
-    // M2: ~4 GFLOP/s scalar FP64 per performance core.
-    // For NEON SIMD (2-wide FP64): ~8 GFLOP/s.
-    constexpr double peak_gflops = 8.0;  // GFLOP/s (conservative single-core FP64)
+    // To correctly estimate the peak GFLOP/s, please run
+    // taskset -c 2 ./build/fma-loop
+    // The Intel Xeon Platinum 8358 (Ice Lake), achieved 78.7 GFLOP/s as peak_gflops
+    constexpr double peak_gflops = 78.7;
 
     const double ridge = peak_gflops / bw_gbs;  // FLOPs/byte
 
@@ -398,9 +397,8 @@ static void print_roofline_report(const KSMEIStats& st, double bw_gbs)
     std::println("||    In practice, V columns fit in L2/L3 for small Krylov m,");
     std::println("||    so actual GS intensity is higher than reported.");
     std::println("||  * To get the exact peak FP64, run:");
-    std::println("||      sysctl -a | grep brand_string");
-    std::println("||    and look up your chip's FP64 SIMD throughput.");
-    std::println("||  * expm AI is estimated; actual Padé degree may be < 13 for small m.");
+    std::println("||      taskset -c 2 ./build/fma-loop");
+    std::println("||  * expm AI is estimated, actual Padé degree may be < 13 for small m.");
     std::println("===");
 }
 
