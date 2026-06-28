@@ -359,8 +359,8 @@ static void print_roofline_report(const KSMEIStats& st, double bw_gbs)
 {
     // To correctly estimate the peak GFLOP/s, please run
     // taskset -c 2 ./build/fma-loop
-    // The Intel Xeon Platinum 8358 (Ice Lake), achieved 78.7 GFLOP/s as peak_gflops
-    constexpr double peak_gflops = 78.7;
+    // The Intel Xeon Platinum 8358 (Ice Lake), achieved 86.1 GFLOP/s as peak_gflops
+    constexpr double peak_gflops = 86.1;
 
     const double ridge = peak_gflops / bw_gbs;  // FLOPs/byte
 
