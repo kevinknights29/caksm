@@ -29,12 +29,6 @@ echo "========================================"
 echo " Parameter sweep  n=$GRID_N"
 echo "========================================"
 
-# Pre-compute ME referees (basket + rainbow) once and cache to DATA_DIR.
-# All benchmark runs below will load them instead of recomputing.
-echo ""
-echo "=== Pre-computing ME referees ==="
-"$PRICER" --n "$GRID_N" --save-referee --referee-dir "$DATA_DIR"
-
 # Time-stepping sweep: 2^n steps for n = 4, ..., 10  (16, 32, 64, 128, 256, 512, 1024)
 echo ""
 echo "=== Time-stepping sweep (steps = 2^n, n = 4, ..., 10) ==="
