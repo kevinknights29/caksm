@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <numeric>
@@ -209,13 +210,20 @@ inline std::pair<int, int> me_select_m_s(
 {
     constexpr int m_max = 55;
     constexpr int p_max = 8;
+    // Maximum physically expected total work (m*s). Configurations requiring more
+    // substeps than this are never the optimum and are skipped to prevent overflow.
+    constexpr int64_t cost_cap = 10'000'000LL;
 
-    auto ceil_s = [](double a, double b) -> int {
-        return static_cast<int>(std::ceil(a / b));
+    // Validate in the double domain first, then narrow — never narrow then validate.
+    auto ceil_s = [](double a, double b) -> int64_t {
+        const double ratio = a / b;
+        if (ratio > static_cast<double>(cost_cap)) return cost_cap + 1;
+        return static_cast<int64_t>(std::ceil(ratio));
     };
 
     // Exact scaled 1-norm (||T * A_op||_1 = T * ||A_op||_1)
-    const double norm_1 = me_sparse_1norm(A_op) * t_final;
+    const double A_op_1norm = me_sparse_1norm(A_op);
+    const double norm_1 = A_op_1norm * t_final;
 
     // Main-branch threshold: Al-Mohy & Higham (2011) eq. (3.11), l=1, n_0=1
     const double threshold =
@@ -226,23 +234,25 @@ inline std::pair<int, int> me_select_m_s(
     };
 
     if (norm_1 < threshold) {
-        double min_cost = std::numeric_limits<double>::infinity();
+        int64_t min_cost = std::numeric_limits<int64_t>::max();
         int m_star = m_max;
         for (int m = 1; m <= m_max; ++m) {
-            const double cost = static_cast<double>(m) * ceil_s(norm_1, theta_at(m));
+            const int64_t cost = static_cast<int64_t>(m) * ceil_s(norm_1, theta_at(m));
+            if (cost > cost_cap) continue;
             if (cost < min_cost) { min_cost = cost; m_star = m; }
         }
-        const int s = std::max(1, ceil_s(norm_1, theta_at(m_star)));
+        const int s = static_cast<int>(std::max(int64_t{1}, ceil_s(norm_1, theta_at(m_star))));
         return {m_star, s};
     }
 
     // Else branch: compute d[p] = ||A_op^p||_1^{1/p} for p = 2..p_max+1
     // alpha[p] = max(d[p], d[p+1]) * t_final  (scaled to the full time horizon)
     std::array<double, p_max + 2> d{};
-    for (int p = 2; p <= p_max + 1; ++p)
+    for (int p = 2; p <= p_max + 1; ++p) {
         d[static_cast<std::size_t>(p)] = d_p_est(A_op, p) * t_final;
+    }
 
-    double min_cost = std::numeric_limits<double>::infinity();
+    int64_t min_cost = std::numeric_limits<int64_t>::max();
     int m_star = m_max;
     for (int p = 2; p <= p_max; ++p) {
         const double alpha =
@@ -250,10 +260,11 @@ inline std::pair<int, int> me_select_m_s(
                      d[static_cast<std::size_t>(p + 1)]);
         const int m_lo = p * (p - 1) - 1;
         for (int m = m_lo; m <= m_max; ++m) {
-            const double cost = static_cast<double>(m) * ceil_s(alpha, theta_at(m));
+            const int64_t cost = static_cast<int64_t>(m) * ceil_s(alpha, theta_at(m));
+            if (cost > cost_cap) continue;
             if (cost < min_cost) { min_cost = cost; m_star = m; }
         }
     }
-    const int s = std::max(1, static_cast<int>(min_cost / m_star));
+    const int s = static_cast<int>(std::max(int64_t{1}, min_cost / static_cast<int64_t>(m_star)));
     return {m_star, s};
 }
