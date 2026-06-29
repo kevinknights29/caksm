@@ -43,14 +43,18 @@ target_link_libraries(profiler PRIVATE caksm)
 target_compile_options(profiler PRIVATE -march=native -O3)
 target_compile_definitions(profiler PRIVATE EIGEN_ENABLE_AVX512)
 
-# FMA Loop (AVX-512 FP64 peak benchmark, only built on x86 with AVX-512F support)
+# FMA Loop (peak FP64 throughput benchmark)
+# Requires AVX-512F (Intel) or AVX2+FMA (AMD/Intel Haswell+).
+# Uses -march=native so the compiler selects the right ISA path automatically.
+# On arm64 / unsupported ISA the check fails silently and the target is skipped.
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag(-mavx512f CXX_HAS_AVX512F)
-if(CXX_HAS_AVX512F)
+check_cxx_compiler_flag(-mavx2    CXX_HAS_AVX2)
+if(CXX_HAS_AVX512F OR CXX_HAS_AVX2)
     add_executable(fma-loop src/fma_loop.cpp)
     target_compile_options(fma-loop PRIVATE -march=native -O3)
 else()
-    message(STATUS "fma-loop skipped: compiler does not support -mavx512f")
+    message(STATUS "fma-loop skipped: requires AVX2+FMA or AVX-512F (x86-64 only)")
 endif()
 
 # Catch2
