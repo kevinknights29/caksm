@@ -20,11 +20,11 @@ Per-method sweep selection:
 # ///
 
 import csv
-import os
 import sys
 from pathlib import Path
 
 import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
@@ -38,14 +38,15 @@ OUTPUT    = REPO_ROOT / "scripts" / "benchmark_plots.png"
 N31_CSV = DATA_DIR / "n31" / "caksm_sweep_n31.csv"
 N61_CSV = DATA_DIR / "n61" / "caksm_sweep_n61.csv"
 
-# Method metadata (paper's Figure 1 color scheme)
+# Method metadata (paper's Figure 1 color scheme, refined to hex)
 METHOD_META = {
-    "KSM-EI":  {"label": "Krylov (KSM-EI)",           "color": "black",  "lw": 1.5},
-    "ADI-HV":  {"label": "Hundsdorfer–Verwer (HV)",   "color": "blue",   "lw": 1.5},
-    "ADI-DR":  {"label": "Douglas (DR)",               "color": "green",  "lw": 1.5},
-    "CN":      {"label": "Crank–Nicolson (CN)",        "color": "red",    "lw": 1.5},
-    "ME":      {"label": "Al-Mohy–Higham (ME)",        "color": "cyan",   "lw": 1.5},
+    "KSM-EI": {"label": "Krylov (KSM-EI)",         "color": "#1A1A1A", "lw": 1.8},
+    "ADI-HV": {"label": "Hundsdorfer–Verwer (HV)", "color": "#185FA5", "lw": 1.8},
+    "ADI-DR": {"label": "Douglas (DR)",            "color": "#0F6E56", "lw": 1.8},
+    "CN":     {"label": "Crank–Nicolson (CN)",     "color": "#993C1D", "lw": 1.8},
+    "ME":     {"label": "Al-Mohy–Higham (ME)",     "color": "#1D9E75", "lw": 1.8},
 }
+C_TARGET = "#888780"
 
 OPTION_TYPES = ["rainbow", "basket"]
 GRID_SIZES   = [31, 61]
@@ -141,16 +142,16 @@ def plot_panel(
             ax.plot(t, e, "o-", color=meta["color"], label=meta["label"],
                     ms=4, lw=meta["lw"])
 
-    ax.axhline(1e-4, color="gray", linestyle=":", linewidth=1.0, alpha=0.8,
+    ax.axhline(1e-4, color=C_TARGET, linestyle=":", linewidth=1.2,
                label=r"$10^{-4}$ target")
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.xaxis.set_major_formatter(ticker.LogFormatterSciNotation())
     ax.yaxis.set_major_formatter(ticker.LogFormatterSciNotation())
-    ax.grid(True, which="both", ls="--", alpha=0.4)
+    ax.grid(True, which="both", ls="-", lw=0.3, alpha=0.35)
     ax.set_xlabel("CPU time (s)", fontsize=9)
     ax.set_ylabel(r"$\|u_{\mathrm{cube}} - u_{\mathrm{ref\_cube}}\|$", fontsize=9)
-    ax.legend(fontsize=8, framealpha=0.9)
+    ax.legend(fontsize=8, framealpha=0.92)
 
 
 def main() -> None:
@@ -171,7 +172,7 @@ def main() -> None:
 
     fig, axes = plt.subplots(
         nrows=2, ncols=2,
-        figsize=(10, 8),
+        figsize=(11, 9),
         constrained_layout=True,
     )
 
@@ -201,7 +202,7 @@ def main() -> None:
 
     fig.suptitle("ODE Error vs CPU time", fontsize=12)
 
-    fig.savefig(OUTPUT, dpi=150, bbox_inches="tight")
+    fig.savefig(OUTPUT, dpi=300, bbox_inches="tight")
     print(f"Saved: {OUTPUT}")
 
 
