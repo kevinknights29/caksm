@@ -43,18 +43,30 @@ target_link_libraries(profiler PRIVATE caksm)
 target_compile_options(profiler PRIVATE -march=native -O3)
 target_compile_definitions(profiler PRIVATE EIGEN_ENABLE_AVX512)
 
+# Scaling Executable (OpenMP strong/weak-scaling harness for KSM-EI)
+#
+# Per-kernel instrumented KSM-EI at a fixed Krylov dimension, with a hand-rolled
+# CSR row-partitioned SpMV and parallel Gram-Schmidt, so SpMV's bandwidth
+# plateau and Modified Gram-Schmidt's synchronization roll-off appear on the same axis.
+# Thread count P comes from OMP_NUM_THREADS, placement from OMP_PLACES=cores and
+# OMP_PROC_BIND=close (set by scripts/scaling_strong.sh and scaling_weak.sh).
+find_package(OpenMP REQUIRED)
+add_executable(scaling src/scaling.cpp)
+target_link_libraries(scaling PRIVATE caksm OpenMP::OpenMP_CXX)
+target_compile_options(scaling PRIVATE -march=native -O3)
+target_compile_definitions(scaling PRIVATE EIGEN_ENABLE_AVX512)
+
 # FMA Loop (peak FP64 throughput benchmark)
-# Requires AVX-512F (Intel) or AVX2+FMA (AMD/Intel Haswell+).
+# Requires AVX2+FMA (AMD/Intel Haswell+).
 # Uses -march=native so the compiler selects the right ISA path automatically.
 # On arm64 / unsupported ISA the check fails silently and the target is skipped.
 include(CheckCXXCompilerFlag)
-check_cxx_compiler_flag(-mavx512f CXX_HAS_AVX512F)
 check_cxx_compiler_flag(-mavx2    CXX_HAS_AVX2)
 if(CXX_HAS_AVX512F OR CXX_HAS_AVX2)
     add_executable(fma-loop src/fma_loop.cpp)
     target_compile_options(fma-loop PRIVATE -march=native -O3)
 else()
-    message(STATUS "fma-loop skipped: requires AVX2+FMA or AVX-512F (x86-64 only)")
+    message(STATUS "fma-loop skipped: requires AVX2+FMA (x86-64 only)")
 endif()
 
 # Catch2
