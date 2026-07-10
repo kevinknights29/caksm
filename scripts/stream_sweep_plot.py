@@ -1,7 +1,7 @@
 """
 Side-by-side comparison of STREAM Triad bandwidth scaling:
-  left  → SSE (default compiler flags)
-  right → AVX-512 (-march=native)
+  left -> SSE (default compiler flags)
+  right -> AVX2 (-march=native, Ryzen Threadripper 3960X)
 """
 # /// script
 # dependencies = [
@@ -21,32 +21,40 @@ OUTPUT = Path(__file__).resolve().parent / "stream_sweep.png"
 
 
 # DATA: thread count -> list of Triad results (MB/s) across repetitions.
+# Run stream_sweep.sh and paste the numbers here (one list entry per run).
+# Thread counts match the sweep: 1, 2, 4, 8, 12, 16, 24, 48.
 # SSE (default flags, no -march=native)
 SSE_SWEEPS = {
-    #     run1        run2        run3
-    1:  [11837.0,   13152.6,    10962.7],
-    2:  [21791.0,   25053.5,    21782.1],
-    4:  [39120.5,   41024.3,    38448.0],
-    8:  [66480.4,   68665.7,    63831.7],
-    16: [98696.3,  102292.8,    98139.2],
-    30: [97059.5,   99808.9,    97803.5],
+    #     run1       run2       run3
+    1:  [22796.3,  22796.8,  22791.2],
+    2:  [26620.8,  26628.5,  26609.3],
+    4:  [26486.6,  26529.6,  26470.8],
+    8:  [30402.5,  30385.9,  30394.0],
+    12: [36868.7,  36882.9,  36878.3],
+    16: [38381.6,  38381.6,  38385.9],
+    24: [39346.2,  39298.4,  39274.8],
+    48: [38655.4,  38789.8,  38758.5],
 }
-# AVX-512 (-march=native)
-AVX512_SWEEPS = {
-    #     run1        run2        run3
-    1:  [14335.8,   13244.6,    13721.0],
-    2:  [27031.5,   26504.4,    27848.4],
-    4:  [46458.6,   44730.9,    47742.1],
-    8:  [77662.7,   74110.9,    76108.4],
-    16: [109323.9, 108844.0,   108572.8],
-    30: [118442.7, 117325.9,   110213.3],
+# AVX2 (-march=native, AMD Ryzen Threadripper 3960X)
+AVX2_SWEEPS = {
+    #     run1       run2       run3
+    1:  [22642.3,  22623.8,  22557.2],
+    2:  [26713.3,  26734.1,  26703.7],
+    4:  [26468.1,  26479.0,  26517.6],
+    8:  [30436.7,  30443.3,  30444.9],
+    12: [36861.8,  36846.0,  36918.0],
+    16: [38384.6,  38368.1,  38341.1],
+    24: [39469.1,  39434.0,  39413.4],
+    48: [38816.8,  38787.2,  38787.8],
 }
 
-# Hardware reference: Intel Xeon Platinum 8358, single socket.
-# 8 channels x DDR4-3200 (25.6 GB/s/ch) = 204.8 GB/s theoretical peak.
-THEORETICAL_ROOF_GBS = 204.8
-THEORETICAL_LABEL = "1-socket theoretical (8 ch DDR4-3200)"
-KNEE_THREADS = 16
+# Hardware reference: AMD Ryzen Threadripper 3960X, single socket.
+# 4 channels x DDR4-3200 (25.6 GB/s/ch) = 102.4 GB/s theoretical peak.
+THEORETICAL_ROOF_GBS = 102.4
+THEORETICAL_LABEL = "1-socket theoretical (4 ch DDR4-3200)"
+# Bandwidth peaks at 24 threads (39.5 GB/s) and drops ~0.7 GB/s at 48 (SMT
+# adds nothing on a memory-bound kernel); 24 is the saturation knee.
+KNEE_THREADS = 24
 C_DATA, C_IDEAL, C_THEO, C_ROOF = "#185FA5", "#888780", "#993C1D", "#0F6E56"
 
 
@@ -104,13 +112,14 @@ def main() -> None:
 
     draw_subplot(ax_sse, SSE_SWEEPS,
                  "STREAM Triad Bandwidth Scaling (SSE)")
-    draw_subplot(ax_avx, AVX512_SWEEPS,
-                 "STREAM Triad Bandwidth Scaling (AVX-512, –march=native)")
+    draw_subplot(ax_avx, AVX2_SWEEPS,
+                 "STREAM Triad Bandwidth Scaling (AVX2, –march=native)")
 
     ax_avx.set_ylabel("")
 
-    fig.suptitle("STREAM Triad: SSE vs AVX-512 Memory Bandwidth", fontsize=13,
-                 fontweight="bold")
+    fig.suptitle("STREAM Triad: SSE vs AVX2 Memory Bandwidth\n"
+                 "AMD Ryzen Threadripper 3960X, 24 cores, quad-channel DDR4",
+                 fontsize=13)
 
     fig.savefig(OUTPUT, dpi=300, bbox_inches="tight")
     print(f"Saved: {OUTPUT}")
