@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <format>
+#include <fstream>
 #include <iostream>
 #include <numeric>
 #include <optional>
@@ -573,12 +574,14 @@ static void print_roofline_report(const KSMEIStats& st,
 struct ProfilerConfig {
     Config        pde;
     HardwareConfig hw;
+    std::string   csv_path;  // optional: append one m(n) row for the growth curve
 };
 
 static ProfilerConfig parse_profiler_args(std::span<const char* const> args)
 {
     Config pde_cfg;
     bool   tol_given = false;
+    std::string csv_path;
 
     // Two-pass approach: resolve --hw first so the preset is loaded before any
     // per-field overrides (--peak-gflops / --l2-kb / --l3-kb) are applied.
@@ -612,6 +615,7 @@ static ProfilerConfig parse_profiler_args(std::span<const char* const> args)
         else if (arg == "--hw") {
             next();  // already consumed in the first pass, skip the value
         }
+        else if (arg == "--csv") csv_path = std::string(next());
         else if (arg == "--peak-gflops") {
             if (!hw_opt) throw std::invalid_argument("--peak-gflops requires --hw to be given first");
             hw_opt->peak_gflops = std::stod(std::string(next()));
@@ -626,7 +630,7 @@ static ProfilerConfig parse_profiler_args(std::span<const char* const> args)
         }
         else if (arg == "--help") {
             std::println("Usage: ./profiler --hw PRESET [--n N] [--steps S] [--tol T]");
-            std::println("                  [--option basket|rainbow]");
+            std::println("                  [--option basket|rainbow] [--csv PATH]");
             std::println("                  [--peak-gflops X] [--l2-kb X] [--l3-kb X]");
             std::println("");
             std::println("  --hw PRESET       hardware preset (required): intel-8358 | amd-3960x");
@@ -634,6 +638,7 @@ static ProfilerConfig parse_profiler_args(std::span<const char* const> args)
             std::println("  --steps S         KSM-EI time steps (default 100)");
             std::println("  --tol T           KSM-EI convergence tolerance (default 1e-8)");
             std::println("  --option TYPE     basket (default) or rainbow");
+            std::println("  --csv PATH        append one m(n) row (n, avg Krylov m, kernel %)");
             std::println("  --peak-gflops X   override sustained FP64 peak [GFLOP/s]");
             std::println("  --l2-kb X         override per-core L2 size [KiB]");
             std::println("  --l3-kb X         override per-core/per-CCX L3 size [KiB]");
@@ -651,13 +656,13 @@ static ProfilerConfig parse_profiler_args(std::span<const char* const> args)
             "  Run ./profiler --help for usage.");
 
     pde_cfg.ei_steps = tol_given ? 100 : pde_cfg.temporal_steps;
-    return { pde_cfg, *hw_opt };
+    return { pde_cfg, *hw_opt, csv_path };
 }
 
 int main(const int argc, char* argv[])
 {
     try {
-        auto [cfg, hw] = parse_profiler_args(
+        auto [cfg, hw, csv_path] = parse_profiler_args(
             std::span<const char* const>(argv, static_cast<std::size_t>(argc)));
 
         const bool rainbow = (cfg.option_type == EuropeanOptionType::CALL_MIN_RAINBOW);
@@ -694,6 +699,27 @@ int main(const int argc, char* argv[])
         std::println("\n  [Measuring bandwidth hierarchy (L2 / L3 / DRAM)...]");
         const BandwidthHierarchy bw = measure_bandwidth_hierarchy(hw);
         print_roofline_report(st, hw, bw);
+
+        // 4. Optional m(n) row for the Krylov-growth curve.
+        //    The profiler runs the genuine convergence-driven KSM-EI, so avg_krylov
+        //    is the real per-unknown Krylov cost m(n).
+        if (!csv_path.empty()) {
+            const double t_acc = st.spmv.time_s + st.gs.time_s + st.expm.time_s;
+            const double t_oth = std::max(0.0, st.t_total_s - t_acc);
+            auto pct = [&](double t) { return 100.0 * t / st.t_total_s; };
+            const bool exists = std::ifstream(csv_path).good();
+            std::ofstream f(csv_path, std::ios::app);
+            if (!f) throw std::runtime_error("Cannot open CSV: " + csv_path);
+            if (!exists)
+                f << "option,n,N,tol,ei_steps,avg_krylov,converged,"
+                     "spmv_pct,gs_pct,expm_pct,other_pct\n";
+            f << (rainbow ? "rainbow" : "basket") << ',' << cfg.n << ','
+              << (st.matrix_mem.rows) << ',' << cfg.tol_ei << ',' << st.n_steps << ','
+              << st.avg_krylov << ',' << st.converged << ','
+              << pct(st.spmv.time_s) << ',' << pct(st.gs.time_s) << ','
+              << pct(st.expm.time_s) << ',' << pct(t_oth) << '\n';
+            std::println("\n  [Appended m(n) row to {}]", csv_path);
+        }
 
     } catch (const std::exception& e) {
         std::println(std::cerr, "Error: {}", e.what());
