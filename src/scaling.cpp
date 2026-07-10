@@ -79,11 +79,7 @@
 #include "config.hpp"
 #include "pde_operators.hpp"
 
-namespace std::__1::chrono {
-    class steady_clock;
-}
-
-using Clock = std::__1::chrono::steady_clock;
+using Clock = std::chrono::steady_clock;
 using Sec   = std::chrono::duration<double>;
 
 static inline double elapsed_s(Clock::time_point t0)
