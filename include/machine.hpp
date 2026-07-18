@@ -62,7 +62,7 @@ struct Machine {
 };
 
 /**
- * Last-level cache is the level whose miss generates DRAM traffic (spec section 2), so L3.
+ * Last-level cache is the level whose miss generates DRAM traffic, so L3.
  *
  * The reduction parameters replaced an earlier alpha*h*log2(P) model, refuted by
  * calibration on puffin's tree: levels are not equal. Thread 0's partners cost ~121 ns
@@ -118,7 +118,7 @@ inline constexpr std::array<Machine, 1> kMachines {{
  *
  * The spec writes this as P * c_slice, exact at the CCX-aligned points (P = 3, 6, ..., 24)
  * the sweep scripts use. Away from them, counting engaged slices is the honest figure.
- * Aggregate on both sides of the ratio, so P is never double-counted (spec section 2).
+ * Aggregate on both sides of the ratio, so P is never double-counted.
  */
 [[nodiscard]] inline int64_t aggregate_llc_bytes(const Machine& mc, int P) noexcept
 {

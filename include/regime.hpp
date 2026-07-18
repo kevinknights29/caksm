@@ -61,10 +61,10 @@ using SpMatS = Eigen::SparseMatrix<double>;
  * The operator streams once and y is written once. The pattern knob controls only the
  * gather x[col_idx]: x_reuse = 1 (banded) costs the compulsory n*8 read, x_reuse = 0
  * (scattered) makes every gather a potential miss at nnz*8. This moves bytes-from-DRAM at
- * fixed flops, working set, and spectrum (spec section 4).
+ * fixed flops, working set, and spectrum.
  *
- * @note Modeled, not counted: AMD uncore DRAM counters need root on puffin, so spec section
- *       10's fallback applies (modeled bytes reconciled against the roofline).
+ * @note Modeled, not counted: AMD uncore DRAM counters need root on puffin, so modeled
+ *       bytes are reconciled against the roofline instead.
  */
 [[nodiscard]] inline double spmv_dram_bytes(int64_t nnz, int64_t n, double x_reuse) noexcept
 {
@@ -242,7 +242,7 @@ struct CycleTime {
  * @brief Vertical coordinate: working set relative to the cache the team commands.
  *
  * R_v < 1 fits in aggregate last-level cache (no DRAM traffic to avoid, matrix-powers buys
- * nothing); R_v > 1 the operator spills. Aggregate on both sides (spec section 2), so
+ * nothing); R_v > 1 the operator spills. Aggregate on both sides, so
  * R_v ~ 1/P: P retires the vertical opportunity it creates the horizontal one.
  */
 [[nodiscard]] inline double R_v(const Machine& mc, int P, int64_t working_set) noexcept
@@ -414,7 +414,7 @@ inline constexpr double kUnitRoundoff = std::numeric_limits<double>::epsilon() /
  * CRITICAL: needs Q orthogonal, i.e. NORMAL A. For non-normal A = X Lambda X^{-1} the basis
  * is X M and the true kappa departs from this by up to kappa(X) in either direction, so this
  * value is UNRELIABLE there. The discretized Black-Scholes operator is non-normal, so its
- * s_max must be MEASURED (see synthetic.hpp eigenvector_condition and the C6 control). Feed
+ * s_max must be MEASURED (see synthetic.hpp eigenvector_condition). Feed
  * c = X^{-1} v (spectral_coefficients handles the scaling).
  *
  * @param lambda eigenvalues of A
@@ -440,7 +440,7 @@ inline constexpr double kUnitRoundoff = std::numeric_limits<double>::epsilon() /
  *
  * Purely a-priori: walks the analytic Vandermonde condition number until it crosses
  * u^(-1/2), no matrix formed. On the 1D Laplacian scaffold this yields s_max = 9, so an
- * m = 8 cycle fits inside a single certified block (spec section 3).
+ * m = 8 cycle fits inside a single certified block.
  */
 [[nodiscard]] inline int predicted_s_max(const Eigen::VectorXd& lambda,
                                          const Eigen::VectorXd& c,
@@ -468,7 +468,7 @@ inline constexpr double kUnitRoundoff = std::numeric_limits<double>::epsilon() /
  * spectrum knob's `shift` moves basis conditioning while `scale` moves m.
  *
  * DOMAIN: a Hermitian PSD theorem, meaningless for an indefinite (shift across zero) or
- * non-normal (advection != 0) operator; C3 gates on this only when Hermitian PSD. The
+ * non-normal (advection != 0) operator; apply it only when Hermitian PSD. The
  * constants (prefactor 10, exponent 1/5) are deliberately loosened so the bound stays a
  * safe upper bound.
  *
