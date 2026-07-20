@@ -3,6 +3,9 @@
 # =======================================================================
 data/
 
+# Tmux run logs from the long-running sweeps
+/logs/
+
 # =======================================================================
 # C++ .gitignore template
 # Source: https://github.com/github/gitignore/blob/main/C%2B%2B.gitignore
