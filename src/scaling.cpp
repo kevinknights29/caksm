@@ -2,43 +2,41 @@
  * @file scaling.cpp
  * @brief OpenMP strong/weak-scaling harness for the baseline KSM-EI solver.
  *
- * This is a measurement instrument which measures how the two hot kernels of
+ * This is a measurement instrument to show how the two hot kernels of
  * one Arnoldi cycle respond to added cores, at a frozen kernel mix, so that
- * any change across P is attributable to hardware and not to a drifting
- * algorithm.  It does NOT measure solution accuracy (convergence tolerance is
- * not an observable here).
+ * any change across P is attributable to hardware.
+ * It does not measure solution accuracy (convergence tolerance is not an observable here).
  *
  * What it implements, and why:
  *
- *   - Fixed Krylov dimension m (default 8).  Every time step
- *     runs exactly m Arnoldi iterations with the convergence check DISABLED.
- *     Freezing m freezes the GS/SpMV work ratio (MGS ~ m^2, SpMV ~ m), so the
- *     kernel mix does not drift across P or n.
+ *   - Fixed Krylov dimension m (default 8), convergence check disabled, so every
+ *     time step runs exactly m Arnoldi iterations. Freezing m freezes the GS/SpMV
+ *     work ratio (MGS ~ m^2, SpMV ~ m), so the kernel mix does not drift across P or n.
  *
- *   - Hand-rolled CSR + row-partitioned SpMV.  Each thread owns
- *     a contiguous, disjoint slice of the OUTPUT vector y = Ax: sole writer, no
- *     atomics, clean first-touch of y.  Row-contiguous (CSR) storage makes
- *     "all nonzeros in a row-block" a contiguous read.  Partition seams are
- *     aligned to the cache line (8 doubles / 64 B) so no output line straddles
- *     two threads (avoids false sharing at the seams).
+ *   - Hand-rolled CSR + row-partitioned SpMV. Each thread owns a contiguous,
+ *     disjoint slice of the output vector y = Ax (sole writer, no atomics, clean
+ *     first-touch), and partition seams are cache-line aligned (8 doubles / 64 B)
+ *     to avoid false sharing.
  *
- *   - Parallel Modified Gram-Schmidt (MGS).  Each dot product and the
- *     final norm is a *global reduction* across threads: this is exactly the
- *     horizontal-communication / synchronization cost the study exists to expose.
+ *   - Parallel Modified Gram-Schmidt (MGS): each dot product and the final norm
+ *     is a global reduction across threads, exactly the horizontal-communication
+ *     cost the study exists to expose. The reduction comes from
+ *     include/reduction.hpp, which scripts/calibrate_alpha.sh also calibrates
+ *     against; `--reduce linear` reproduces the old barrier-plus-scan artifact so
+ *     its inflation can be measured, `tree` is the default and what a reported
+ *     result should use.
  *
- *   - Two initialization arms, selected with --arm:
- *       A  naive master-thread init -> matrix parked on thread 0's L3 slice.
- *       B  parallel first-touch     -> matrix distributed across the slices
- *                                       that will later compute on it.
- *     Same partition drives first-touch and compute, so placement matches
- *     computation and is repeatable.
+ *   - Two initialization arms, selected with --arm: A parks the matrix on
+ *     thread 0 (naive master-thread init); B distributes it across the slices
+ *     that will later compute on it (parallel first-touch). The same partition
+ *     drives first-touch and compute, so placement matches computation.
  *
- *   - Per-kernel timers (SpMV / MGS / dense expm / other) so a single
- *     run yields SpMV's plateau AND MGS's roll-off on the same axis.
+ *   - Per-kernel timers (SpMV / MGS / dense expm / other), so one run yields
+ *     SpMV's plateau and MGS's roll-off on the same axis.
  *
- *   - median-of-repeats timing with warm-up discard and an inter-quartile-range
- *     error bar. On a boost-enabled chip, timing noise is right-skewed.
- *     The median reports throughput that can actually be sustained.
+ *   - Median-of-repeats timing with an inter-quartile-range error bar: timing
+ *     noise is right-skewed on a boost-enabled chip, and the median reports
+ *     throughput that can actually be sustained.
  *
  * Thread count P is taken from the OpenMP runtime (OMP_NUM_THREADS), placement
  * and binding come from OMP_PLACES=cores and OMP_PROC_BIND=close, set by the
@@ -78,6 +76,7 @@
 
 #include "config.hpp"
 #include "pde_operators.hpp"
+#include "reduction.hpp"
 
 using Clock = std::chrono::steady_clock;
 using Sec   = std::chrono::duration<double>;
@@ -90,36 +89,37 @@ static inline double elapsed_s(Clock::time_point t0)
 // Row partition
 //
 // Split the rows [0, aug_N) into P contiguous blocks whose interior seams are
-// aligned to the cache line (8 doubles = 64 B). The SAME partition drives the
+// aligned to the cache line (8 doubles = 64 B). The same partition drives the
 // first-touch loop and every compute loop (SpMV write, GS daxpy/scale, dot
-// reduction), so thread t owns the identical index range everywhere.
-// This is what makes first-touch meaningful and the measurement repeatable.
+// reduction), so thread t owns the identical index range everywhere, which is
+// what makes first-touch meaningful and the measurement repeatable.
 struct Partition {
     int                  P;
     std::vector<int64_t> start;  // size P+1; start[0]=0, start[P]=aug_N
 };
 
-// SpMV compute schedule: the experimental axis that tests WHY the strong-scaling
+// SpMV compute schedule: the experimental axis that tests why the strong-scaling
 // transition happens. The transition is hypothesized to be a per-CCX L3-capacity
 // effect: once each CCX's share of the matrix (3 cores x ~ws/P) fits in its own
-// 16 MiB slice and STAYS resident across the ei_steps * m SpMVs, reads come from L3
-// instead of DRAM.  The three schedules break that hypothesis in different ways:
+// 16 MiB slice and stays resident across the ei_steps * m SpMVs, reads come from L3
+// instead of DRAM. The three schedules break that hypothesis in different ways:
 //
-//   BLOCK: contiguous band per core, FIXED across all SpMVs.
-//          Each CCX re-reads the same ~3*ws/P MiB every SpMV -> becomes L3-resident at P>=12.
-//           (locality-preserving control)
+//   BLOCK    contiguous band per core, fixed across all SpMVs. Each CCX re-reads
+//            the same ~3*ws/P MiB every SpMV, so it becomes L3-resident at P>=12
+//            (the locality-preserving control).
 //
-//   CYCLIC: cache-line blocks dealt round-robin, FIXED across SpMVs.
-//           Rows are scattered across the whole matrix, but each CCX's volume is still
-//           3*ws/P MiB, and sets L3 residency, so this is predicted to STILL transition.
-//           It isolates "contiguity" at fixed volume: a control that shows scatter alone changes nothing.
+//   CYCLIC   cache-line blocks dealt round-robin, fixed across SpMVs. Rows are
+//            scattered across the whole matrix, but each CCX's volume is still
+//            3*ws/P MiB and sets the same L3 residency, so this is predicted to
+//            still transition; it isolates contiguity at fixed volume, a control
+//            that shows scatter alone changes nothing.
 //
-//   ROTATE: contiguous bands, but which band a core computes ROTATES by one every
-//           SpMV. Over the ei_steps * m reuse window each CCX sweeps ALL bands, so
-//           its 16 MiB slice can never retain a stable cache-fitting subset: the
-//           per-CCX footprint becomes the WHOLE matrix and every SpMV pays DRAM.
-//           If the per-CCX-capacity mechanism is correct, the transition MUST
-//           degrade here.
+//   ROTATE   contiguous bands, but which band a core computes rotates by one
+//            every SpMV. Over the ei_steps * m reuse window each CCX sweeps every
+//            band, so its 16 MiB slice can never retain a stable cache-fitting
+//            subset: the per-CCX footprint becomes the whole matrix and every
+//            SpMV pays DRAM. If the per-CCX-capacity mechanism is correct, the
+//            transition must degrade here.
 enum class Scheme { BLOCK, CYCLIC, ROTATE };
 
 static Scheme parse_scheme(std::string_view s)
@@ -210,7 +210,6 @@ struct WorkState {
     CsrMatrix           A;        // working matrix (placement per arm)
     std::vector<double> V;        // aug_N * (m+1), column-major
     std::vector<double> w;        // aug_N: SpMV output / GS work vector
-    std::vector<double> partial;  // P: per-thread partials for reductions
 };
 
 // Arm A: naive master-thread init. malloc + fill from thread 0. First-touch
@@ -266,7 +265,7 @@ static void place_first_touch(WorkState& st, const CsrMatrix& ref, const Partiti
 
 // Parallel primitives (all driven by the same row partition)
 // One CSR row: y[r] = sum_k A(r,k) x[k]. Shared by every schedule so they differ
-// ONLY in which rows a thread visits, never in the arithmetic or the byte model.
+// only in which rows a thread visits, never in the arithmetic or the byte model.
 static inline void spmv_row(const CsrMatrix& A, const double* x, double* y, int64_t r)
 {
     double acc = 0.0;
@@ -278,12 +277,12 @@ static inline void spmv_row(const CsrMatrix& A, const double* x, double* y, int6
     y[r] = acc;
 }
 
-// SPMD SpMV: the rows THIS thread computes for one SpMV, under the chosen
-// schedule.  Called from inside a persistent parallel region (it opens no region
+// SPMD SpMV: the rows this thread computes for one SpMV, under the chosen
+// schedule. Called from inside a persistent parallel region (it opens no region
 // of its own), so the only synchronization charged to the kernel is genuine
-// barrier latency. spmv_row does the arithmetic, the schedule selects only WHICH rows,
-// so byte model and flop count are identical across schedules.
-// `offset` (the running SpMV index) is used only by ROTATE.
+// barrier latency. spmv_row does the arithmetic; the schedule selects only which
+// rows, so byte model and flop count are identical across schedules. `offset`
+// (the running SpMV index) is used only by ROTATE.
 static inline void spmv_thread_rows(const CsrMatrix& A, const double* x, double* y,
                                     const Partition& part, int64_t aug_N,
                                     Scheme sched, int t, int offset)
@@ -325,11 +324,11 @@ static inline void spmv_thread_rows(const CsrMatrix& A, const double* x, double*
     }
 }
 
-// A thread's partial sum of a dot b over its BLOCK-partition rows.
-// The cross-thread combine happens in the caller after a barrier (see run_solve).
-// That barrier + combine IS the global reduction whose dependency chain limits MGS scaling.
-// `#pragma omp simd` lets each partial vectorize so a single thread is not capped below L3
-// bandwidth by a scalar reduction.
+// A thread's partial sum of a dot product over its block-partition rows. The
+// cross-thread combine happens in the caller after a barrier (see run_solve):
+// that barrier + combine is the global reduction whose dependency chain limits
+// MGS scaling. `#pragma omp simd` lets each partial vectorize so a single thread
+// is not capped below L3 bandwidth by a scalar reduction.
 static inline double partial_dot(const double* a, const double* b,
                                  int64_t r0, int64_t r1)
 {
@@ -341,9 +340,9 @@ static inline double partial_dot(const double* a, const double* b,
 
 // One instrumented solve
 //
-// Runs the full ei_steps time-stepping loop with a FIXED Krylov dimension m and
-// the convergence check disabled. Returns per-kernel wall times for
-// this solve, the caller takes the median over repeats.
+// Runs the full ei_steps time-stepping loop with a fixed Krylov dimension m and
+// the convergence check disabled. Returns per-kernel wall times for this solve;
+// the caller takes the median over repeats.
 struct SolveTimes {
     double spmv  = 0.0;
     double gs    = 0.0;
@@ -354,7 +353,7 @@ struct SolveTimes {
 };
 
 static SolveTimes run_solve(WorkState& st, const PDESystem& sys, const Config& cfg,
-                            const Partition& part, Scheme sched)
+                            const Partition& part, Scheme sched, ReduceKind reduce)
 {
     const int     N       = sys.N;
     const int     p       = 3;
@@ -364,9 +363,14 @@ static SolveTimes run_solve(WorkState& st, const PDESystem& sys, const Config& c
     const int     P       = part.P;
     const double  dt      = cfg.t_final / cfg.ei_steps;
 
-    double* V          = st.V.data();
-    double* w          = st.w.data();
-    double* partialbuf = st.partial.data();          // shared reduction scratch [P]
+    double* V = st.V.data();
+    double* w = st.w.data();
+
+    // Constructed outside every parallel region and reused across time steps, so its
+    // generation counters serialize successive reductions the way they were designed to.
+    // Every thread must call reduce() the same number of times, in the same order: the
+    // fixed-m loop below guarantees that, and a convergence exit would not.
+    TeamReducer red(P, reduce);
 
     // Small dense objects (m is fixed and tiny -> permanently L1/L2-resident).
     // H and f are touched only by the master thread, fbuf broadcasts f to all.
@@ -384,13 +388,12 @@ static SolveTimes run_solve(WorkState& st, const PDESystem& sys, const Config& c
         const double tau0 = t_curr;
         const VecXd s_aug = basket ? make_s_vec(tau0) : VecXd();
 
-        // ONE persistent parallel region per time step (was ~80 fork/joins/step of
-        // per-primitive regions). Threads run SPMD over the fixed BLOCK partition,
-        // the only synchronization now charged to the kernels is genuine barrier /
-        // reduction latency, which is exactly the MGS cost the study means to measure.
-        // Global reductions use the shared partial[] buffer: each thread deposits
-        // a (vectorized) partial, a barrier makes them visible, and every thread sums
-        // them (deterministic order) so all threads hold the reduced scalar without a second broadcast.
+        // One persistent parallel region per time step (was ~80 fork/joins/step of
+        // per-primitive regions). Threads run SPMD over the fixed block partition;
+        // the only synchronization charged to the kernels is genuine barrier and
+        // reduction latency, exactly the MGS cost the study means to measure. Global
+        // reductions go through `red` (TeamReducer, constructed above), so every
+        // thread returns the same reduced scalar without a second broadcast.
         #pragma omp parallel num_threads(P)
         {
             const int t   = omp_get_thread_num();
@@ -414,11 +417,7 @@ static SolveTimes run_solve(WorkState& st, const PDESystem& sys, const Config& c
             }
             #pragma omp barrier   // V.col(0) fully written before the norm reduction
 
-            partialbuf[t] = partial_dot(V, V, r0, r1);
-            #pragma omp barrier
-            double beta = 0.0;
-            for (int k = 0; k < P; ++k) beta += partialbuf[k];
-            beta = std::sqrt(beta);
+            double beta = std::sqrt(red.reduce(t, partial_dot(V, V, r0, r1)));
             const double binv = (beta > 0.0) ? 1.0 / beta : 0.0;
             for (int64_t r = r0; r < r1; ++r) V[static_cast<std::size_t>(r)] *= binv;
             #pragma omp barrier   // V.col(0) normalised before first SpMV reads it
@@ -447,21 +446,14 @@ static SolveTimes run_solve(WorkState& st, const PDESystem& sys, const Config& c
                 // reduction (barrier + combine) (the synchronization-bound cost).
                 for (int i = 0; i <= j; ++i) {
                     const double* Vi = V + static_cast<std::size_t>(i) * aug_N;
-                    partialbuf[t] = partial_dot(w, Vi, r0, r1);
-                    #pragma omp barrier
-                    double hij = 0.0;
-                    for (int k = 0; k < P; ++k) hij += partialbuf[k];
+                    const double hij = red.reduce(t, partial_dot(w, Vi, r0, r1));
                     #pragma omp masked
                     { H(i, j) = hij; }
                     for (int64_t r = r0; r < r1; ++r)
                         w[static_cast<std::size_t>(r)] -= hij * Vi[static_cast<std::size_t>(r)];
                     #pragma omp barrier   // w updated before the next dot reads it
                 }
-                partialbuf[t] = partial_dot(w, w, r0, r1);
-                #pragma omp barrier
-                double hn = 0.0;
-                for (int k = 0; k < P; ++k) hn += partialbuf[k];
-                const double hnorm = std::sqrt(hn);
+                const double hnorm = std::sqrt(red.reduce(t, partial_dot(w, w, r0, r1)));
                 #pragma omp masked
                 { H(j + 1, j) = hnorm; }
                 #pragma omp masked
@@ -557,10 +549,18 @@ struct ScalingArgs {
     Config       pde;
     char         arm     = 'B';
     Scheme       sched   = Scheme::BLOCK;  // SpMV compute schedule (locality axis)
+    ReduceKind   reduce  = ReduceKind::TREE;  // reduction primitive; see the file header
     int          m       = 8;
     int          repeats = 7;   // >= 5-7 timed iterations for a stable median (spec 10)
     std::string  csv_path;
 };
+
+static ReduceKind parse_reduce(std::string_view s)
+{
+    if (s == "tree")   return ReduceKind::TREE;
+    if (s == "linear") return ReduceKind::LINEAR;
+    throw std::invalid_argument("Unknown --reduce: " + std::string(s) + " (tree|linear)");
+}
 
 static ScalingArgs parse_scaling_args(std::span<const char* const> args)
 {
@@ -581,6 +581,7 @@ static ScalingArgs parse_scaling_args(std::span<const char* const> args)
         else if (arg == "--repeats") a.repeats = std::stoi(std::string(next()));
         else if (arg == "--csv")     a.csv_path = std::string(next());
         else if (arg == "--sched")   a.sched = parse_scheme(next());
+        else if (arg == "--reduce")  a.reduce = parse_reduce(next());
         else if (arg == "--arm") {
             const auto v = next();
             if      (v == "A" || v == "a" || v == "naive")       a.arm = 'A';
@@ -596,6 +597,7 @@ static ScalingArgs parse_scaling_args(std::span<const char* const> args)
         else if (arg == "--help") {
             std::println("Usage: OMP_NUM_THREADS=P OMP_PLACES=cores OMP_PROC_BIND=close \\");
             std::println("         ./scaling --arm A|B --n N [--sched block|cyclic|rotate]");
+            std::println("                   [--reduce tree|linear]");
             std::println("                   [--steps S] [--m M] [--repeats R]");
             std::println("                   [--option basket|rainbow] [--csv PATH]");
             std::println("");
@@ -605,6 +607,12 @@ static ScalingArgs parse_scaling_args(std::span<const char* const> args)
             std::println("                 block  = contiguous band per core (locality-preserving)");
             std::println("                 cyclic = round-robin cache-line blocks (scatter, same volume)");
             std::println("                 rotate = per-SpMV band rotation (locality-destroying)");
+            std::println("  --reduce KIND  reduction primitive for MGS's global reductions:");
+            std::println("                 tree   = binary tree, point-to-point (default; the");
+            std::println("                          primitive calibrate_alpha.sh calibrates)");
+            std::println("                 linear = barrier + O(P) redundant scan; the historical");
+            std::println("                          artifact, kept only to size its inflation of the");
+            std::println("                          GS curve. Do not report a linear result.");
             std::println("  --n N          grid points per dimension (default 15)");
             std::println("  --steps S      KSM-EI time steps (default 100)");
             std::println("  --m M          FIXED Krylov dimension (default 8, spec section 4)");
@@ -623,7 +631,7 @@ static ScalingArgs parse_scaling_args(std::span<const char* const> args)
 
 // CSV row (one per invocation, header written if the file does not yet exist)
 static const char* kCsvHeader =
-    "arm,sched,option,n,N,aug_N,nnz,P,ccx_engaged,ei_steps,m,repeats,"
+    "arm,sched,reduce,option,n,N,aug_N,nnz,P,ccx_engaged,ei_steps,m,repeats,"
     "spmv_ms,spmv_q1,spmv_q3,gs_ms,gs_q1,gs_q3,expm_ms,expm_q1,expm_q3,"
     "other_ms,other_q1,other_q3,total_ms,total_q1,total_q3,"
     "spmv_ws_mib,gs_ws_mib,ccx_demand_spmv,ccx_demand_gs,places,bind,price\n";
@@ -676,7 +684,6 @@ int main(int argc, char* argv[])
         st.m     = a.m;
         st.V.resize(static_cast<std::size_t>(aug_N) * (a.m + 1));
         st.w.resize(static_cast<std::size_t>(aug_N));
-        st.partial.resize(static_cast<std::size_t>(P));
 
         // Place the data per arm. This is the controlled variable of the A/B
         // experiment: naive parks everything on thread 0; first-touch
@@ -686,14 +693,14 @@ int main(int argc, char* argv[])
         else              place_first_touch(st, ref, part);
 
         // Warm-up (discarded): first-touch page faults + boost ramp (spec 10).
-        std::println("  [Warm-up + {} timed repeats...  sched={}]",
-                     a.repeats, scheme_name(a.sched));
-        (void)run_solve(st, sys, a.pde, part, a.sched);
+        std::println("  [Warm-up + {} timed repeats...  sched={}  reduce={}]",
+                     a.repeats, scheme_name(a.sched), reduce_kind_name(a.reduce));
+        (void)run_solve(st, sys, a.pde, part, a.sched, a.reduce);
 
         std::vector<double> spmv, gs, expm, other, total;
         double price = 0.0;
         for (int r = 0; r < a.repeats; ++r) {
-            const SolveTimes tsr = run_solve(st, sys, a.pde, part, a.sched);
+            const SolveTimes tsr = run_solve(st, sys, a.pde, part, a.sched, a.reduce);
             spmv.push_back(tsr.spmv * 1e3);
             gs.push_back(tsr.gs * 1e3);
             expm.push_back(tsr.expm * 1e3);
@@ -710,8 +717,8 @@ int main(int argc, char* argv[])
 
         // stdout report
         std::println("");
-        std::println("=== Scaling point  (arm {}, sched {}, n={}, P={}) ===",
-                     a.arm, scheme_name(a.sched), a.pde.n, P);
+        std::println("=== Scaling point  (arm {}, sched {}, reduce {}, n={}, P={}) ===",
+                     a.arm, scheme_name(a.sched), reduce_kind_name(a.reduce), a.pde.n, P);
         std::println("||  N={}  aug_N={}  nnz={}  CCX engaged={}", N, aug_N, nnz, ccx_engaged);
         std::println("||  SpMV ws={:.1f} MiB (demands {} CCX)   GS ws={:.1f} MiB (demands {} CCX)",
                      spmv_ws / MiB, ccx_dem_spmv, gs_ws / MiB, ccx_dem_gs);
@@ -737,6 +744,7 @@ int main(int argc, char* argv[])
             if (!f) throw std::runtime_error("Cannot open CSV: " + a.csv_path);
             if (!exists) f << kCsvHeader;
             f << a.arm << ',' << scheme_name(a.sched) << ','
+              << reduce_kind_name(a.reduce) << ','
               << (rainbow ? "rainbow" : "basket") << ','
               << a.pde.n << ',' << N << ',' << aug_N << ',' << nnz << ','
               << P << ',' << ccx_engaged << ',' << a.pde.ei_steps << ',' << a.m << ','
