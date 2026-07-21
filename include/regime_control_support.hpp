@@ -271,6 +271,74 @@ inline double unit_norm_kappa_X(const SyntheticOperator& op)
     return condition_number(es.eigenvectors());
 }
 
+/// kappa_2 of the unit-2-norm eigenvectors of a small dense block. Eigen normalises
+/// EigenSolver's columns to unit length, so this matches unit_norm_kappa_X's convention
+/// exactly and the two are directly comparable.
+inline double unit_norm_kappa_block(const Eigen::MatrixXd& M)
+{
+    Eigen::EigenSolver<Eigen::MatrixXd> es(M, /*eigenvectors=*/true);
+    if (es.info() != Eigen::Success) return std::numeric_limits<double>::quiet_NaN();
+    return condition_number(es.eigenvectors());
+}
+
+/**
+ * @brief kappa(X) in the canonical tensor basis: well-defined at every asset dimension.
+ *
+ * unit_norm_kappa_X dense-eigensolves the assembled operator, which only names a property of
+ * the OPERATOR when the spectrum is simple. It is not, here. build_synthetic couples the
+ * cross term to axes 0 and 1 only (stride[0], stride[1]), so axes 2,...,dim-1 stay a plain
+ * Kronecker sum and interchanging any two of them is an exact symmetry of A. From dim = 4
+ * that forces degeneracy, 144 distinct eigenvalues of 256 at dim = 4, 256 of 1024 at
+ * dim = 5, and inside a degenerate eigenspace every basis is admissible, so the
+ * eigensolver's arbitrary choice sets kappa(X). Symmetrically permuting the SAME operator
+ * (an exact similarity) moves it by 3.6x at dim = 4 and 8.0x at dim = 5: it is not an
+ * operator property there, and must not be fitted.
+ *
+ * The structure supplies a canonical basis instead. A = B01 (+) T (+) ... (+) T with B01 the
+ * cross-carrying 2D block, so X = X01 (x) X1 (x) ... (x) X1, and a Kronecker product
+ * multiplies singular values:
+ *
+ *     kappa(X) = kappa(X01) * kappa(X1)^(dim-2)     [correlation != 0]
+ *     kappa(X) = kappa(X1)^dim                      [correlation == 0]
+ *
+ * so log kappa(X) is linear in dim with slope log kappa(X1), and the cross term contributes a
+ * dim-independent offset, one pair, not C(dim,2). Reproduces the dense value to 3e-7 at
+ * dim = 2 and 3, the only two degeneracy-free points.
+ *
+ * Costs one n1^2 x n1^2 eigensolve rather than one N x N, so unlike the dense route it is
+ * still defined above kControlMaxN.
+ *
+ * Returns NaN when var_advection != 0: the ramp is not Toeplitz, so axis 0 does not factor.
+ */
+inline double structured_kappa_X(const SyntheticSpec& sp)
+{
+    if (sp.var_advection != 0.0) return std::numeric_limits<double>::quiet_NaN();
+    // advection == 0 leaves every factor symmetric (the cross term is skew (x) skew, hence
+    // symmetric), so the operator is normal and X is orthogonal.
+    if (sp.advection == 0.0) return 1.0;
+
+    // Sub-blocks are built by build_synthetic itself, so they are literally the operator's
+    // own factors. scale and shift are dropped: A -> scale*(A - shift I) leaves X untouched.
+    SyntheticSpec s1 = sp;
+    s1.dim = 1;
+    s1.correlation = 0.0;          // a single axis cannot carry the cross term
+    s1.scatter_block = 1;          // no permutation: we want the factor, not a conjugate
+    s1.spec_scale = 1.0;
+    s1.spec_shift = 0.0;
+    const double k1 = unit_norm_kappa_block(Eigen::MatrixXd(build_synthetic(s1).A));
+    if (!std::isfinite(k1)) return std::numeric_limits<double>::quiet_NaN();
+
+    if (sp.correlation == 0.0) return std::pow(k1, static_cast<double>(sp.dim));
+    if (sp.dim < 2) return std::numeric_limits<double>::quiet_NaN();
+
+    SyntheticSpec s2 = s1;
+    s2.dim = 2;
+    s2.correlation = sp.correlation;
+    const double k01 = unit_norm_kappa_block(Eigen::MatrixXd(build_synthetic(s2).A));
+    if (!std::isfinite(k01)) return std::numeric_limits<double>::quiet_NaN();
+    return k01 * std::pow(k1, static_cast<double>(sp.dim - 2));
+}
+
 inline EigenData decompose(const SyntheticOperator& op, const SyntheticSpec& spec,
                     const Eigen::VectorXd& v_unperm, const Eigen::VectorXd& v_perm)
 {
@@ -472,9 +540,29 @@ inline int conservative_s_max(const EigenData& eig, int ceiling)
     return s_max;
 }
 
+/**
+ * @brief Tolerance on |predicted - measured| s_max, in integer s-steps.
+ *
+ * A chosen tolerance, reported rather than derived: s_max is the largest s whose basis
+ * condition stays under the CholQR2 limit, so a run sitting near that threshold can land on
+ * either side of it under any reassociation of the same arithmetic, and 1 is the smallest
+ * tolerance that does not flag one such crossing. A difference of 2+ cannot be produced by a
+ * single crossing and is read as the prediction genuinely disagreeing.
+ *
+ * This is not a measured platform noise floor. The spread of raw s_max across compilers,
+ * optimisation levels and repeats has not been characterised; the only evidence behind the
+ * value is the qualitative observation that s_max moves by 1 at threshold crossings. Measure
+ * that spread before quoting this as an empirical property of the platform.
+ */
+inline constexpr int kSMaxStepTolerance = 1;
+
 /// C6's per-operator report: populated by check_nonnormality, read by main for the CSV row.
 struct NonNormalReport {
     double kappa_X      = 1.0;   ///< unit-2-norm eigenvector conditioning
+    /// Canonical tensor-basis kappa(X) (see structured_kappa_X). Well-defined even where the
+    /// degenerate spectrum makes kappa_X basis-dependent, i.e. from dim = 4 up. NaN for the
+    /// real BS operator and for var_advection, neither of which factors.
+    double kappa_X_struct = std::numeric_limits<double>::quiet_NaN();
     double henrici_rel  = 0.0;   ///< relative departure ||[A,A^T]||_F / ||A||_F^2 (units-free)
     double gap_dec      = 0.0;
     int    s_pred_int   = 0;     ///< spectral-predicted s_max, same vector

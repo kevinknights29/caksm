@@ -63,6 +63,14 @@ struct SyntheticSpec {
     // rho*sigma_i*sigma_j term. Destroys the Kronecker sum: no analytic spectrum, so s_max
     // must be measured. The cross term is symmetric, so rho alone is non-separable but
     // normal; rho and advection together are non-removably non-normal.
+    //
+    // ONE pair, at every dim: axes 0 and 1 and no others. The real basket operator couples
+    // all C(dim,2) pairs (real_bs_operator uses rho_off = 0.5 across the board), so this knob
+    // is NOT a model of C(dim,2) growth -- it contributes a dim-independent offset. Two
+    // consequences: axes 2..dim-1 stay a plain Kronecker sum, so interchanging any two of
+    // them is an exact symmetry and the spectrum is degenerate from dim = 4 up (see
+    // structured_kappa_X); and any law fitted along dim must not read a C(dim,2) mechanism
+    // into this operator.
     double   correlation  = 0.0;
     // var_advection: a second, independent route to non-normality. The advection ramps
     // linearly along axis 0: gamma_eff(i0) = advection + var_advection*i0/(n1-1). A varying
@@ -150,6 +158,11 @@ struct SyntheticOperator {
  * matrix, so kappa(X_1) = r^(n1-1) and kappa(X) = r^(dim (n1-1)) for the Kronecker sum.
  * Analytic, no eigensolver. For the monomial basis B = X M, kappa(B) can exceed kappa(M)
  * by up to this factor: 1 for a normal operator, orders of magnitude for a non-normal one.
+ *
+ * NOT the quantity in the CSV's kappa_X column. This is the UN-NORMALISED scaling; the
+ * reported kappa(X) normalises the eigenvectors to unit 2-norm (Eigen's convention, see
+ * unit_norm_kappa_X). The two differ by a wide margin -- 665 against 11350 at n1=8, dim=3,
+ * gamma=0.3 -- so they must never be compared or fitted against one another.
  */
 [[nodiscard]] inline double eigenvector_condition(const SyntheticSpec& sp) noexcept
 {

@@ -7,18 +7,30 @@
 # cancels and only d is left: the flatness in n1 confirms the mesh-Peclet reading and says
 # nothing about d.
 #
-# Measured (n1=4, gamma=0.3, rho=0.3), kappa(X) grows super-linearly in d:
-#     d      N    kappa(X)   log10
-#     2     16      6.7      0.824
-#     3     64     17.0      1.229
-#     4    256    109.5      2.039
-#     5   1024   5.2e3       3.716
-#     6   4096   3.7e4       4.564
+# The law is linear in d, with a slope known in closed form. The cross term couples axes 0
+# and 1 only (build_synthetic uses stride[0], stride[1]), so there is one coupled pair at
+# every d, never C(d,2), and the operator factors as A_d = B01 (+) T (+) ... (+) T. A
+# Kronecker product multiplies singular values, so kappa(X) = kappa(X01)*kappa(X1)^(d-2)
+# and the cross term contributes a d-independent offset:
 #
-# Non-normality enters through pairwise cross terms (C(d,2) axis-pairs), so the fit is
-# quadratic in d: log10 kappa(X) ~ a*C(d,2) + b*d. The two models agree on the measured
-# range but diverge by ~10^3.8 at d=10, so high-d kappa(X) must be measured, never
-# extrapolated.
+#     log10 kappa(X) = 0.405 d + 0.014      (slope = log10 kappa(X1), analytic)
+#
+# regime-control reports this as the kappa_X_struct column (structured_kappa_X). The dense
+# kappa_X column agrees exactly while the spectrum is simple, but must be ignored from d=4
+# up: the d-2 cross-term-free axes are interchangeable, an exact symmetry of A, so the
+# spectrum is degenerate and the dense value reports the eigensolver's arbitrary basis
+# choice within each repeated eigenspace. An earlier revision read that basis noise as
+# super-linear curvature and fitted a quadratic to it; that reading is withdrawn.
+#
+#     d      N   kappa_X_struct   dense kappa_X   spectrum
+#     2     16       6.671            6.671       simple (agree to 3e-7)
+#     3     64      16.95            16.95        simple (agree to 3e-7)
+#     4    256      43.07           109.5         degenerate: dense meaningless
+#     5   1024     109.4              5.2e3       degenerate: dense meaningless
+#     6   4096     278.1              3.7e4       degenerate: dense meaningless
+#
+# The rho arm (n1=8, dim=3) keeps one clean axis, so its spectrum stays simple and its dense
+# values are sound: they match kappa_X_struct exactly at every rho tested.
 #
 # The operator is the synthetic BS-like one (advection = mesh Peclet, correlation = the
 # mixed-derivative cross term); the real operator is hard-coded to 3 assets and cannot

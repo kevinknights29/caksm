@@ -1,23 +1,32 @@
 """
-The asset-dimension law: does kappa(X) grow with the number of assets?
+The asset-dimension law: how does kappa(X) grow with the number of assets?
 
 Consumes:  data/regime/regime_dsweep.csv   (scripts/regime/regime_dsweep.sh)
 Produces:  scripts/plots/regime_dsweep.png
 
-The refinement study varied the wrong axis: it swept grid points at fixed d=3 and found
-kappa(X) flat. The thesis grows the asset count. From the diagonal-similarity formula with
-gamma as the mesh Peclet number (gamma ~ C/n1, so n1 cancels):
+The law is linear in d, with a slope known in closed form. build_synthetic couples the cross
+term to axes 0 and 1 only, so the operator factors as A_d = B01 (+) T (+) ... (+) T and a
+Kronecker product multiplies singular values:
 
-    log kappa(X) ~ C * d      =>   kappa(X) exponential in the number of assets.
+    kappa(X) = kappa(X01) * kappa(X1)^(d-2)   =>   log kappa(X) = d log kappa(X1) + const
 
-Left panel fits log10 kappa(X) against d and extrapolates to the asset counts a basket desk
-cares about, with the regime bands overlaid (benign / conservative-cost / measure). Right
-panel: does the spectral prediction still get s_max right as d grows? |pred - meas| <= 1 is
-the cross-compiler noise floor, so only a discrepancy of 2+ means the certificate broke.
+The cross term contributes a d-independent offset: one coupled pair at every d, never
+C(d,2). An earlier revision fitted a quadratic a*C(d,2)+b*d against a linear Cd and reported
+that the two diverge beyond the data; that comparison is withdrawn. The C(d,2) premise does
+not describe this operator, and the curvature that motivated it was an artifact: from d=4
+the d-2 cross-term-free axes are interchangeable, an exact symmetry of A, so the spectrum is
+degenerate and the dense eigensolver reports its arbitrary basis choice within each repeated
+eigenspace.
 
-If the slope is ~0.5, the dimensionality that makes communication-avoidance necessary is
-the same dimensionality that degrades the spectral certificate, so the practitioner needs
-the measured block size precisely where the method matters most.
+Left panel plots kappa_X_struct, the canonical tensor-basis value (regime_control's
+structured_kappa_X), which is basis-independent at every d and needs one n1^2 x n1^2
+eigensolve rather than one N x N. The dense kappa_X is shown hollow for contrast: it tracks
+the structured value exactly while the spectrum is simple (d=2,3) and departs upward once
+degeneracy sets in.
+
+Right panel: does the spectral prediction still get s_max right as d grows? |pred - meas| is
+judged at kSMaxStepTolerance, a chosen tolerance of one s-step rather than a measured
+platform noise floor; see its note in regime_control_support.hpp.
 """
 # /// script
 # dependencies = ["matplotlib", "numpy"]
@@ -73,9 +82,6 @@ def main():
         return
 
     # The d-sweep: correlation held fixed, dim varying.
-    rho_fixed = None
-    for r in runs:
-        pass
     dsweep = {}
     rhosweep = {}
     for r in runs:
@@ -84,7 +90,14 @@ def main():
         kx  = float(r["kappa_X"])
         if not np.isfinite(kx) or kx <= 0:
             continue
-        rec = (d, rho, kx, int(r["s_pred_int"]), int(r["s_meas_same"]), int(r["N"]))
+        # Canonical tensor-basis kappa(X)
+        try:
+            kxs = float(r.get("kappa_X_struct", "nan"))
+        except (TypeError, ValueError):
+            kxs = float("nan")
+        if not np.isfinite(kxs) or kxs <= 0:
+            kxs = float("nan")
+        rec = (d, rho, kx, int(r["s_pred_int"]), int(r["s_meas_same"]), int(r["N"]), kxs)
         # d-sweep family keyed by (n1, advection, rho) so the n1=4 asset sweep and the
         # n1=8 correlation stress never mix; rho-sweep keyed by (n1, advection, dim).
         dsweep.setdefault((r["n1"], r["advection"], rho), []).append(rec)
@@ -99,40 +112,60 @@ def main():
 
     fig, axes = plt.subplots(1, 2, figsize=(13.0, 4.9), constrained_layout=True)
 
-    # Left: log10 kappa(X) vs asset dimension d, two competing models. A linear fit is a
-    # chord through a bend: the successive deltas are not constant. Non-normality enters
-    # through pairwise correlation cross terms, and there are C(d,2) = d(d-1)/2 axis-pairs,
-    # so the exponent should be quadratic in d, not linear. Fitting both and showing they
-    # agree on the data but diverge by orders of magnitude beyond it is the result: the
-    # extrapolation is model-dependent, so high-d behavior must be measured.
+    # Left: log10 kappa(X) vs asset dimension d. The tensor factorization makes the law
+    # linear with slope log10 kappa(X1), so the fit is a check on a known answer rather than
+    # a model selection. The dense kappa_X is overlaid hollow: it agrees while the spectrum
+    # is simple and departs upward once the interchangeable axes make it degenerate.
     ax = axes[0]
     d = np.array([p[0] for p in dpts], float)
-    y = np.log10(np.array([p[2] for p in dpts], float))
+    y_dense = np.log10(np.array([p[2] for p in dpts], float))
+    k_struct = np.array([p[6] for p in dpts], float)
+    have_struct = np.isfinite(k_struct)
 
-    C_lin, b_lin = np.polyfit(d, y, 1)
-    # mechanistic: a*C(d,2) + b*d   (no intercept; AIC-preferred on the measured data)
-    Amech = np.column_stack([d * (d - 1) / 2, d])
-    (a_m, b_m), *_ = np.linalg.lstsq(Amech, y, rcond=None)
+    # Degeneracy onset: the cross term occupies axes 0 and 1, leaving d-2 interchangeable
+    # axes. Two or more of them is an exact symmetry of A, hence a repeated spectrum.
+    clean_axes = d - 2
+    degenerate = clean_axes >= 2
 
-    def sse(pred): return float(np.sum((y - pred) ** 2))
-    sse_lin  = sse(C_lin * d + b_lin)
-    sse_mech = sse(a_m * d * (d - 1) / 2 + b_m * d)
+    if have_struct.any():
+        ds, ys = d[have_struct], np.log10(k_struct[have_struct])
+        slope, icept = np.polyfit(ds, ys, 1) if len(ds) >= 2 else (np.nan, np.nan)
+        dx = np.linspace(1.5, 10, 200)
+        ax.plot(dx, slope * dx + icept, "-", color=C_FIT, lw=2.2,
+                label=rf"$\log_{{10}}\kappa(X)={slope:.3f}\,d{icept:+.3f}$  (tensor law)")
+        ax.scatter(ds, ys, s=70, color=C_PT, zorder=4,
+                   label=r"canonical tensor basis $\kappa(X_{01})\kappa(X_1)^{d-2}$")
+        ymax = slope * 10 + icept
+    else:
+        print("(warn) no kappa_X_struct column: CSV predates structured_kappa_X.")
+        print("       Re-run the sweep; the dense kappa_X is basis-dependent from d=4.")
+        slope = np.nan
+        ymax = y_dense.max()
 
-    dx = np.linspace(1.5, 10, 200)
-    ax.plot(dx, C_lin * dx + b_lin, "--", color=C_GUIDE, lw=1.6,
-            label=f"linear $Cd$: slope {C_lin:.2f}")
-    ax.plot(dx, a_m * dx * (dx - 1) / 2 + b_m * dx, "-", color=C_FIT, lw=2.2,
-            label=rf"mechanistic $a\,C(d,2)+bd$: $a$={a_m:.2f}/pair")
-    ax.fill_between(dx, C_lin * dx + b_lin, a_m * dx * (dx - 1) / 2 + b_m * dx,
-                    color="#F6E3DC", alpha=0.7, zorder=0)
-    ax.scatter(d, y, s=70, color=C_PT, zorder=4, label="measured (synthetic BS-like)")
+    # The dense eigensolver value, hollow. Split so the degenerate points are visibly a
+    # different kind of measurement rather than more of the same curve.
+    # Ringed, not overlaid: at d=2,3 the dense value equals the canonical one to 3e-7, and a
+    # ring around the filled point is what shows that agreement rather than hiding it.
+    if (~degenerate).any():
+        ax.scatter(d[~degenerate], y_dense[~degenerate], s=260, facecolors="none",
+                   edgecolors=C_GUIDE, lw=1.3, zorder=3,
+                   label=r"dense $\kappa(X)$, simple spectrum (agrees)")
+    if degenerate.any():
+        ax.scatter(d[degenerate], y_dense[degenerate], s=90, facecolors="none",
+                   edgecolors=C_WARN, lw=1.6, marker="^", zorder=3,
+                   label=r"dense $\kappa(X)$, DEGENERATE (basis-dependent)")
+        ax.axvline(3.5, color=C_WARN, ls=":", lw=1.2, zorder=1)
+        ax.annotate("degeneracy onset\n($d-2\\geq2$ interchangeable axes)",
+                    xy=(3.5, 0.06), xycoords=("data", "axes fraction"),
+                    xytext=(4, 0.06), textcoords=("data", "axes fraction"),
+                    fontsize=7, color=C_WARN, va="bottom")
+        ymax = max(ymax, y_dense[degenerate].max())
+
     ax.scatter([3], [np.log10(40.0)], s=110, marker="*", color=C_WARN, zorder=5,
                label="REAL BS, 3 assets")
 
-    d10_lin  = C_lin * 10 + b_lin
-    d10_mech = a_m * 45 + b_m * 10
     ax.set_xlim(1.5, 10)
-    ax.set_ylim(0, max(d10_mech, d10_lin) + 0.5)
+    ax.set_ylim(0, ymax + 0.5)
     ax.set_xlabel("asset dimension $d$   (the axis the thesis actually grows)")
     ax.set_ylabel(r"$\log_{10}\kappa(X)$")
     ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
@@ -160,7 +193,7 @@ def main():
         ax2.legend(fontsize=8, loc="upper center")
 
     ax.axhspan(0, 1, color="#E4EFE9", zorder=0,
-               label="cross-compiler noise floor ($\\leq$1)")
+               label="chosen tolerance ($\\leq$1 s-step)")
     ax.set_ylim(0, max(3, max(diff_d) + 1))
     ax.set_xlabel("asset dimension $d$", color=C_PT)
     ax.tick_params(axis="x", colors=C_PT)
@@ -172,16 +205,21 @@ def main():
 
     out = HERE / "regime_dsweep.png"
     fig.savefig(out, dpi=300, bbox_inches="tight")
-    print(f"linear      : log10 kappa(X) = {C_lin:.3f} d {b_lin:+.3f}   SSE={sse_lin:.3f}")
-    print(f"mechanistic : log10 kappa(X) = {a_m:.3f} C(d,2) {b_m:+.3f} d  SSE={sse_mech:.3f}"
-          f"   <- {a_m:.3f} per correlation pair")
-    print(f"{'d':>3}{'linear':>10}{'mechanistic':>13}{'divergence':>12}")
-    for dd in (6, 7, 8, 10):
-        L = C_lin * dd + b_lin
-        M = a_m * dd * (dd - 1) / 2 + b_m * dd
-        print(f"{dd:>3}{('1e%.1f' % L):>10}{('1e%.1f' % M):>13}{('1e%.1f' % (M - L)):>12}")
-    print("The two models agree on the measured range and diverge by orders of magnitude\n"
-          "beyond it: high-d kappa(X) must be MEASURED, not extrapolated.")
+
+    if np.isfinite(slope):
+        print(f"tensor law  : log10 kappa(X) = {slope:.4f} d {icept:+.4f}   "
+              f"(slope = log10 kappa(X_1), analytic)")
+        print(f"{'d':>3}{'structured':>14}{'dense':>14}{'ratio':>10}  spectrum")
+        for p in dpts:
+            dd, kx, kxs = p[0], p[2], p[6]
+            simple = dd - 2 < 2
+            ratio = f"{kx / kxs:.2f}x" if np.isfinite(kxs) and kxs > 0 else "--"
+            sk = f"{kxs:.4g}" if np.isfinite(kxs) else "--"
+            print(f"{dd:>3}{sk:>14}{kx:>14.4g}{ratio:>10}  "
+                  f"{'simple' if simple else 'DEGENERATE (dense meaningless)'}")
+        print("\nThe cross term couples ONE axis pair at every d, so it contributes a\n"
+              "d-independent offset: the law is linear, not C(d,2)-quadratic. The dense\n"
+              "kappa(X) tracks it until degeneracy at d=4, then reports basis choice.")
     print(f"wrote {out}")
 
 

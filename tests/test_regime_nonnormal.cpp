@@ -12,6 +12,8 @@
 
 #include "test_regime_helpers.hpp"
 
+#include "regime_control_support.hpp"   // structured_kappa_X, unit_norm_kappa_X
+
 using namespace regime_test;
 
 // Non-normality: the transferability bridge to the real Black-Scholes operator
@@ -361,4 +363,84 @@ TEST_CASE("variable-coefficient advection has no analytic spectrum and is non-no
     REQUIRE_FALSE(op.has_analytic_spectrum);   // not Toeplitz -> no closed form
     REQUIRE_FALSE(op.is_normal);               // genuinely non-normal
     REQUIRE(op.henrici > 1.0);
+}
+
+// The asset-dimension law. The cross term couples axes 0 and 1 and no others, so the
+// operator factors as A_d = B01 (+) T (+) ... (+) T and kappa(X) is exactly
+// kappa(X01)*kappa(X1)^(d-2). These pin the two halves of that claim: the canonical value is
+// right wherever it can be checked, and the dense value it replaces is checkable nowhere
+// else, because the leftover axes are interchangeable and the spectrum repeats.
+
+TEST_CASE("structured_kappa_X matches the dense value wherever the spectrum is simple",
+          "[synthetic][nonnormal][correlation][critical]")
+{
+    // dim - 2 cross-term-free axes; fewer than 2 of them means no interchange symmetry,
+    // hence a simple spectrum and a dense kappa(X) that is genuinely an operator property.
+    struct Case { int n1, dim; double gamma, rho; };
+    for (const Case c : {Case{4, 2, 0.3, 0.3}, Case{4, 3, 0.3, 0.3},
+                         Case{8, 3, 0.3, 0.6}, Case{8, 3, 0.3, 0.99}}) {
+        SyntheticSpec sp;
+        sp.n1 = c.n1; sp.dim = c.dim; sp.advection = c.gamma; sp.correlation = c.rho;
+
+        const double dense = regime_control::unit_norm_kappa_X(build_synthetic(sp));
+        const double structured = regime_control::structured_kappa_X(sp);
+
+        INFO("n1=" << c.n1 << " dim=" << c.dim << " rho=" << c.rho
+             << " dense=" << dense << " structured=" << structured);
+        REQUIRE(std::isfinite(structured));
+        REQUIRE_THAT(structured, WithinRel(dense, 1e-6));
+    }
+}
+
+TEST_CASE("the tensor law makes log kappa(X) exactly linear in the asset dimension",
+          "[synthetic][nonnormal][correlation]")
+{
+    SyntheticSpec sp;
+    sp.n1 = 4; sp.advection = 0.3; sp.correlation = 0.3;
+
+    // Each extra axis is one more Kronecker factor, so it multiplies kappa(X) by exactly
+    // kappa(X1), the same ratio at every dimension, with no C(dim,2) term anywhere.
+    SyntheticSpec s1 = sp;
+    s1.dim = 1; s1.correlation = 0.0;
+    const double k1 = regime_control::unit_norm_kappa_X(build_synthetic(s1));
+    REQUIRE(k1 > 1.0);
+
+    for (int d = 2; d <= 6; ++d) {
+        sp.dim = d;
+        SyntheticSpec next = sp;
+        next.dim = d + 1;
+        const double ratio = regime_control::structured_kappa_X(next)
+                           / regime_control::structured_kappa_X(sp);
+        INFO("dim " << d << " -> " << d + 1 << " ratio=" << ratio << " kappa(X1)=" << k1);
+        REQUIRE_THAT(ratio, WithinRel(k1, 1e-9));
+    }
+}
+
+TEST_CASE("interchangeable axes make the spectrum degenerate, so dense kappa(X) is "
+          "basis-dependent", "[synthetic][nonnormal][correlation][critical]")
+{
+    // dim = 4 leaves axes 2 and 3 carrying nothing that distinguishes them, so swapping them
+    // is an exact symmetry of A: eigenvalues repeat, every basis of a repeated eigenspace is
+    // admissible, and the dense eigensolver's arbitrary choice is not a function of A.
+    SyntheticSpec sp;
+    sp.n1 = 4; sp.dim = 4; sp.advection = 0.3; sp.correlation = 0.3;
+    const SyntheticOperator op = build_synthetic(sp);
+
+    Eigen::EigenSolver<Eigen::MatrixXd> es(Eigen::MatrixXd(op.A), false);
+    Eigen::VectorXd re = es.eigenvalues().real();
+    std::sort(re.data(), re.data() + re.size());
+    int distinct = 1;
+    for (Eigen::Index i = 1; i < re.size(); ++i)
+        if (std::abs(re(i) - re(i - 1)) > 1e-8 * (1.0 + std::abs(re(i)))) ++distinct;
+
+    INFO("N=" << op.n << " distinct eigenvalues=" << distinct);
+    REQUIRE(distinct < op.n * 3 / 4);   // measured: 144 of 256
+
+    // The canonical value, by contrast, is built from the factors and cannot depend on how
+    // the assembled operator happens to be ordered. The scatter knob is a similarity
+    // (P A P^T), so it is the sharpest available restatement of "same operator".
+    SyntheticSpec scattered = sp;
+    scattered.scatter_block = synthetic_dimension(sp);
+    REQUIRE_THAT(regime_control::structured_kappa_X(scattered),
+                 WithinRel(regime_control::structured_kappa_X(sp), 1e-12));
 }
