@@ -409,6 +409,10 @@ void check_nonnormality(const Args& a, const SyntheticOperator& op, const EigenD
     rep.kappa_X     = eig.kappa_X;
     rep.henrici_rel = rel_dep;
     rep.gap_dec     = gap_dec;
+    // The real BS operator couples all three asset pairs and is not a Kronecker sum of the
+    // synthetic factors, so the tensor identity does not apply to it.
+    rep.kappa_X_struct = a.real_bs > 0 ? std::numeric_limits<double>::quiet_NaN()
+                                       : structured_kappa_X(a.spec);
 
     if (op.is_normal) {
         const std::string kind =
@@ -455,11 +459,28 @@ void check_nonnormality(const Args& a, const SyntheticOperator& op, const EigenD
                                 "D^-1 A D departure {:.1e})",
                                 departure_after_symmetrizer(op, advection_symmetrizer(a.spec)));
 
+    // Two axes carrying neither the cross term nor the advection ramp are interchangeable,
+    // an exact symmetry of A, so the spectrum repeats and any basis of a degenerate
+    // eigenspace will do: the dense kappa(X) is then the eigensolver's choice rather than the
+    // operator's. Flag it and give the canonical tensor-basis value alongside.
+    const int excluded_axes = a.spec.correlation != 0.0 ? 2                       // axes 0, 1
+                            : (a.spec.var_advection != 0.0 ? 1 : 0);              // axis 0
+    const int clean_axes    = a.real_bs > 0 ? 0 : a.spec.dim - excluded_axes;
+    std::string kappa_X_note;
+    if (clean_axes >= 2)
+        kappa_X_note = std::isfinite(rep.kappa_X_struct)
+            ? std::format(" [BASIS-DEPENDENT: {} interchangeable axes leave the spectrum "
+                          "degenerate, so this value is the eigensolver's basis choice; "
+                          "canonical tensor-basis kappa(X)={:.3e}]",
+                          clean_axes, rep.kappa_X_struct)
+            : std::format(" [BASIS-DEPENDENT: {} interchangeable axes leave the spectrum "
+                          "degenerate; no canonical value (operator does not factor)]",
+                          clean_axes);
+
     // The direct, conversion-free test: does the spectral prediction get the integer s_max
-    // right? Raw s_max flips by +/-1 at threshold crossings, so |pred - meas| <= 1 is the
-    // noise floor and only 2+ is decision-relevant. Both sides must be the SAME vector
-    // (v_perm): comparing against the ensemble-worst s_max would pair supply and demand from
-    // different vectors.
+    // right? Raw s_max moves by 1 on the CholQR2 threshold, so agreement is judged at
+    // kSMaxStepTolerance (a chosen tolerance, not a measured noise floor); only 2+ matters.
+    // Both sides use the same vector v_perm, or supply and demand come from different ones.
     const int ceil_s = std::min(a.s_ceiling, static_cast<int>(op.n) - 1);
     int s_pred_int = 0;
     for (int s = 1; s <= ceil_s; ++s) {
@@ -501,20 +522,24 @@ void check_nonnormality(const Args& a, const SyntheticOperator& op, const EigenD
            "and stays under one s-step; variable-coefficient advection can exceed one "
            "s-step and move s_max. The DECISIVE test is the integer: does the spectral "
            "prediction get s_max right?",
-           diff_worst <= 1,          // ensemble worst case; <=1 is the noise floor
-           std::format("[{}] henrici={:.2e}, kappa(X)={:.2e}{} | s_max INTEGERS (same "
+           diff_worst <= kSMaxStepTolerance,   // ensemble worst case, at the chosen tolerance
+           std::format("[{}] henrici={:.2e}, kappa(X)={:.2e}{}{} | s_max INTEGERS (same "
                        "vector): spectral-predicted={} vs measured={} (differ by {}: {}) "
                        "| ENSEMBLE |diff| over {} vectors: [{}] worst={} -> {} "
                        "| gap={:.3f} dec = {:.2f} s-steps ({}) | conservative certificate "
                        "s_max={} vs ensemble-measured {}",
                        mechanism, henrici, kX,
                        kX_reliable ? "" : " [UNRELIABLE: near-defective X]",
+                       kappa_X_note,
                        s_pred_int, s_meas_same, s_int_diff,
-                       s_int_diff <= 1 ? "within the +/-1 platform noise floor"
-                                       : "DECISION-RELEVANT: moves s_max",
+                       s_int_diff <= kSMaxStepTolerance
+                           ? std::format("within the chosen +/-{} s-step tolerance",
+                                         kSMaxStepTolerance)
+                           : "DECISION-RELEVANT: moves s_max",
                        diff_n, diff_hist, diff_worst,
-                       diff_worst <= 1 ? "ROBUST across vectors: prediction USABLE"
-                                       : "MEASURE regime: some vectors move s_max by 2+",
+                       diff_worst <= kSMaxStepTolerance
+                           ? "ROBUST across vectors: prediction USABLE"
+                           : "MEASURE regime: some vectors move s_max by 2+",
                        gap_dec, gap_steps,
                        survives ? "under one step" : "over one step",
                        s_cons, s_max_worst),
@@ -685,7 +710,7 @@ int main(int argc, char* argv[])
             if (!f) throw std::runtime_error("Cannot open CSV: " + a.csv_path);
             if (!exists)
                 f << "machine,P,n1,dim,N,nnz,scale,shift,advection,correlation,var_advection,real_bs,"
-                     "kappa_X,henrici,henrici_rel,gap_dec,s_pred_int,s_meas_same,s_cons,"
+                     "kappa_X,kappa_X_struct,henrici,henrici_rel,gap_dec,s_pred_int,s_meas_same,s_cons,"
                      "diff_worst,is_normal,analytic_spectrum,h,tol,spread,m_measured,"
                      "s_max_phys_worst,s_max_pred_spectrum,blocks_worst,s_block,"
                      "s_llt_survives,R_v,R_h,ai,ai_mgs,cycle_s,rv_spmv,rv_mgs,"
@@ -701,7 +726,8 @@ int main(int argc, char* argv[])
                   << op.n << ',' << op.nnz << ',' << a.spec.spec_scale << ','
                   << a.spec.spec_shift << ',' << a.spec.advection << ','
                   << a.spec.correlation << ',' << a.spec.var_advection << ',' << a.real_bs << ','
-                  << nn.kappa_X << ',' << op.henrici << ',' << nn.henrici_rel << ','
+                  << nn.kappa_X << ',' << nn.kappa_X_struct << ',' << op.henrici << ','
+                  << nn.henrici_rel << ','
                   << nn.gap_dec << ',' << nn.s_pred_int << ',' << nn.s_meas_same << ','
                   << nn.s_cons << ',' << nn.diff_worst << ',' << (op.is_normal ? 1 : 0) << ','
                   << (op.has_analytic_spectrum ? 1 : 0) << ',' << a.h << ',' << a.tol << ','
