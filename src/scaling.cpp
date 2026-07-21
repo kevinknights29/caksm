@@ -21,7 +21,7 @@
  *   - Parallel Modified Gram-Schmidt (MGS): each dot product and the final norm
  *     is a global reduction across threads, exactly the horizontal-communication
  *     cost the study exists to expose. The reduction comes from
- *     include/reduction.hpp, which scripts/calibrate_alpha.sh also calibrates
+ *     include/reduction.hpp, which scripts/regime/calibrate_alpha.sh also calibrates
  *     against; `--reduce linear` reproduces the old barrier-plus-scan artifact so
  *     its inflation can be measured, `tree` is the default and what a reported
  *     result should use.
