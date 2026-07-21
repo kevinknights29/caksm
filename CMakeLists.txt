@@ -132,7 +132,15 @@ target_link_libraries(arnoldi_tests
 
 # Regime-instrument tests: the invariants the map rests on (permutation similarity,
 # R_v's aggregate accounting frame, MGS/s-step reduction counts, CholQR breakdown).
-add_executable(regime_tests tests/test_regime.cpp)
+#
+# Split by subject across several translation units.
+add_executable(regime_tests
+        tests/test_regime_coordinates.cpp
+        tests/test_regime_synthetic.cpp
+        tests/test_regime_krylov.cpp
+        tests/test_regime_nonnormal.cpp
+        tests/test_regime_kernels.cpp
+)
 target_link_libraries(regime_tests PRIVATE caksm Catch2::Catch2WithMain)
 target_compile_options(regime_tests PRIVATE -O2)
 
