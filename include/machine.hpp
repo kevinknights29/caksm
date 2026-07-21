@@ -9,7 +9,7 @@
  * Preset set to puffin. The table mirrors src/profiler.cpp's HWPreset entry so the
  * byte models and roofline figures stay comparable. Adding a machine
  * means measuring it: the hardware fields are transcription, but the three reduction
- * parameters must come from scripts/calibrate_alpha.sh run on that host, and
+ * parameters must come from scripts/regime/calibrate_alpha.sh run on that host, and
  * reduction_calibrated keeps an untested one from being trusted.
  *
  * @author Kevin Knights
@@ -29,7 +29,7 @@
  * @brief A-priori hardware parameters for one compute environment.
  *
  * @note The three reduction parameters are the only entries not from a datasheet: they
- *       come from scripts/calibrate_alpha.sh, measured once offline. See reduction_cost_s.
+ *       come from scripts/regime/calibrate_alpha.sh, measured once offline. See reduction_cost_s.
  */
 struct Machine {
     std::string_view key;
