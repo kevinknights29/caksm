@@ -121,6 +121,29 @@ def kappa_at(run, s_target):
             return float(r["kappa_predicted"])
     return None
 
+
+def kappa_X_of(run):
+    """kappa(X) for the law's x-axis, preferring the canonical tensor-basis value.
+
+    The dense kappa_X names a property of the operator only while the spectrum is simple.
+    The constant-coefficient arm (correlation = 0, var_advection = 0, dim >= 2) is a pure
+    Kronecker sum, so its axes are interchangeable, the spectrum repeats, and the dense value
+    is inflated by up to 173x, non-monotone in gamma (1731 at 0.05 falling to 1372 at 0.1),
+    and moves 1.4-7.9x under exact similarities. The variable-coefficient arm ramps axis 0
+    alone, leaving one clean axis, so its spectrum is simple and its dense value is sound.
+    Fitting the two arms against x-axes of different validity is what this avoids.
+
+    Returns (value, is_canonical). Falls back to the dense value for CSVs written before
+    kappa_X_struct existed, and for operators that do not factor (real BS, var_advection).
+    """
+    try:
+        ks = float(run[0].get("kappa_X_struct", "nan"))
+    except (TypeError, ValueError):
+        ks = float("nan")
+    if np.isfinite(ks) and ks > 0.0:
+        return ks, True
+    return scalar(run, "kappa_X"), False
+
 def normal_scaffold(k):
     """A normal, separable synthetic run: advection, correlation and var_advection all 0,
     and not the real BS operator. The real operator zeroes every synthetic knob yet carries
@@ -383,12 +406,16 @@ def plot_nonnormality(runs) -> None:
     # survives deep into the non-normal regime.
     fam = {"const": ([], []), "var": ([], [])}   # per-MECHANISM points for separate fits
     seen = set()
-    for run in sorted(group, key=lambda r: scalar(r, "kappa_X")):
+    n_canon, n_dense = 0, 0
+    for run in sorted(group, key=lambda r: kappa_X_of(r)[0]):
         g = gap_at(run)
         if g is None:
             continue
         name, mech, col = classify(run)
-        lx = np.log10(max(scalar(run, "kappa_X"), 1.0))
+        kx, canonical = kappa_X_of(run)
+        n_canon += int(canonical)
+        n_dense += int(not canonical)
+        lx = np.log10(max(kx, 1.0))
         # A star for the real operator, so it reads as a placed test point rather than one
         # more sample in a synthetic family. Larger and drawn on top.
         is_real = (mech == "real")
@@ -420,7 +447,8 @@ def plot_nonnormality(runs) -> None:
                label="one $s$-step ($\\approx$1.2 decades)")
     ax.set_xlim(-0.3, lxmax + 0.5)
     ax.set_ylim(-0.1, min(lxmax + 0.5, 3.2))
-    ax.set_xlabel(r"$\log_{10}\kappa(X)$   (unit-2-norm eigenvector conditioning)")
+    ax.set_xlabel(r"$\log_{10}\kappa(X)$   (canonical tensor basis where the spectrum "
+                  r"is degenerate)")
     ax.set_ylabel(r"prediction error  $|\log_{10}\kappa_{meas}-\log_{10}\kappa_{pred}|$")
     ax.grid(alpha=0.25, lw=0.5)
     ax.legend(fontsize=7.5, loc="upper left")
@@ -434,6 +462,13 @@ def plot_nonnormality(runs) -> None:
     ratio = (slopes.get("var", 0) / slopes["const"]) if slopes.get("const") else 0
     print(f"  const-coeff slope    : {slopes.get('const', 0):.3f}")
     print(f"  variable-coeff slope : {slopes.get('var', 0):.3f}  (~{ratio:.0f}x steeper)")
+    print(f"  x-axis: {n_canon} point(s) canonical, {n_dense} dense")
+    if n_dense and not n_canon:
+        print("  (warn) no kappa_X_struct column anywhere: this CSV predates it, so the "
+              "constant-\n         coefficient arm is fitted against a degenerate, "
+              "basis-dependent x-axis.\n         Re-run the control sweeps. The const slope "
+              "shifts by ~10% either way\n         depending on which points are in the fit; "
+              "the ~4x separation is robust.")
 
 
 # Operator properties, for reference when writing the caption. Normality is what the
