@@ -595,17 +595,22 @@ Measured, the data sits far below that line and grows only *logarithmically*:
 
 | Mechanism                                                      | Fitted slope of (error in decades) vs $\log_{10}\kappa(X)$ |
 |----------------------------------------------------------------|------------------------------------------------------------|
-| constant-coefficient (advection, correlation, $\rho + \gamma$) | **0.061**                                                  |
+| constant-coefficient (advection, correlation, $\rho + \gamma$) | **0.069**                                                  |
 | variable-coefficient advection (position-dependent ramp)       | **0.250** (~4x steeper)                                    |
 
 The two slopes differ by a factor of four, so the law is **scoped to the
 constant-coefficient family**, not mechanism-independent - which is exactly why the
-variable-advection knob exists in the instrument. The figure's horizontal axis is currently
-the dense $\kappa(X)$, which for the zero-correlation half of the constant-coefficient arm
-is degenerate and inflated (up to $173\times$, see [the asset-dimension
-law](#the-asset-dimension-law)); refitting that arm on the canonical axis moves its slope to
-0.069, leaving the separation intact. The variable-coefficient arm ramps a single axis, so
-its spectrum is simple and its axis is sound either way.
+variable-advection knob exists in the instrument.
+
+Both are fitted on the canonical axis. This matters for the constant-coefficient arm, whose
+zero-correlation half is a pure Kronecker sum: its axes are interchangeable, so the dense
+$\kappa(X)$ there is degenerate and inflated by up to $173\times$ (see [the asset-dimension
+law](#the-asset-dimension-law)). Fitted on that dense axis the slope reads 0.061 instead of
+0.069 - a shift small enough not to disturb the conclusion, but the two arms would have been
+compared on axes of different validity, since the variable-coefficient arm ramps a single
+axis and therefore keeps a simple spectrum and a sound dense value. The `--real-bs` and
+variable-advection points legitimately retain the dense value for the same reason;
+`regime_plot.py` reports the split (19 canonical, 11 dense) on every run.
 
 A *decade* here is one factor of ten in the basis condition number: the error plotted is
 $\lvert \log_{10}\kappa_{\text{meas}} - \log_{10}\kappa_{\text{pred}} \rvert$, so 1.0
@@ -929,10 +934,9 @@ Carried explicitly so no figure is read as claiming more than it measures.
 | Caveat                                                                                                                        | Consequence                                                                                                                                                                                                                                                          |
 |-------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | DRAM bytes are **modeled, not counted** (puffin's uncore counters need root)                                                  | vertical-mechanism traffic claims are reconciled against the roofline, which is weaker evidence; every such curve is labeled as a model                                                                                                                              |
-| $s_{\max}$ is reported at a **chosen tolerance** of $\pm 1$ step (`kSMaxStepTolerance`), not a measured cross-compiler noise floor | quote block *counts*, not raw $s_{\max}$; the floor is asserted, and either measuring it or restating it as a tolerance is outstanding                                                                                                                               |
+| $s_{\max}$ is reported at a **chosen tolerance** of $\pm 1$ step (`kSMaxStepTolerance`), not a measured cross-compiler noise floor | quote block *counts*, not raw $s_{\max}$; it is now stated as a chosen tolerance with its reasoning, but the cross-compiler spread has still not been measured                                                                                                        |
 | $\kappa(X)$ is dense-eigensolvable only to $N \le 32768$ (`kControlMaxN`)                                                     | the certificate is validated well below where the performance claims live - the real-BS control tops out at $N = 8{,}000$ ($n = 20$) against a production $N \approx 2.3 \times 10^5$ ($n = 61$); `structured_kappa_X` lifts the cap for the synthetic operator only |
 | The upper-right corner is unreachable on a single-NUMA socket                                                                 | its status is a portability argument, not a measurement                                                                                                                                                                                                              |
-`regime_control.csv` predates the canonical $\kappa(X)$, so the log-robustness figure still fits its constant-coefficient arm on the dense axis | the fitted slope moves from 0.061 to 0.069 when refitted canonically, which does not disturb the conclusion; re-run `scripts/regime/regime_control.sh` to regenerate the figure on the correct axis |
 | Coordinates are **not portable across memory systems**                                                                        | both axes must be re-derived from a new machine's constants (`include/machine.hpp`) before any port; a GPU's tiny L2, large bandwidth and cheap on-chip reductions move both                                                                                         |
 
 ## Repository layout
