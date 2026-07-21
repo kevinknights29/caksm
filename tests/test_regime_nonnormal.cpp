@@ -444,3 +444,51 @@ TEST_CASE("interchangeable axes make the spectrum degenerate, so dense kappa(X) 
     REQUIRE_THAT(regime_control::structured_kappa_X(scattered),
                  WithinRel(regime_control::structured_kappa_X(sp), 1e-12));
 }
+
+TEST_CASE("a symmetric permutation moves dense kappa(X) but not the canonical value",
+          "[synthetic][nonnormal][correlation][critical]")
+{
+    // The quantitative half of the claim above, and the source of the spread quoted in the
+    // README. P A P^T is an exact similarity, so any function of the OPERATOR is invariant
+    // under it. Sweeping the seed of the scatter permutation sweeps P.
+    //
+    // Measured over 8 permutations: the dense value is pinned to rounding while the
+    // spectrum is simple and comes apart once it repeats.
+    //
+    //   dim     N   perm min   perm max      spread   structured
+    //     2    16      6.671      6.671   1 + 3e-15        6.671
+    //     3    64     16.951     16.951   1 + 8e-14       16.951
+    //     4   256     81.815    314.338        3.84x       43.073
+    //     5  1024    373.9     2903            7.76x      109.45     (not run here: cost)
+    //
+    // dim = 5 is left out of the loop because 8 dense eigensolves plus SVDs at N = 1024
+    // dominate the suite's runtime; dim = 4 already exhibits the effect.
+    constexpr int kSeeds = 8;
+
+    struct Case { int dim; double max_spread; };   // dim 2,3: invariant. dim 4: it is not.
+    for (const Case c : {Case{2, 1.0 + 1e-9}, Case{3, 1.0 + 1e-9}, Case{4, 0.0}}) {
+        SyntheticSpec sp;
+        sp.n1 = 4; sp.dim = c.dim; sp.advection = 0.3; sp.correlation = 0.3;
+
+        double lo = std::numeric_limits<double>::max(), hi = 0.0;
+        for (uint64_t seed = 1; seed <= kSeeds; ++seed) {
+            SyntheticSpec p = sp;
+            p.scatter_block = synthetic_dimension(sp);   // full symmetric shuffle
+            p.seed          = seed;
+            const double k = regime_control::unit_norm_kappa_X(build_synthetic(p));
+            REQUIRE(std::isfinite(k));
+            lo = std::min(lo, k);
+            hi = std::max(hi, k);
+            // The canonical value is a function of the factors, so every P leaves it fixed.
+            REQUIRE_THAT(regime_control::structured_kappa_X(p),
+                         WithinRel(regime_control::structured_kappa_X(sp), 1e-12));
+        }
+
+        INFO("dim=" << c.dim << " dense kappa(X) in [" << lo << ", " << hi
+             << "], spread " << hi / lo << "x");
+        if (c.dim < 4)
+            REQUIRE(hi / lo <= c.max_spread);       // simple spectrum: a genuine invariant
+        else
+            REQUIRE(hi / lo > 2.0);                 // degenerate: not an operator property
+    }
+}
