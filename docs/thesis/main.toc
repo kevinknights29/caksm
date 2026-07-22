@@ -1,7 +1,41 @@
-\contentsline {section}{\numberline {2}Introduction}{6}{section.0.2}%
-\contentsline {subsection}{\numberline {2.1}Strategy 1: Communication-Avoiding Krylov Methods (s-step / CA-Arnoldi)}{6}{subsection.0.2.1}%
-\contentsline {subsection}{\numberline {2.2}Strategy 2: Rational Krylov Subspaces}{8}{subsection.0.2.2}%
-\contentsline {subsection}{\numberline {2.3}Strategy 3: Combined Approach}{9}{subsection.0.2.3}%
-\contentsline {section}{\numberline {3}Section example}{10}{section.0.3}%
-\contentsline {subsection}{\numberline {3.1}Subsection example}{10}{subsection.0.3.1}%
+\contentsline {section}{Lists of Figures and Tables}{6}{chapter*.5}%
+\contentsline {section}{\numberline {1}Introduction}{8}{section.0.1}%
+\contentsline {section}{\numberline {2}The pricing problem and its discretization}{8}{section.0.2}%
+\contentsline {section}{\numberline {3}The Krylov exponential integrator}{9}{section.0.3}%
+\contentsline {subsection}{\numberline {3.1}Cost structure and the sequential dependency}{11}{subsection.0.3.1}%
+\contentsline {subsection}{\numberline {3.2}Communication-avoiding reformulations}{11}{subsection.0.3.2}%
+\contentsline {section}{\numberline {4}Experimental platform and methodology}{12}{section.0.4}%
+\contentsline {paragraph}{\nonumberline Why one bare-metal machine, and not a cloud VM.}{12}{paragraph*.13}%
+\contentsline {paragraph}{\nonumberline Vectorization is not the baseline's problem.}{12}{paragraph*.15}%
+\contentsline {paragraph}{\nonumberline Reproducibility.}{12}{paragraph*.18}%
+\contentsline {section}{\numberline {5}Benchmark: reproducing Niesen--Wright}{13}{section.0.5}%
+\contentsline {paragraph}{\nonumberline The referee.}{13}{paragraph*.21}%
+\contentsline {paragraph}{\nonumberline Control, not result.}{13}{paragraph*.23}%
+\contentsline {section}{\numberline {6}Profile and roofline}{15}{section.0.6}%
+\contentsline {section}{\numberline {7}The OpenMP scaling study}{16}{section.0.7}%
+\contentsline {subsection}{\numberline {7.1}Instrument design}{16}{subsection.0.7.1}%
+\contentsline {subsection}{\numberline {7.2}The quarantined $m(n)$ growth}{16}{subsection.0.7.2}%
+\contentsline {subsection}{\numberline {7.3}Why the transition happens: the locality control}{17}{subsection.0.7.3}%
+\contentsline {section}{\numberline {8}Regime analysis: a dimensionless map}{19}{section.0.8}%
+\contentsline {subsection}{\numberline {8.1}The coordinates}{19}{subsection.0.8.1}%
+\contentsline {subsection}{\numberline {8.2}The instrument and its gates}{20}{subsection.0.8.2}%
+\contentsline {subsection}{\numberline {8.3}Basis conditioning and the confound control}{20}{subsection.0.8.3}%
+\contentsline {subsection}{\numberline {8.4}The reduction ledger and small-$m$ safety}{21}{subsection.0.8.4}%
+\contentsline {paragraph}{\nonumberline Small-$m$ safety.}{21}{paragraph*.39}%
+\contentsline {subsection}{\numberline {8.5}Non-normality: the log-robustness law}{23}{subsection.0.8.5}%
+\contentsline {subsection}{\numberline {8.6}The asset-dimension law}{23}{subsection.0.8.6}%
+\contentsline {subsection}{\numberline {8.7}The computability gap}{26}{subsection.0.8.7}%
+\contentsline {subsection}{\numberline {8.8}The horizontal mechanism: a measured null result}{26}{subsection.0.8.8}%
+\contentsline {subsection}{\numberline {8.9}The vertical mechanism: a measured shortfall}{27}{subsection.0.8.9}%
+\contentsline {subsection}{\numberline {8.10}Block width: two roofs, and which one binds}{29}{subsection.0.8.10}%
+\contentsline {subsection}{\numberline {8.11}The map, and where the real operator travels}{30}{subsection.0.8.11}%
+\contentsline {subsection}{\numberline {8.12}Standing caveats}{30}{subsection.0.8.12}%
+\contentsline {section}{\numberline {9}Toward GPUs: falsifying the map}{32}{section.0.9}%
+\contentsline {subsection}{\numberline {9.1}The falsification test}{32}{subsection.0.9.1}%
+\contentsline {subsection}{\numberline {9.2}What transfers, and what breaks}{32}{subsection.0.9.2}%
+\contentsline {subsection}{\numberline {9.3}Phasing}{33}{subsection.0.9.3}%
+\contentsline {subsection}{\numberline {9.4}Open questions and risks}{34}{subsection.0.9.4}%
+\contentsline {section}{\numberline {10}Conclusion}{34}{section.0.10}%
+\contentsline {subsection}{\numberline {10.1}Future work}{35}{subsection.0.10.1}%
+\contentsline {section}{References}{36}{subsection.0.10.1}%
 \providecommand \tocbasic@end@toc@file {}\tocbasic@end@toc@file 
