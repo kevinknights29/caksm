@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  22 JUL 2026 14:31
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  23 JUL 2026 01:11
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1212,35 +1212,35 @@ Package: lastpagemodern 2025-01-27 v2.1e Refers to last page's name (HMM; JPG)
 )) (./main.aux)
 \openout1 = `main.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 29.
-LaTeX Font Info:    ... okay on input line 29.
-Package scrbase Info: activating english \abstractname on input line 29.
-Package scrbase Info: activating english \partname on input line 29.
-Package scrbase Info: activating english \chaptername on input line 29.
-Package scrbase Info: activating english \appendixname on input line 29.
-Package scrbase Info: activating english \figurename on input line 29.
-Package scrbase Info: activating english \tablename on input line 29.
-Package scrbase Info: activating english \contentsname on input line 29.
-Package scrbase Info: activating english \listfigurename on input line 29.
-Package scrbase Info: activating english \listtablename on input line 29.
-Package scrbase Info: activating english \bibname on input line 29.
-Package scrbase Info: activating english \indexname on input line 29.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 36.
+LaTeX Font Info:    ... okay on input line 36.
+Package scrbase Info: activating english \abstractname on input line 36.
+Package scrbase Info: activating english \partname on input line 36.
+Package scrbase Info: activating english \chaptername on input line 36.
+Package scrbase Info: activating english \appendixname on input line 36.
+Package scrbase Info: activating english \figurename on input line 36.
+Package scrbase Info: activating english \tablename on input line 36.
+Package scrbase Info: activating english \contentsname on input line 36.
+Package scrbase Info: activating english \listfigurename on input line 36.
+Package scrbase Info: activating english \listtablename on input line 36.
+Package scrbase Info: activating english \bibname on input line 36.
+Package scrbase Info: activating english \indexname on input line 36.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -1298,7 +1298,7 @@ Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
 File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
 e
 ))
-Package hyperref Info: Link coloring OFF on input line 29.
+Package hyperref Info: Link coloring OFF on input line 36.
 
 (./main.out) (./main.out)
 \@outlinefile=\write5
@@ -1311,7 +1311,7 @@ Class scrreprt Info: loading recommended package `bookmark'.
 (scrreprt)           `bookmarkpackage=false' before \begin{document} and
 (scrreprt)           you can avoid this message adding:
 (scrreprt)             \usepackage{bookmark}
-(scrreprt)           before \begin{document} on input line 29.
+(scrreprt)           before \begin{document} on input line 36.
 
 (/usr/local/texlive/2025/texmf-dist/tex/latex/bookmark/bookmark.sty
 Package: bookmark 2023-12-10 v1.31 PDF bookmarks (HO)
@@ -1323,7 +1323,7 @@ File: bkm-pdftex.def 2023-12-10 v1.31 bookmark driver for pdfTeX and luaTeX (HO
 ))
 \c@lstlisting=\count392
 Package tocbasic Info: omitting babel extension for `lol'
-(tocbasic)             because of missing \bbl@set@language on input line 29.
+(tocbasic)             because of missing \bbl@set@language on input line 36.
 \scr@dte@lstlisting@maxnumwidth=\skip116
 
 (/usr/local/texlive/2025/texmf-dist/tex/latex/pdflscape/pdflscape.sty
@@ -1343,27 +1343,27 @@ Package caption Info: End \AtBeginDocument code.
 <Trinity_Main_Logo.jpg, id=7, 1719.42375pt x 593.21625pt>
 File: Trinity_Main_Logo.jpg Graphic file (type jpg)
 <use Trinity_Main_Logo.jpg>
-Package pdftex.def Info: Trinity_Main_Logo.jpg  used on input line 30.
+Package pdftex.def Info: Trinity_Main_Logo.jpg  used on input line 37.
 (pdftex.def)             Requested size: 386.95897pt x 133.5041pt.
-LaTeX Font Info:    Trying to load font information for U+msa on input line 30.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 37.
 
 
 (/usr/local/texlive/2025/texmf-dist/tex/latex/amsfonts/umsa.fd
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 30.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 37.
 
 
 (/usr/local/texlive/2025/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
 LaTeX Font Info:    Trying to load font information for U+stmry on input line 3
-0.
+7.
 
 (/usr/local/texlive/2025/texmf-dist/tex/latex/stmaryrd/Ustmry.fd)
 
 LaTeX Font Warning: Font shape `U/stmry/b/n' undefined
-(Font)              using `U/stmry/m/n' instead on input line 30.
+(Font)              using `U/stmry/m/n' instead on input line 37.
 
 
 
@@ -1376,28 +1376,28 @@ al/texlive/2025/texmf-dist/fonts/enc/dvips/cm-super/cm-super-t1.enc} <./Trinity
 _Main_Logo.jpg>]
 File: Trinity_Main_Logo.jpg Graphic file (type jpg)
 <use Trinity_Main_Logo.jpg>
-Package pdftex.def Info: Trinity_Main_Logo.jpg  used on input line 34.
+Package pdftex.def Info: Trinity_Main_Logo.jpg  used on input line 41.
 (pdftex.def)             Requested size: 386.95897pt x 133.5041pt.
 <sig.png, id=21, 439.6425pt x 149.55875pt>
 File: sig.png Graphic file (type png)
 <use sig.png>
-Package pdftex.def Info: sig.png  used on input line 34.
+Package pdftex.def Info: sig.png  used on input line 41.
 (pdftex.def)             Requested size: 145.11053pt x 49.36366pt.
 
 
 [2 <./sig.png>]
 
 LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <10.95> not available
-(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 38.
+(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 45.
 
 
 LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <14.4> not available
-(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 38.
+(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 45.
 
 
 
 [3]
-Underfull \hbox (badness 10000) in paragraph at lines 52--73
+Underfull \hbox (badness 10000) in paragraph at lines 73--88
 
  []
 
@@ -1409,7 +1409,7 @@ Underfull \hbox (badness 10000) in paragraph at lines 52--73
 ]
 
 LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <20.74> not available
-(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 75.
+(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 92.
 
 (./main.toc)
 \tf@toc=\write6
@@ -1419,291 +1419,206 @@ LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <20.74> not available
 
 [5
 
-] (./main.lof
-Overfull \hbox (5.39848pt too wide) in paragraph at lines 1--1
- \T1/cmr/m/n/10.95 in-dis-tin-guish-able at ev-ery thread count: the ker-nel is
- bandwidth-bound, not vectorization- 
- []
-
-)
-\tf@lof=\write7
-\openout7 = `main.lof'.
-
-
-
-[6
-
-] (./main.lot)
-\tf@lot=\write8
-\openout8 = `main.lot'.
-
-
-
-[7
-
 ]
 
-[8]
+[6]
+
+[7]
 
 LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <12> not available
-(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 311.
+(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 265.
 
 
-
-[9]
-
-[10]
-Underfull \hbox (badness 2600) in paragraph at lines 331--332
+Underfull \hbox (badness 2600) in paragraph at lines 277--278
 []|\T1/cmr/m/n/10.95 matrix pow-ers / cache
  []
 
 
 
-[11]
-<stream_sweep.png, id=358, 1048.8786pt x 369.5406pt>
-File: stream_sweep.png Graphic file (type png)
-<use stream_sweep.png>
-Package pdftex.def Info: stream_sweep.png  used on input line 397.
-(pdftex.def)             Requested size: 435.32422pt x 153.3734pt.
+[8]
 
+[9]
 
-[12]
-<benchmark_plots.png, id=381, 803.1606pt x 658.6206pt>
+[10]
+<benchmark_plots.png, id=267, 803.1606pt x 658.6206pt>
 File: benchmark_plots.png Graphic file (type png)
 <use benchmark_plots.png>
-Package pdftex.def Info: benchmark_plots.png  used on input line 433.
+Package pdftex.def Info: benchmark_plots.png  used on input line 310.
 (pdftex.def)             Requested size: 483.69687pt x 396.64267pt.
 
 
-[13 <./stream_sweep.png>]
-
-[14 <./benchmark_plots.png>]
-<cache_roofline.png, id=407, 947.7006pt x 369.5406pt>
+[11 <./benchmark_plots.png>]
+<cache_roofline.png, id=284, 947.7006pt x 369.5406pt>
 File: cache_roofline.png Graphic file (type png)
 <use cache_roofline.png>
-Package pdftex.def Info: cache_roofline.png  used on input line 493.
+Package pdftex.def Info: cache_roofline.png  used on input line 346.
 (pdftex.def)             Requested size: 435.32422pt x 169.74826pt.
 
 
-[15 <./cache_roofline.png>]
-<scaling_strong.png, id=418, 947.7006pt x 383.9946pt>
+[12 <./cache_roofline.png>]
+<scaling_strong.png, id=302, 947.7006pt x 383.9946pt>
 File: scaling_strong.png Graphic file (type png)
 <use scaling_strong.png>
-Package pdftex.def Info: scaling_strong.png  used on input line 561.
+Package pdftex.def Info: scaling_strong.png  used on input line 389.
 (pdftex.def)             Requested size: 483.69687pt x 195.98698pt.
-<scaling_weak.png, id=419, 622.4856pt x 405.6756pt>
+
+
+[13]
+<scaling_weak.png, id=312, 622.4856pt x 405.6756pt>
 File: scaling_weak.png Graphic file (type png)
 <use scaling_weak.png>
-Package pdftex.def Info: scaling_weak.png  used on input line 570.
+Package pdftex.def Info: scaling_weak.png  used on input line 397.
 (pdftex.def)             Requested size: 483.69687pt x 315.231pt.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 576.
+(hyperref)                removing `math shift' on input line 403.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 576.
+(hyperref)                removing `math shift' on input line 403.
 
 
 
-[16 <./scaling_strong.png>]
-<scaling_mn.png, id=429, 586.3506pt x 383.9946pt>
+[14 <./scaling_strong.png> <./scaling_weak.png>]
+<scaling_mn.png, id=324, 586.3506pt x 383.9946pt>
 File: scaling_mn.png Graphic file (type png)
 <use scaling_mn.png>
-Package pdftex.def Info: scaling_mn.png  used on input line 587.
+Package pdftex.def Info: scaling_mn.png  used on input line 409.
 (pdftex.def)             Requested size: 411.14528pt x 269.2514pt.
 
-Underfull \hbox (badness 1755) in paragraph at lines 617--617
-[]|\T1/cmr/m/n/10.95 transition at $\OML/cmm/m/it/10.95 P \OT1/cmr/m/n/10.95 = 
-12$
+Underfull \hbox (badness 3449) in paragraph at lines 430--430
+[]|\T1/cmr/m/n/10.95 cache-line blocks dealt round-
  []
 
-
-Underfull \hbox (badness 6625) in paragraph at lines 617--617
-\T1/cmr/m/n/10.95 (locality-preserving con-
- []
-
-
-Underfull \hbox (badness 4569) in paragraph at lines 618--618
-[]|\T1/cmr/m/n/10.95 cache-line blocks dealt
- []
-
-
-Underfull \hbox (badness 7832) in paragraph at lines 618--618
-[]|\T1/cmr/m/n/10.95 still transitions---scatter
- []
-
-
-Underfull \hbox (badness 3209) in paragraph at lines 618--618
-\T1/cmr/m/n/10.95 leaves per-CCX \T1/cmr/m/it/10.95 vol-ume
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 619--619
-[]|\T1/cmr/m/n/10.95 transition vanishes---no
- []
-
-
-Underfull \hbox (badness 5475) in paragraph at lines 619--619
-\T1/cmr/m/n/10.95 CCX re-tains a cache-
- []
-
-
-Underfull \hbox (badness 3884) in paragraph at lines 619--620
-[]|\T1/cmr/bx/n/10.95 confirmed\T1/cmr/m/n/10.95 : 6.6$\OMS/cmsy/m/n/10.95 ^^B$
-\T1/cmr/m/n/10.95 , no
- []
-
-<scaling_locality.png, id=433, 947.7006pt x 383.9946pt>
+<scaling_locality.png, id=328, 947.7006pt x 383.9946pt>
 File: scaling_locality.png Graphic file (type png)
 <use scaling_locality.png>
-Package pdftex.def Info: scaling_locality.png  used on input line 626.
+Package pdftex.def Info: scaling_locality.png  used on input line 438.
 (pdftex.def)             Requested size: 459.51054pt x 186.18442pt.
 
 
-[17 <./scaling_weak.png>]
-
-[18 <./scaling_mn.png>]
-Underfull \hbox (badness 6575) in paragraph at lines 667--667
+[15 <./scaling_mn.png>]
+Underfull \hbox (badness 6575) in paragraph at lines 462--462
 []|\T1/cmr/bx/n/10.95 vertical\T1/cmr/m/n/10.95 : matrix-powers
  []
 
 
 
-[19 <./scaling_locality.png>]
-Underfull \hbox (badness 1303) in paragraph at lines 712--712
+[16 <./scaling_locality.png>]
+Underfull \hbox (badness 1303) in paragraph at lines 494--494
 []|\T1/cmr/m/n/10.95 measured $\OML/cmm/m/it/10.95 m$ \T1/cmr/m/n/10.95 obeys t
 he Hochbruck--Lubich spec-tral
  []
 
 
-Underfull \hbox (badness 1082) in paragraph at lines 716--716
+Underfull \hbox (badness 1082) in paragraph at lines 498--498
 []|\T1/cmr/m/n/10.95 worst-case block count over the phys-i-cal en-sem-ble
  []
 
-<regime_conditioning.png, id=460, 1092.2406pt x 355.0866pt>
+
+
+[17]
+<regime_conditioning.png, id=358, 1092.2406pt x 355.0866pt>
 File: regime_conditioning.png Graphic file (type png)
 <use regime_conditioning.png>
-Package pdftex.def Info: regime_conditioning.png  used on input line 743.
+Package pdftex.def Info: regime_conditioning.png  used on input line 512.
 (pdftex.def)             Requested size: 459.51054pt x 149.38458pt.
 
 
-[20]
-<regime_confound.png, id=468, 875.4306pt x 355.0866pt>
+[18 <./regime_conditioning.png>]
+<regime_confound.png, id=370, 875.4306pt x 355.0866pt>
 File: regime_confound.png Graphic file (type png)
 <use regime_confound.png>
-Package pdftex.def Info: regime_confound.png  used on input line 757.
+Package pdftex.def Info: regime_confound.png  used on input line 527.
 (pdftex.def)             Requested size: 459.51054pt x 186.38531pt.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 763.
+(hyperref)                removing `math shift' on input line 532.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 763.
-
-<regime_reductions.png, id=471, 586.3506pt x 369.5406pt>
-File: regime_reductions.png Graphic file (type png)
-<use regime_reductions.png>
-Package pdftex.def Info: regime_reductions.png  used on input line 790.
-(pdftex.def)             Requested size: 435.32422pt x 274.35796pt.
+(hyperref)                removing `math shift' on input line 532.
 
 
-[21 <./regime_conditioning.png> <./regime_confound.png>]
 
-[22 <./regime_reductions.png>]
-<regime_nonnormality.png, id=487, 550.2156pt x 369.5406pt>
+[19 <./regime_confound.png>]
+<regime_nonnormality.png, id=382, 550.2156pt x 369.5406pt>
 File: regime_nonnormality.png Graphic file (type png)
 <use regime_nonnormality.png>
-Package pdftex.def Info: regime_nonnormality.png  used on input line 836.
+Package pdftex.def Info: regime_nonnormality.png  used on input line 563.
 (pdftex.def)             Requested size: 459.51054pt x 308.63014pt.
 
 
-[23]
-
-[24 <./regime_nonnormality.png>]
-<regime_dsweep.png, id=501, 947.7006pt x 362.3136pt>
+[20 <./regime_nonnormality.png>]
+<regime_dsweep.png, id=393, 947.7006pt x 362.3136pt>
 File: regime_dsweep.png Graphic file (type png)
 <use regime_dsweep.png>
-Package pdftex.def Info: regime_dsweep.png  used on input line 919.
+Package pdftex.def Info: regime_dsweep.png  used on input line 624.
 (pdftex.def)             Requested size: 459.51054pt x 175.67212pt.
 
 
-[25 <./regime_dsweep.png>]
-<scaling_reduction.png, id=510, 939.51pt x 375.804pt>
+[21]
+
+[22 <./regime_dsweep.png>]
+<scaling_reduction.png, id=411, 939.51pt x 375.804pt>
 File: scaling_reduction.png Graphic file (type png)
 <use scaling_reduction.png>
-Package pdftex.def Info: scaling_reduction.png  used on input line 996.
+Package pdftex.def Info: scaling_reduction.png  used on input line 667.
 (pdftex.def)             Requested size: 435.32422pt x 174.12775pt.
 
 
-[26]
-<regime_sweep.png, id=519, 615.37904pt x 413.02306pt>
+[23 <./scaling_reduction.png>]
+<regime_sweep.png, id=422, 615.37904pt x 413.02306pt>
 File: regime_sweep.png Graphic file (type png)
 <use regime_sweep.png>
-Package pdftex.def Info: regime_sweep.png  used on input line 1040.
+Package pdftex.def Info: regime_sweep.png  used on input line 701.
 (pdftex.def)             Requested size: 459.51054pt x 308.40524pt.
-<regime_sweep_mechanism.png, id=521, 947.82104pt x 384.11505pt>
+<regime_sweep_mechanism.png, id=424, 947.82104pt x 384.11505pt>
 File: regime_sweep_mechanism.png Graphic file (type png)
 <use regime_sweep_mechanism.png>
-Package pdftex.def Info: regime_sweep_mechanism.png  used on input line 1060.
+Package pdftex.def Info: regime_sweep_mechanism.png  used on input line 711.
 (pdftex.def)             Requested size: 459.51054pt x 186.21938pt.
 
 
-[27 <./scaling_reduction.png>]
+[24 <./regime_sweep.png>]
 
-[28 <./regime_sweep.png> <./regime_sweep_mechanism.png>]
-<regime_swidth.png, id=536, 911.68605pt x 369.66106pt>
+[25{/usr/local/texlive/2025/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.en
+c} <./regime_sweep_mechanism.png>]
+<regime_swidth.png, id=446, 911.68605pt x 369.66106pt>
 File: regime_swidth.png Graphic file (type png)
 <use regime_swidth.png>
-Package pdftex.def Info: regime_swidth.png  used on input line 1115.
+Package pdftex.def Info: regime_swidth.png  used on input line 753.
 (pdftex.def)             Requested size: 459.51054pt x 186.31918pt.
 
 
-[29{/usr/local/texlive/2025/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.en
-c} <./regime_swidth.png>]
-<regime_trajectory.png, id=548, 600.8046pt x 485.1726pt>
+[26 <./regime_swidth.png>]
+<regime_trajectory.png, id=460, 600.8046pt x 485.1726pt>
 File: regime_trajectory.png Graphic file (type png)
 <use regime_trajectory.png>
-Package pdftex.def Info: regime_trajectory.png  used on input line 1156.
+Package pdftex.def Info: regime_trajectory.png  used on input line 787.
 (pdftex.def)             Requested size: 459.51054pt x 371.0818pt.
 
-Overfull \hbox (5.55412pt too wide) in paragraph at lines 1181--1184
-[]\T1/cmr/m/n/10.95 DRAM bytes are \T1/cmr/bx/n/10.95 mod-eled, not counted \T1
-/cmr/m/n/10.95 (puf-fin's un-core coun-ters need root); vertical-mechanism
- []
 
+[27 <./regime_trajectory.png>]
 
-
-[30]
-
-[31 <./regime_trajectory.png>]
-
-[32]
-Underfull \hbox (badness 10000) in paragraph at lines 1297--1298
+[28]
+Underfull \hbox (badness 10000) in paragraph at lines 840--841
 []|\T1/cmr/m/n/10.95 expensive; car-ries
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 1299--1300
-[]|\T1/cmr/m/n/10.95 dominant; fab-ric
- []
 
+[29]
 
+[30] (./main.bbl
 
-[33]
-
-[34]
-
-[35] (./main.bbl
-
-[36
+[31
 
 ])
 
-[37] 
+[32] 
 enddocument/afterlastpage (AED): lastpage setting LastPage.
 (./main.aux)
  ***********
@@ -1718,50 +1633,56 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: D41D8CD98F00B204E9800998ECF8427E;0.
  ) 
 Here is how much of TeX's memory you used:
- 36755 strings out of 473190
- 712122 string characters out of 5715801
- 1366641 words of memory out of 5000000
- 59208 multiletter control sequences out of 15000+600000
- 592046 words of font info for 127 fonts, out of 8000000 for 9000
+ 36716 strings out of 473190
+ 711345 string characters out of 5715801
+ 1359640 words of memory out of 5000000
+ 59180 multiletter control sequences out of 15000+600000
+ 597062 words of font info for 139 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 132i,18n,134p,10942b,668s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 132i,18n,134p,10942b,704s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
-></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx8.pfb><
-/usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></
-usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cmextra/cmex8.pfb
-></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb>
-</usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb><
-/usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi6.pfb></u
-sr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr
-/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/l
-ocal/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/loc
-al/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/
-texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/t
-exlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/tex
-live/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/local/texli
-ve/2025/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/local/t
-exlive/2025/texmf-dist/fonts/type1/public/cm-super/sfbx0800.pfb></usr/local/tex
-live/2025/texmf-dist/fonts/type1/public/cm-super/sfbx1095.pfb></usr/local/texli
-ve/2025/texmf-dist/fonts/type1/public/cm-super/sfbx1728.pfb></usr/local/texlive
-/2025/texmf-dist/fonts/type1/public/cm-super/sfcc1095.pfb></usr/local/texlive/2
-025/texmf-dist/fonts/type1/public/cm-super/sfcc1200.pfb></usr/local/texlive/202
-5/texmf-dist/fonts/type1/public/cm-super/sfcc1440.pfb></usr/local/texlive/2025/
-texmf-dist/fonts/type1/public/cm-super/sfcc2074.pfb></usr/local/texlive/2025/te
-xmf-dist/fonts/type1/public/cm-super/sfit1095.pfb></usr/local/texlive/2025/texm
-f-dist/fonts/type1/public/cm-super/sfrm0800.pfb></usr/local/texlive/2025/texmf-
-dist/fonts/type1/public/cm-super/sfrm1095.pfb></usr/local/texlive/2025/texmf-di
-st/fonts/type1/public/cm-super/sfrm1440.pfb></usr/local/texlive/2025/texmf-dist
-/fonts/type1/public/cm-super/sfrm1728.pfb></usr/local/texlive/2025/texmf-dist/f
-onts/type1/public/cm-super/sfrm2074.pfb></usr/local/texlive/2025/texmf-dist/fon
-ts/type1/public/cm-super/sfsl1095.pfb></usr/local/texlive/2025/texmf-dist/fonts
-/type1/public/cm-super/sfss1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/t
-ype1/public/cm-super/sfti1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/typ
-e1/public/cm-super/sftt1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1
-/public/cm-super/sftt1440.pfb>
-Output written on main.pdf (37 pages, 5245081 bytes).
+></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx7.pfb><
+/usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx8.pfb></u
+sr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></us
+r/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cmextra/cmex8.pfb><
+/usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></
+usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></u
+sr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr
+/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi6.pfb></usr/l
+ocal/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/loc
+al/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr/local
+/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/local/t
+exlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/local/tex
+live/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texliv
+e/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/texlive/2
+025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/20
+25/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/texlive/2025
+/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2025/t
+exmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/local/texlive/2025/tex
+mf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/local/texlive/2025
+/texmf-dist/fonts/type1/public/cm-super/sfbx0600.pfb></usr/local/texlive/2025/t
+exmf-dist/fonts/type1/public/cm-super/sfbx1000.pfb></usr/local/texlive/2025/tex
+mf-dist/fonts/type1/public/cm-super/sfbx1095.pfb></usr/local/texlive/2025/texmf
+-dist/fonts/type1/public/cm-super/sfbx1728.pfb></usr/local/texlive/2025/texmf-d
+ist/fonts/type1/public/cm-super/sfcc1095.pfb></usr/local/texlive/2025/texmf-dis
+t/fonts/type1/public/cm-super/sfcc1200.pfb></usr/local/texlive/2025/texmf-dist/
+fonts/type1/public/cm-super/sfcc1440.pfb></usr/local/texlive/2025/texmf-dist/fo
+nts/type1/public/cm-super/sfcc2074.pfb></usr/local/texlive/2025/texmf-dist/font
+s/type1/public/cm-super/sfit1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/
+type1/public/cm-super/sfrm0800.pfb></usr/local/texlive/2025/texmf-dist/fonts/ty
+pe1/public/cm-super/sfrm1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/type
+1/public/cm-super/sfrm1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/
+public/cm-super/sfrm1440.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/pu
+blic/cm-super/sfrm1728.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/publ
+ic/cm-super/sfrm2074.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public
+/cm-super/sfti1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/c
+m-super/sftt1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-
+super/sftt1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-su
+per/sftt1440.pfb>
+Output written on main.pdf (32 pages, 4891424 bytes).
 PDF statistics:
- 883 PDF objects out of 1000 (max. 8388607)
- 732 compressed objects within 8 object streams
- 191 named destinations out of 1000 (max. 500000)
- 380 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 786 PDF objects out of 1000 (max. 8388607)
+ 633 compressed objects within 7 object streams
+ 175 named destinations out of 1000 (max. 500000)
+ 330 words of extra memory for PDF output out of 10000 (max. 10000000)
 

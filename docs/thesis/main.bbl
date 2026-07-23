@@ -6,6 +6,11 @@ Awad~H. Al-Mohy and Nicholas~J. Higham.
   to exponential integrators.
 \newblock {\em SIAM Journal on Scientific Computing}, 33(2):488--511, 2011.
 
+\bibitem{bai-hu-reichel-1994}
+Zhaojun Bai, Dan Hu, and Lothar Reichel.
+\newblock A {N}ewton basis {GMRES} implementation.
+\newblock {\em IMA Journal of Numerical Analysis}, 14(4):563--581, 1994.
+
 \bibitem{ballard-2011}
 Grey Ballard, James Demmel, Olga Holtz, and Oded Schwartz.
 \newblock Minimizing communication in numerical linear algebra.
@@ -41,6 +46,11 @@ Jim Douglas and Henry~H. Rachford.
 \newblock {\em Transactions of the American Mathematical Society}, 82:421--439,
   1956.
 
+\bibitem{golub-vanloan-2013}
+Gene~H. Golub and Charles~F. Van~Loan.
+\newblock {\em Matrix Computations}.
+\newblock Johns Hopkins University Press, 4th edition, 2013.
+
 \bibitem{higham-2005}
 Nicholas~J. Higham.
 \newblock The scaling and squaring method for the matrix exponential revisited.
@@ -71,13 +81,6 @@ Karel~J. in~'t Hout and Sven Foulon.
   model with correlation.
 \newblock {\em International Journal of Numerical Analysis and Modeling},
   7(2):303--320, 2010.
-
-\bibitem{mccalpin-1995}
-John~D. McCalpin.
-\newblock Memory bandwidth and machine balance in current high performance
-  computers.
-\newblock Technical report, IEEE Computer Society Technical Committee on
-  Computer Architecture (TCCA) Newsletter, 1995.
 
 \bibitem{mohiyuddin-2009}
 Marghoob Mohiyuddin, Mark Hoemmen, James Demmel, and Katherine Yelick.
