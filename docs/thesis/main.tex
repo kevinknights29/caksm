@@ -73,8 +73,9 @@ one.
 The numerical results certify the instrument. The $s$-step block width certified by the
 CholeskyQR2 stability theorem $\kappa(\mat{B}) \le u^{-1/2}$ \cite{yamamoto-2015} is
 predicted from the spectrum alone via a row-scaled Vandermonde argument and verified
-integer-exact on 20 of 21 runs; a log-robustness law bounds the damage non-normality does
-to that prediction; and a closed-form tensor law gives the growth of eigenvector
+integer-exact on 20 of 21 runs; an empirically fitted log-robustness relation bounds the
+damage non-normality does to that prediction; and a closed-form tensor identity gives the
+growth of eigenvector
 conditioning with asset dimension. The measured results place the real operator. Cutting
 the reduction count 11--16$\times$ leaves Gram--Schmidt wall-clock unchanged---exactly as
 the map predicts at $\Rh = 0.080$, because the kernel is bandwidth-bound, not
@@ -411,7 +412,7 @@ The harness freezes $m$ so that the scaling curves measure hardware; the genuine
 \label{fig:mn}
 \end{figure}
 
-\subsection{Why the transition happens: the locality control}\label{sec:locality}
+\subsection{The locality control}\label{sec:locality}
 
 At $n = 61$ the SpMV runtime drops \emph{superlinearly} (36.7$\times$ on 24 cores) with a knee at $P = 12$ (\Cref{fig:strong}). The candidate explanation is cache residency: once each CCX's share of the matrix ($3 \times 52.8/P$\,MiB) fits in its own 16\,MiB L3 slice and stays resident across the repeated SpMVs, reads come from L3 instead of DRAM. Quantitatively this checks out---the implied aggregate bandwidth crosses the socket DRAM ceiling (${\sim}95$\,GB/s) exactly at $P=12$, which is impossible from DRAM and therefore proves L3 residency.
 
@@ -447,7 +448,16 @@ The \texttt{cyclic} schedule was predicted to keep the transition, since it leav
 
 The scaling study says the baseline solver is memory-bound and synchronization-bound. It does not say whether a CA reformulation would \emph{help}, or where. The regime analysis answers that with a dimensionless map whose two axes are the two mechanisms, with a predicted crossover at 1 on each, plus a synthetic instrument that can be dialed to any point on the map and a real Black--Scholes operator that is \emph{placed} on it by measurement.
 
-The synthetic instrument is a $d$-fold Kronecker-sum operator assembled from tridiagonal advection--diffusion factors, with an optional correlation cross term and an optional symmetric scatter permutation. Its knobs are chosen so that each axis of the map can be moved \emph{independently}: the grid size $N = n_1^d$ sets the Arnoldi working set and therefore $\Rv$; the spectrum controls (diffusion scale $\sigma$, shift $\mu$, advection strength $\gamma$, correlation $\rho$) set the basis conditioning and therefore the certified block width, without touching the memory footprint; and the scatter knob permutes the operator symmetrically, changing its memory-access pattern at provably fixed spectrum (gate C2 below). One operator family can therefore visit any point on the map while holding the other coordinate fixed---which is what makes it an instrument rather than just a test matrix.
+The synthetic instrument generalizes the discretized operator of \Cref{sec:model} into a family with independently controllable knobs. Its backbone is a \emph{Kronecker sum}: one tridiagonal advection--diffusion operator $\mat{T} \in \R^{n_1 \times n_1}$ (the same three-point stencil as \Cref{sec:model}, with diffusion scale $\sigma$ and advection strength $\gamma$) is extended to the $d$-dimensional grid by
+\[
+\mat{A}_d = \mat{T} \oplus \cdots \oplus \mat{T}
+= \sum_{i=1}^{d} \mat{I} \otimes \cdots \otimes
+  \underbrace{\mat{T}}_{i\text{-th factor}} \otimes \cdots \otimes \mat{I}
+\in \R^{n_1^d \times n_1^d},
+\]
+which is exactly how a separable PDE discretization acts: the same one-dimensional stencil applied along each axis in turn \cite{golub-vanloan-2013}. Two optional terms then break that clean structure on demand, mirroring the two ways the real operator of \eqref{eq:bs-pde} departs from a textbook Laplacian. The \emph{correlation cross term} adds $c\,(\mat{D} \otimes \mat{D})$, the discrete mixed second derivative coupling one axis pair---the role the $\rho_{dd'}$ terms play in the PDE. It is optional because separability is itself a variable under study: with the term off, the operator factors axis by axis and its spectrum is known in closed form; with it on, that factorization is broken in a controlled way. The \emph{symmetric scatter permutation} relabels the grid unknowns, replacing $\mat{A}$ by $\mat{P}\mat{A}\mat{P}^\top$ for a permutation matrix $\mat{P}$: the same operator stored in a different memory layout, which destroys the banded structure a cache-blocked kernel relies on while provably changing no numerical property (gate C2 below).
+
+The knobs are chosen so that each axis of the map moves \emph{independently}: the grid size $N = n_1^d$ sets the Arnoldi working set and therefore $\Rv$; the spectrum controls ($\sigma$, $\mu$, $\gamma$, $\rho$) set the basis conditioning and therefore the certified block width, without touching the memory footprint; and the scatter knob changes the memory-access pattern at fixed spectrum. One operator family can therefore visit any point on the map while holding the other coordinate fixed---which is what makes it an instrument rather than just a test matrix.
 
 \subsection{The coordinates}\label{sec:coords}
 
@@ -465,8 +475,7 @@ $\Rh$ & reduction cost / compute per core between reductions & \textbf{horizonta
 \end{tabular}
 \end{table}
 
-Both crossovers are predicted at $R = 1$ ($\theta_v = \theta_h = 1$), giving four corners: neither mechanism (lower-left), horizontal only (lower-right), vertical only (upper-left),
-and both (upper-right). The Krylov dimension $m$ was demoted from an axis to a \emph{modulator}: it moves working sets, so it moves $\Rv$, but it is not itself a portable coordinate---two machines with the same $m$ can sit on opposite sides of $\theta_v$.
+Each coordinate is built as demand over supply. $\Rv$ divides the bytes the Arnoldi working set occupies by the bytes of last-level cache available to hold it; $\Rh$ divides the time a global reduction costs by the compute each core performs between reductions. A ratio of that shape has one distinguished value: at $R = 1$, supply exactly covers demand. Below it the working set already fits in cache (or the reduction is already cheap relative to compute), so the corresponding CA mechanism has nothing to recover; above it there is genuine traffic or synchronization for the mechanism to reclaim. The thresholds $\theta_v$ and $\theta_h$ name these predicted crossover values of $\Rv$ and $\Rh$, and both equal 1 by construction---which is also what makes them portable, since a dimensionless ratio crossing 1 means the same thing on any machine. The two thresholds cut the map into four corners: neither mechanism pays (lower-left), horizontal only (lower-right), vertical only (upper-left), and both (upper-right). The Krylov dimension $m$ was demoted from an axis to a \emph{modulator}: it moves working sets, so it moves $\Rv$, but it is not itself a portable coordinate---two machines with the same $m$ can sit on opposite sides of $\theta_v$.
 
 $\Rh$'s numerator needs a magnitude, not just a shape in $P$, or $\theta_h$ cannot be drawn at all. A calibration instrument measures it directly as a bare scalar all-reduce over an
 empty team---no payload, no application---and the model fitted to it is
@@ -505,7 +514,7 @@ C2 is load-bearing. The scatter knob applies a symmetric permutation $\mat{P}\ma
 
 \subsection{Basis conditioning and the confound control}\label{sec:conditioning}
 
-The certified $s$-step block width $s_{\max}$ is predicted from the spectrum alone (a row-scaled Vandermonde \cite{trefethen-1997}), then measured. Where a closed-form spectrum exists the prediction is \textbf{integer-exact on 20 of 21 runs}; the single exception is the most violently non-normal point in the sweep ($\gamma = 0.4$, $\kappa(X) = 7.7 \times 10^8$) and is off by one step. Every deviation larger than that lives in the variable-advection arm---the family the log-robustness law (\Cref{sec:nonnormality}) explicitly excludes. The real Black--Scholes operator deviates by at most one step at any grid measured (\Cref{fig:conditioning}).
+The certified $s$-step block width $s_{\max}$ is predicted from the spectrum alone (a row-scaled Vandermonde \cite{trefethen-1997}), then measured. Where a closed-form spectrum exists the prediction is \textbf{integer-exact on 20 of 21 runs}; the single exception is the most violently non-normal point in the sweep ($\gamma = 0.4$, $\kappa(X) = 7.7 \times 10^8$) and is off by one step. Every deviation larger than that lives in the variable-advection arm---the family the log-robustness relation (\Cref{sec:nonnormality}) explicitly excludes. The real Black--Scholes operator deviates by at most one step at any grid measured (\Cref{fig:conditioning}).
 
 \begin{figure}[H]
 \centering
@@ -531,7 +540,9 @@ where $\mat{V}_s$ is the Vandermonde matrix in the eigenvalues---so the block's 
 
 \subsection{The reduction ledger and small-$m$ safety}\label{sec:ledger}
 
-MGS performs $1 + m(m+3)/2$ global reductions per Arnoldi cycle. The stable $s$-step arm (matrix powers + CholeskyQR2) performs $1 + 2\lceil m/(s_{\max}+1)\rceil$ (\Cref{tab:ledger}). Across the real problem's measured window $m = 8\text{--}11$ that is an \textbf{11--16$\times$ cut in reduction count} at the $s_{\max} = 7$ certified for this spectrum. The ledger and the certificate together yield the statement that makes $s$-step viable for this integrator at all---\emph{small-$m$ safety}. The real operator's Krylov dimension is small and grows slowly ($m = 6\text{--}8$ across the eigensolvable grids $n = 10\text{--}20$, and 7.6 to 11.3 across $n = 31\text{--}89$ in production), and a certified block yields $s_{\max}+1$ vectors, so an entire Arnoldi cycle fits in \textbf{2--3 blocks}: the machinery never has to run deep enough for monomial-basis conditioning to become the dominant risk.
+The comparison is MGS against CholeskyQR2 because those are the two orthogonalizers actually in contention: MGS is what the baseline integrator runs (\Cref{alg:arnoldi}), so it sets the synchronization count to beat, and CholeskyQR2 is the block orthogonalizer the $s$-step arm adopts. CholeskyQR2 was chosen over the alternatives on two grounds: it orthogonalizes an entire block in two global reductions regardless of block width, and it carries the explicit stability certificate $\kappa(\mat{B}) \le u^{-1/2}$ \cite{yamamoto-2015}. Plain CholeskyQR halves the reduction count but loses the certificate; TSQR reaches a comparable count through a reduction tree at markedly higher implementation complexity \cite{demmel-2008,hoemmen-2010}.
+
+The \emph{reduction ledger} (\Cref{tab:ledger}) is the resulting bookkeeping: for each Krylov dimension $m$, the number of global reductions one Arnoldi cycle performs under each scheme. MGS pays $1 + m(m+3)/2$; the $s$-step arm pays $1 + 2\lceil m/(s_{\max}+1)\rceil$. Across the real problem's measured window $m = 8\text{--}11$, at the $s_{\max} = 7$ certified for this spectrum, that is an \textbf{11--16$\times$ cut in reduction count}. The ledger and the certificate are linked, because the cut is only collectible while every block stays certified: a wider block cuts more reductions but conditions worse, so the certified $s_{\max}$ is exactly the widest cut the ledger may claim. This is where \emph{small-$m$ safety} closes the argument. The real operator's Krylov dimension is small and grows slowly ($m = 6\text{--}8$ across the eigensolvable grids $n = 10\text{--}20$, and 7.6 to 11.3 across $n = 31\text{--}89$ in production), and a certified block yields $s_{\max}+1$ vectors, so an entire Arnoldi cycle fits in \textbf{2--3 certified blocks}: the full cut is collected while the machinery never runs deep enough for monomial-basis conditioning to become the dominant risk.
 
 \begin{table}[H]
 \centering
@@ -550,18 +561,18 @@ $m$ & \textbf{MGS reductions} & $s$\textbf{-step + CholQR2} & \textbf{cut} \\
 \end{tabular}
 \end{table}
 
-\subsection{Non-normality: the log-robustness law}\label{sec:nonnormality}
+\subsection{Non-normality: the log-robustness relation}\label{sec:nonnormality}
 
-The spectral prediction of $s_{\max}$ assumes normality, and the real operator is not normal (mixed-derivative cross terms plus convection). The rigorous two-sided bound is that the prediction error, measured in \emph{decades}, is at most $\log_{10}\kappa(X)$, the eigenvector conditioning. A decade is one factor of ten in the basis condition number, and the unit is chosen because it converts directly into block width: each extra power appended to $[\vect{v}, \mat{A}\vect{v}, \ldots, \mat{A}^s\vect{v}]$ multiplies its condition number by a roughly constant factor, measured at a median of 1.05 decades per power over the swept family (inter-quartile range 0.95 to 1.12). One $s$-step is therefore marked at 1.2 decades, and an error below that line cannot move the certified block width by a full step.
+The spectral prediction of $s_{\max}$ assumes normality, and the real operator is not normal (mixed-derivative cross terms plus convection). The prediction error is measured as $\lvert \log_{10}\kappa_{\text{meas}} - \log_{10}\kappa_{\text{pred}} \rvert$, in \emph{decades} (factors of ten), because the certificate consumes $\kappa$ only through its logarithm: the threshold $u^{-1/2}$ is a log-scale cutoff, and each extra power appended to $[\vect{v}, \mat{A}\vect{v}, \ldots, \mat{A}^s\vect{v}]$ multiplies the block's condition number by a roughly constant factor, measured at a median of 1.05 decades per power over the swept family (inter-quartile range 0.95 to 1.12). A factor-of-ten miss therefore matters equally anywhere on the axis, and one $s$-step corresponds to 1.2 decades: an error below that line cannot move the certified block width by a full step. The rigorous two-sided bound is that this error is at most $\log_{10}\kappa(X)$, the eigenvector conditioning.
 
-Measured, the data sits far below the rigorous bound and grows only \emph{logarithmically} (\Cref{fig:nonnormality}): the fitted slope of (error in decades) against $\log_{10}\kappa(X)$ is \textbf{0.069} for the constant-coefficient mechanisms (advection, correlation, and their combination) and \textbf{0.250}---about $4\times$ steeper---for variable-coefficient advection (a position-dependent ramp). The factor-of-four gap between the slopes scopes the law to the \emph{constant-coefficient family}; it is not mechanism-independent, which is exactly why the variable-advection knob exists in the instrument. (Both fits use the canonical $\kappa(X)$ axis of \Cref{sec:dsweep}; the dense axis is degenerate on part of this family and would shift the slope immaterially, to 0.061.)
+Measured, the data sits far below the rigorous bound (\Cref{fig:nonnormality}). The fitted slope of (error in decades) against $\log_{10}\kappa(X)$ reads as a degradation rate---how many decades of prediction error each decade of eigenvector conditioning costs. For the constant-coefficient mechanisms (advection, correlation, and their combination) the slope is \textbf{0.069}: $\kappa(X)$ would have to grow by roughly 17 decades before the prediction slipped a full $s$-step. For variable-coefficient advection (a position-dependent ramp) it is \textbf{0.250}, about $4\times$ steeper: five decades suffice. The factor-of-four gap scopes the fitted relation to the \emph{constant-coefficient family}; it is not mechanism-independent, which is exactly why the variable-advection knob exists in the instrument. (Both fits use the canonical $\kappa(X)$ axis of \Cref{sec:dsweep}; the dense axis is degenerate on part of this family and would shift the slope immaterially, to 0.061.)
 
-The real Black--Scholes operator is placed on this figure as a test point, excluded from every fit. Its prediction error runs 0.19 to 0.85 decades at $\kappa(X)$ up to $2.3 \times 10^3$, comfortably \textbf{under one $s$-step} at every grid measured.
+The real Black--Scholes operator is placed on this figure as a test point, excluded from every fit. In log-price coordinates its coefficients are constant, so it should---and does---behave like the shallow family: its prediction error runs 0.19 to 0.85 decades at $\kappa(X)$ up to $2.3 \times 10^3$, comfortably \textbf{under one $s$-step} at every grid measured. Had it tracked the steeper trend instead, that would have flagged a variable-coefficient-like mechanism hiding in the real operator, and the certificate's usable range would shrink four-fold in decades.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\textwidth]{regime_nonnormality.png}
-\caption{The log-robustness law: prediction error in decades vs.\ $\log_{10}\kappa(X)$. The rigorous bound is the identity line; the measured data grows logarithmically, with the constant-coefficient and variable-coefficient families fitted separately. The real Black--Scholes operator (test point, excluded from fits) sits under one $s$-step at every
+\caption{The log-robustness relation: prediction error in decades vs.\ $\log_{10}\kappa(X)$. The rigorous bound is the identity line; the measured data grows logarithmically, with the constant-coefficient and variable-coefficient families fitted separately. The real Black--Scholes operator (test point, excluded from fits) sits under one $s$-step at every
 grid.}
 \label{fig:nonnormality}
 \end{figure}
@@ -586,12 +597,13 @@ variable $\gamma$ advection & no & -- & no & must be measured ($>$ 1 step) \\
 \end{tabular}
 \end{table}
 
-\subsection{The asset-dimension law}\label{sec:dsweep}
+The rows are cumulative modifications of one backbone. The Laplacian is the pure-diffusion Kronecker sum of \Cref{sec:regime}, whose eigenvalues are the closed-form tridiagonal-Toeplitz values of \Cref{sec:gap} summed across axes. The shift row adds $\mu\mat{I}$, which translates every eigenvalue and leaves the eigenvectors untouched. The correlation row adds the cross term $c\,(\mat{D} \otimes \mat{D})$; the advection rows add the skew-symmetric first difference, with strength $\gamma$ either constant or ramped with position. The three column properties are standard \cite{trefethen-1997,golub-vanloan-2013}: an operator is \emph{normal} when $\mat{A}\mat{A}^\top = \mat{A}^\top\mat{A}$, equivalently when it has an orthonormal eigenbasis ($\kappa(X) = 1$); \emph{definite} (here, positive semi-definite, PSD) when it is symmetric with all eigenvalues on one side of zero; and \emph{separable} when it factors as a Kronecker sum, so its spectrum is the set of sums of 1D eigenvalues. Normality is what the Vandermonde factorization of \Cref{sec:conditioning} needs to hold exactly---without it the factorization acquires the eigenvector matrix as a distortion, bounded only through $\kappa(X)$. Separability merely decides \emph{where the eigenvalues come from}: a closed form when separable, a dense eigensolve when not, either of which feeds the same prediction. The last column then reads: \emph{exact} means the predicted $s_{\max}$ matches the measured one integer-exactly; \emph{survives} means normality is broken but the prediction stays within one step; \emph{must be measured} means it does not, and only measurement certifies the block width.
 
-How does $\kappa(X)$ grow with the number of assets $d$? This axis matters because the application grows the asset count, not the grid: a refinement study swept the grid at fixed
-$d = 3$ and found $\kappa(X)$ flat, which confirms the mesh-P\'eclet reading ($\log\kappa(X) \sim d\, n_1 \gamma$ with $\gamma \sim C/n_1$, so $n_1$ cancels) and says nothing about $d$.
+\subsection{Conditioning growth with asset dimension}\label{sec:dsweep}
 
-\textbf{The law is linear in $d$, with a slope known in closed form.} The synthetic operator applies its cross term to exactly one axis pair at every $d$, so it factors as a Kronecker sum $\mat{A}_d = \mat{B}_{01} \oplus \mat{T} \oplus \cdots \oplus \mat{T}$, where $\mat{B}_{01}$ is the coupled two-axis block and $\mat{T}$ the one-dimensional factor. The eigenvector matrix of a Kronecker sum is the Kronecker product of the factors' eigenvector matrices, and the singular values of a Kronecker product are all pairwise products of the factors' singular values \cite{golub-vanloan-2013}---so condition numbers multiply:
+The remaining question for the certificate is how $\kappa(X)$ grows with the number of assets $d$. This axis matters because the application grows the asset count, not the grid. A refinement study swept the grid at fixed $d = 3$ and found $\kappa(X)$ flat, which the \emph{mesh P\'eclet number} explains: the per-cell ratio of advection to diffusion, $\mathrm{Pe}_h = \gamma\,\Delta x / (2\nu)$, is the dimensionless quantity that governs how strongly convection distorts a discrete convection--diffusion operator \cite{hundsdorfer-verwer-2003}. Here $\log\kappa(X) \sim d\, n_1 \gamma$ with $\gamma \sim C/n_1$, so the grid factor cancels---refinement leaves $\kappa(X)$ unchanged, and only $d$ remains as a growth axis.
+
+\textbf{The growth is linear in $\log_{10}\kappa(X)$ against $d$, with a slope known in closed form.} The synthetic operator applies its cross term to exactly one axis pair at every $d$, so it factors as a Kronecker sum $\mat{A}_d = \mat{B}_{01} \oplus \mat{T} \oplus \cdots \oplus \mat{T}$, where $\mat{B}_{01}$ is the coupled two-axis block and $\mat{T}$ the one-dimensional factor. The eigenvector matrix of a Kronecker sum is the Kronecker product of the factors' eigenvector matrices, and the singular values of a Kronecker product are all pairwise products of the factors' singular values \cite{golub-vanloan-2013}---so condition numbers multiply:
 \begin{equation}
 \kappa(X) = \kappa(X_{01})\, \kappa(X_1)^{\,d-2}
 \qquad\Longrightarrow\qquad
@@ -600,7 +612,7 @@ $d = 3$ and found $\kappa(X)$ flat, which confirms the mesh-P\'eclet reading ($\
 \end{equation}
 ``Closed form'' means precisely this: the slope $0.404995 = \log_{10}\kappa(X_1)$ is computed from one $n_1 \times n_1$ eigensolve of the 1D factor, not fitted to data along $d$. The observed $d = 2 \to 3$ increment is $0.40500$, and the formula reproduces both degeneracy-free points to $3 \times 10^{-7}$.
 
-The dense $\kappa(X)$ that a straightforward eigensolve returns must \emph{not} be fitted along $d$, because from $d = 4$ it is not a property of the operator at all. Axes $2, \ldots, d-1$ carry no cross term, so interchanging any two of them is an exact symmetry of $\mat{A}$: the spectrum repeats, and inside a repeated eigenspace every basis is admissible, so the value reported is whichever basis the eigensolver's rounding happened to produce. A symmetric permutation $\mat{P}\mat{A}\mat{P}^{\top}$ is an exact similarity, so any function of the operator is invariant under it---yet the dense value moves by a factor of 3.84 at $d = 4$ and 7.76 at $d = 5$ across eight permutations once the spectrum is degenerate. The study therefore reports a canonical, basis-independent value (\texttt{kappa\_X\_struct}, computed per Kronecker factor) alongside the dense one (\Cref{tab:dsweep}, \Cref{fig:dsweep}).
+The dense $\kappa(X)$ that a straightforward eigensolve returns must \emph{not} be fitted along $d$, because from $d = 4$ it is not a property of the operator at all. The reason is spectral \emph{degeneracy}: a spectrum is called degenerate when some eigenvalue is repeated (has multiplicity greater than one), so that its eigenvectors span a subspace of dimension larger than one instead of a single line; a spectrum with every eigenvalue distinct is called \emph{simple}. Inside a repeated eigenspace, every orthonormal basis is an equally valid set of eigenvectors---so ``the'' eigenvector matrix, and with it the dense $\kappa(X)$, is no longer uniquely defined \cite{golub-vanloan-2013}. That is exactly what happens here: axes $2, \ldots, d-1$ carry no cross term, so interchanging any two of them is an exact symmetry of $\mat{A}$, the spectrum repeats, and the value reported is whichever admissible basis the eigensolver's rounding happened to produce. A symmetric permutation $\mat{P}\mat{A}\mat{P}^{\top}$ is an exact similarity, so any function of the operator is invariant under it---yet the dense value moves by a factor of 3.84 at $d = 4$ and 7.76 at $d = 5$ across eight permutations once the spectrum is degenerate. The study therefore reports a canonical, basis-independent value (\texttt{kappa\_X\_struct}, computed per Kronecker factor) alongside the dense one (\Cref{tab:dsweep}, \Cref{fig:dsweep}).
 
 \begin{table}[H]
 \centering
@@ -622,12 +634,12 @@ $d$ & $N$ & \textbf{canonical} $\kappa(X)$ & \textbf{dense} $\kappa(X)$ & \textb
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\textwidth]{regime_dsweep.png}
-\caption{The asset-dimension law: canonical $\kappa(X)$ grows geometrically in $d$ with an
+\caption{Conditioning growth with asset dimension: canonical $\kappa(X)$ grows geometrically in $d$ with an
 analytic slope; the dense value diverges from it exactly where the spectrum degenerates.}
 \label{fig:dsweep}
 \end{figure}
 
-The same degeneracy appears at one point of the correlation sweep ($n_1 = 8$, $d = 3$), and the canonical value resolves it. For every $\rho > 0$ the cross term couples one axis pair, the spectrum stays simple, and the dense and canonical values agree exactly. At $\rho = 0$ the cross term vanishes, the operator becomes a pure Kronecker sum with all three axes interchangeable, and the dense value is degenerate (only 89 of 512 eigenvalues distinct). Read on the canonical anchor (\Cref{tab:corr}), \textbf{correlation raises $\kappa(X)$ monotonically}, from 688 at $\rho = 0$ to 3405 at $\rho = 0.99$---about $5\times$ across the full range.
+The same degeneracy appears at one point of the correlation sweep ($n_1 = 8$, $d = 3$), and the canonical value resolves it. For every $\rho > 0$ the cross term couples one axis pair, the spectrum stays simple, and the dense and canonical values agree exactly. At $\rho = 0$ the cross term vanishes, the operator becomes a pure Kronecker sum with all three axes interchangeable, and the dense value is degenerate: of the $N = n_1^d = 8^3 = 512$ eigenvalues, only 89 are distinct. Read on the canonical anchor (\Cref{tab:corr}), \textbf{correlation raises $\kappa(X)$ monotonically}, from 688 at $\rho = 0$ to 3405 at $\rho = 0.99$---about $5\times$ across the full range.
 
 \begin{table}[H]
 \centering
@@ -645,7 +657,7 @@ dense $\kappa(X)$ & \emph{11350} & 851.8 & 1566.9 & 2277.9 & 3405.2 \\
 \end{tabular}
 \end{table} 
 
-Dimension still dominates: $\rho$ across its entire admissible range buys about 1.7 assets' worth of conditioning, and $\rho \le 1$ while $d$ is unbounded---but correlation never helps. The practical consequence: \textbf{measure the block width at high $d$ rather than trusting a conservative a-priori bound}, because $\kappa(X)$ grows geometrically in $d$ while staying flat under grid refinement. The law's scope is the synthetic instrument: the real basket operator couples all three asset pairs, so the tensor identity, which rests on one coupled pair, does not extend to it.
+Dimension still dominates: $\rho$ across its entire admissible range buys about 1.7 assets' worth of conditioning, and $\rho \le 1$ while $d$ is unbounded---but correlation never helps. The practical consequence is that a-priori conditioning bounds age quickly along $d$: because $\kappa(X)$ grows geometrically in $d$ while staying flat under grid refinement, a certified block width carried over from low asset counts loses its safety margin at higher ones, and at high $d$ the certification has to come from measurement. The identity's scope is the synthetic instrument: the real basket operator couples all three asset pairs, so the tensor identity, which rests on one coupled pair, does not extend to it.
 
 \subsection{The computability gap}\label{sec:gap}
 
@@ -653,7 +665,7 @@ The certificate is validated by dense eigensolve, which caps the control at $N \
 
 The bridge fails for this operator, and the obstruction is identifiable. The cross term factors exactly as $c\,(\mat{D} \otimes \mat{D})$ with $\mat{D} = \operatorname{tridiag}(-1,0,+1)$ (verified to machine zero), and a diagonal similarity $\operatorname{diag}(z^j)$ symmetrizes $\operatorname{tridiag}(b, a, c)$ iff $z^2 = c/b$. The two terms demand incompatible $z$ on the same axis: $z^2 = (1-\gamma)/(1+\gamma)$ for advection--diffusion against $z^2 = -1$ for the cross factor. Numerically, the sine basis leaves 3.7\% off-diagonal mass with the cross term against $2.8 \times 10^{-14}$ without, no single $z$ helps, and the obstruction persists at $\gamma = 0$---so it is the Dirichlet boundary condition, not the advection. What survives is the tensor identity \eqref{eq:tensor-law}, which gives $\kappa(X)$ at any $d$ from a single $n_1^2 \times n_1^2$ eigensolve, with no cap---\emph{for the synthetic operator}. The gap remains open for the real Black--Scholes operator, whose all-pairs correlation breaks the Kronecker factorization.
 
-\subsection{The horizontal mechanism: a measured null result}\label{sec:horizontal}
+\subsection{The horizontal mechanism}\label{sec:horizontal}
 
 Cutting the reduction count 11--16$\times$ leaves Gram--Schmidt wall-clock unchanged. Two independent measurements explain why, and they agree:
 \begin{enumerate}
@@ -676,9 +688,9 @@ The map predicted this before the experiment: at production resolution $n = 61$ 
 
 The upper-right corner---both mechanisms binding simultaneously---is structurally unreachable on puffin. It is a single-NUMA socket, so no tree in the reduction crosses anything more expensive than a CCX boundary; reaching $\theta_h$ at a working set that also exceeds $\theta_v$ needs a reduction cost roughly 25$\times$ higher than any this machine can produce.
 
-\subsection{The vertical mechanism: a measured shortfall}\label{sec:vertical}
+\subsection{The vertical mechanism}\label{sec:vertical}
 
-A timed sweep runs a cache-blocked matrix-powers kernel against the untiled baseline across grids that carry $\Rv$ from 0.035 to 86. The modeled traffic ratio---the ceiling the roofline says tiling could reach---is 4--8$\times$. The measurement is not close (\Cref{tab:vertical}, \Cref{fig:sweep}).
+The horizontal verdict came almost for free, but the vertical one requires its own experiment. The roofline of \Cref{sec:profile} says the spilled SpMV has 4--8$\times$ of recoverable traffic, yet \eqref{eq:gain} is only a ceiling: it prices the bytes tiling would save, not the redundant halo arithmetic tiling spends to save them, so whether a real matrix-powers kernel comes out ahead is a question only a timed run can answer. A timed sweep therefore runs a cache-blocked matrix-powers kernel against the untiled baseline across grids that carry $\Rv$ from 0.035 to 86. The measurement is not close to the modeled ceiling (\Cref{tab:vertical}, \Cref{fig:sweep}).
 
 \begin{table}[H]
 \centering
@@ -720,7 +732,7 @@ pattern alone, at fixed spectrum and fixed working set.
 Two honest limitations. Nothing here is a \emph{counted} DRAM measurement, because puffin's uncore counters need root, so modeled bytes are reconciled against the roofline instead---weaker evidence, labeled as such on every figure. And the projected curve on
 \Cref{fig:sweep} is a model claim, drawn dashed.
 
-\subsection{Block width: two roofs, and which one binds}\label{sec:swidth}
+\subsection{Block width}\label{sec:swidth}
 
 Everywhere else the block width $s$ is pinned at the certified value, which hides a question. $s$ is pushed \emph{up} by both mechanisms---a wider block means fewer reductions and more powers per operator stream---and pulled \emph{down} by two independent ceilings:
 \begin{itemize}
@@ -792,11 +804,13 @@ never entering the upper-right corner.}
 
 In summary: the early $\Rh > 1$ readings occur only on grids too small for any desk to price at ($n \le 20$, the dense-eigensolvable range), so they mark no regime where $s$-step pays. At production resolution the operator is squarely in \textbf{vertical-only} territory---the mechanism the application needs is matrix-powers tiling, while the mechanism the certificate work supports is $s$-step, and they are not the same corner. The upper-right corner is a portability statement on this hardware rather than a measurement: reaching it requires a reduction cost roughly 25$\times$ puffin's, i.e.\ crossing a device or node boundary rather than a CCX boundary.
 
+That 25$\times$ is not exotic---any machine with multiple NUMA nodes or a multi-socket, multi-node topology supplies it, and on such CPU systems the upper-right corner is accessible and already well charted. Reducing the cost of global synchronization on distributed and complex topologies is a mature literature: $s$-step methods were introduced precisely for that setting \cite{chronopoulos-gear-1989}, the communication-avoiding Krylov program quantified their message and latency savings for MPI-class machines \cite{demmel-2008,hoemmen-2010,carson-2015,ballard-2011}, and pipelined variants hide the reduction latency the topology imposes \cite{ghysels-vanroose-2014}. All of that work, however, lives on \emph{homogeneous} compute: every core sees the same kind of cache hierarchy the map was built on. What remains uncharted is a memory system that differs in kind, and the cluster this study targets next---``synge'', two nodes of two Tesla V100s each, GPUs joined within a node by PCIe and nodes joined by InfiniBand---offers exactly that combination: each interconnect rung adds enough global-reduction latency to open the upper-right corner, on a memory system where the map's coordinates have never been recomputed. That recomputation is the subject of the next section.
+
 \section{Recomputing the map for a GPU}\label{sec:gpu}
 
-\subsection{Why the recomputation is a falsification test}
+\subsection{The portability claim under test}
 
-The map's central claim is that $\Rv$ and $\Rh$ are \emph{dimensionless}---ratios, not times---so a reader can place their own operator and machine on the map. Within this thesis the claim is tested on one memory system only: puffin is one socket, one NUMA node, one cache hierarchy. A GPU memory system differs in kind, not in constants, so recomputing the coordinates for one is not a port: it is a falsification test of the dimensionless framing, and both outcomes are informative. Either coordinates recomputed from GPU constants predict a measured GPU crossover at $\theta_v = \theta_h = 1$, or they do not---in which case the map is scoped to CPU-like memory systems and the failure names the missing term. This section derives the structural content of that recomputation from the CPU study's own results.
+The map's central claim is that $\Rv$ and $\Rh$ are \emph{dimensionless}---ratios, not times---so a reader can place their own operator and machine on the map. Within this thesis the claim is tested on one memory system only: puffin is one socket, one NUMA node, one cache hierarchy. A GPU memory system differs in kind, not in constants, so recomputing the coordinates for one is not a port: it is a genuine test of the dimensionless framing, and both outcomes are informative. Either coordinates recomputed from GPU constants predict a measured GPU crossover at $\theta_v = \theta_h = 1$, or they do not---in which case the map is scoped to CPU-like memory systems and the failure names the missing term. This section derives the structural content of that recomputation from the CPU study's own results.
 
 Two GPU classes make a near-controlled pair, and the pair is a sharper instrument than either card alone (\Cref{tab:gpus}): a consumer card and a datacenter card whose memory systems are nearly identical---same 6\,MB L2, same bandwidth class---while the double-precision (FP64) rate differs by ${\sim}12\times$. The pair holds the map's vertical axis roughly fixed and varies only the compute roof.
 
@@ -809,7 +823,7 @@ Two GPU classes make a near-controlled pair, and the pair is a sharper instrumen
  & \textbf{L2} & \textbf{Memory BW} & \textbf{FP64 peak} & \textbf{FP64:FP32} \\
 \midrule
 RTX 3090 (consumer, puffin)      & 6\,MB & ${\sim}936$\,GB/s & ${\sim}0.56$\,TFLOP/s & 1/64 \\
-Tesla V100 (datacenter, cluster) & 6\,MB & ${\sim}900$\,GB/s & ${\sim}7.0$\,TFLOP/s  & 1/2  \\
+Tesla V100 (datacenter, synge)   & 6\,MB & ${\sim}900$\,GB/s & ${\sim}7.0$\,TFLOP/s  & 1/2  \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -818,7 +832,7 @@ That lever exposes a precondition the map has so far carried implicitly. Both ax
 
 \subsection{What transfers, and what breaks}
 
-Everything machine-independent transfers unchanged: the synthetic operator, the tensor law \eqref{eq:tensor-law}, the numerics gates C1--C6, the reduction ledger, the CholeskyQR2 certificate, and the thresholds $\theta_v = \theta_h = 1$ themselves---a ratio crosses 1 where supply meets demand, which is what makes the thresholds portable. Only the coordinates are recomputed. Three things break structurally, not by constant swap:
+Everything machine-independent transfers unchanged: the synthetic operator, the tensor identity \eqref{eq:tensor-law}, the numerics gates C1--C6, the reduction ledger, the CholeskyQR2 certificate, and the thresholds $\theta_v = \theta_h = 1$ themselves---a ratio crosses 1 where supply meets demand, which is what makes the thresholds portable. Only the coordinates are recomputed. Three things break structurally, not by constant swap:
 
 \begin{itemize}
 \item \textbf{The denominator of $\Rv$.} On the CPU each engaged CCX brings its own L3 slice, so aggregate last-level cache scales with the team. A GPU's L2 is a single fixed block shared by every streaming multiprocessor: engaging more of the device adds zero cache, so within one device $\Rv$ stops being a function of the team size at all. This decouples the two axes. On the CPU both coordinates shared the parallelism knob ($\Rv \sim 1/P$, $\Rh \sim P\log P$), which is why $\Rv \cdot \Rh$ collapsed to a $P$-independent constant (${\sim}0.04$ on puffin)---the invariant that made the upper-right corner unreachable on one node. On a GPU that cancellation has no structural reason to survive, so whether the product remains an invariant must be re-derived from the chosen definition of team size, not assumed.
@@ -849,7 +863,7 @@ Node   & network fabric                  & inter-node & dominant \\
 
 This thesis set out to decide when communication-avoiding reformulations of a Krylov exponential integrator pay for a multi-asset option-pricing problem, and to make the answer portable. The instrument for that answer is a dimensionless regime map whose coordinates are predictors---computed from the problem, the spectrum, and machine constants before any run---and whose boundaries are tested by measurement.
 
-On the numerical side, the certified $s$-step block width is predicted from the spectrum alone and verified integer-exact on 20 of 21 runs; a confound control shows safety is a property of the spectrum, not of the Krylov dimension; a log-robustness law bounds the damage non-normality does to the prediction (slope 0.069 in decades per decade of eigenvector conditioning for the constant-coefficient family, $4\times$ steeper for variable coefficients, the real operator under one $s$-step everywhere); and a closed-form tensor law gives the geometric growth of $\kappa(X)$ with asset dimension, along with the warning that the dense eigensolver value is meaningless once the spectrum degenerates.
+On the numerical side, the certified $s$-step block width is predicted from the spectrum alone and verified integer-exact on 20 of 21 runs; a confound control shows safety is a property of the spectrum, not of the Krylov dimension; an empirically fitted log-robustness relation bounds the damage non-normality does to the prediction (slope 0.069 in decades per decade of eigenvector conditioning for the constant-coefficient family, $4\times$ steeper for variable coefficients, the real operator under one $s$-step everywhere); and a closed-form tensor identity gives the geometric growth of $\kappa(X)$ with asset dimension, along with the warning that the dense eigensolver value is meaningless once the spectrum degenerates.
 
 On the measurement side, the study delivers three placed results. The horizontal mechanism is a null result with a mechanism: an 11--16$\times$ cut in reduction count moves wall-clock by nothing, because the reduction primitive was never the bottleneck and Gram--Schmidt is bandwidth-bound---exactly as the map's $\Rh = 0.080$ predicted. The vertical mechanism is a shortfall with a mechanism: cache-blocked matrix powers loses to its own halo arithmetic at L2 tile sizes and to a residency-insensitive cap at L3, so the predicted crossover $\theta_v$ remains untested by this kernel rather than refuted. And the real operator's trajectory under refinement---lower-right, lower-left, upper-left, crossing $\theta_v$ near $n = 74$---says the mechanism the application needs at production resolution is matrix-powers tiling, not $s$-step, and that the upper-right corner is structurally unreachable on a single-NUMA socket.
 

@@ -33,6 +33,12 @@ Erin Carson.
   Practice}.
 \newblock PhD thesis, University of California, Berkeley, 2015.
 
+\bibitem{chronopoulos-gear-1989}
+Anthony~T. Chronopoulos and C.~William Gear.
+\newblock $s$-step iterative methods for symmetric linear systems.
+\newblock {\em Journal of Computational and Applied Mathematics},
+  25(2):153--168, 1989.
+
 \bibitem{demmel-2008}
 James Demmel, Mark Hoemmen, Marghoob Mohiyuddin, and Katherine Yelick.
 \newblock Avoiding communication in sparse matrix computations.
@@ -45,6 +51,12 @@ Jim Douglas and Henry~H. Rachford.
   three space variables.
 \newblock {\em Transactions of the American Mathematical Society}, 82:421--439,
   1956.
+
+\bibitem{ghysels-vanroose-2014}
+Pieter Ghysels and Wim Vanroose.
+\newblock Hiding global synchronization latency in the preconditioned conjugate
+  gradient algorithm.
+\newblock {\em Parallel Computing}, 40(7):224--238, 2014.
 
 \bibitem{golub-vanloan-2013}
 Gene~H. Golub and Charles~F. Van~Loan.
