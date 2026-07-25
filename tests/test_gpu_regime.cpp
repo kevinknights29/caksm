@@ -3,7 +3,7 @@
  * @brief The GPU map's structural claims, pinned so a future edit cannot quietly undo them.
  *
  * Three of these tests defend results rather than code. The Phase 0 derivation
- * (docs/regime_gpu_phase0.md) rests on R_v being independent of the team size and on the
+ * rests on R_v being independent of the team size and on the
  * R_v * R_h product being independent of both P and N. Both follow from a fixed L2 and a
  * device-wide bandwidth roof, and both would be destroyed by an edit that made
  * `aggregate_l2_bytes` scale with P for symmetry with the CPU side, producing plausible wrong

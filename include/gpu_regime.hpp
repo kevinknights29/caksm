@@ -19,7 +19,7 @@
  *     of the Upper-Right window, so it is a first-class output.
  *   - gram_intensity() prices the tall-skinny Gram matrix that communication-avoiding Arnoldi
  *     introduces and MGS does not have. It is the kernel on which the two-card contrast
- *     discriminates; see docs/regime_gpu_phase0.md.
+ *     discriminates.
  *
  * The predictor/outcome separation is inherited unchanged: nothing here sees a timer, and
  * R_h's numerator is a measured machine constant times a tier index, never a measured fraction
@@ -71,7 +71,7 @@
  * can see.
  *
  * Unlike SpMV (0.135) and MGS (0.375), whose intensities are below even the throttled ridge,
- * this is the kernel where the FP64 penalty binds. See docs/regime_gpu_phase0.md.
+ * this is the kernel where the FP64 penalty binds.
  */
 [[nodiscard]] inline double gram_intensity(int64_t n, int s) noexcept
 {
@@ -300,7 +300,7 @@ struct RegimeInvariant {
 /**
  * @brief R_v * R_h in closed form, and the threshold reduction latency that opens Upper-Right.
  *
- * Derivation in docs/regime_gpu_phase0.md. In the memory-bound branch the modeled cycle time
+ * In the memory-bound branch the modeled cycle time
  * is bytes over bandwidth, so
  *
  *     R_v * R_h = (W/C) * (t_reduce * R * BW / B) = (W/B) * R * (t_reduce * BW / C)

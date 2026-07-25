@@ -12,7 +12,7 @@
  * Three structural breaks are encoded here, not merely reparameterized:
  *
  *   1. L2 is one device-wide block. aggregate_l2_bytes() ignores P by design, so R_v stops
- *      being a function of how much of the GPU is engaged. See docs/regime_gpu_phase0.md.
+ *      being a function of how much of the GPU is engaged.
  *   2. A reduction crosses up to five tiers, not two, and the grid tier carries a
  *      kernel-launch cost with no CPU analogue. Hence a tier vector and a separate launch term.
  *   3. The compute roof is a device figure that must be gated. Both map coordinates measure
@@ -188,11 +188,11 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         // The NODE rung is only 1.93x the DEVICE_P2P rung, a much flatter step than the CPU's
         // 5.4x CCX crossing: the intra-node link is PCIe gen3 x16 plus a cross-socket UPI hop,
         // slow enough that leaving the node barely doubles it. The swept horizontal axis is
-        // therefore really {on-device, off-device}. See docs/regime_gpu_phase0.md.
+        // therefore really {on-device, off-device}.
         {{4.2246e-7, 3.6841e-7, 2.7089e-6, 5.9213e-6, 1.0632e-5}},
         // Launch is 74% of a grid reduction here, against 41% on the 3090, so the risk of
         // launch swamping the ladder comes far closer to firing. The rungs are still separable
-        // (grid/block = 9.5x) but the margin is thin. See docs/regime_gpu_phase0.md.
+        // (grid/block = 9.5x) but the margin is thin.
         2.0389e-6,      // t_kernel_launch_s
         {{true, true, true, true, true}},     // every rung measured
         // All five rungs are reachable on synge and all five are measured, so the ladder is
@@ -322,7 +322,7 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
  * The consequence is a decoupling of the two axes. On the CPU R_v ~ 1/P and R_h ~ P shared the
  * parallelism knob, which is why their product collapsed to a P-independent constant and
  * pinned the Upper-Right corner out of reach. Here R_v is P-free outright, so N alone moves it
- * and the reduction tier alone moves R_h. See docs/regime_gpu_phase0.md.
+ * and the reduction tier alone moves R_h.
  *
  * @param P retained in the signature so the CPU and GPU call sites read alike, and so the
  *          asymmetry is visible at the point of use.
@@ -453,7 +453,7 @@ struct RooflineVerdict {
  * throttled ridge, so both cards are on-map for the baseline method. It discriminates on the
  * tall-skinny Gram matrix that CA introduces and MGS does not have, whose intensity is ~s/4
  * and which crosses the 3090's ridge at s ~ 2.4, far below the certified s_max = 9. A
- * machine-level verdict would have hidden that. See docs/regime_gpu_phase0.md.
+ * machine-level verdict would have hidden that.
  *
  * A point failing this gate is off-map, not lower-left, and is reported as such.
  *

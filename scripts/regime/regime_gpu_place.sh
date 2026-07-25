@@ -96,6 +96,4 @@ echo "    because neither coordinate charts a compute-bound kernel."
 echo "  - treatment_on_map=0 with on_map=1 is the sharpened negative arm: the map charts the"
 echo "    baseline there, but the kernel s-step adds is compute-bound, so the advertised win"
 echo "    is eaten by a roof neither coordinate can see."
-echo
-echo "The derivation behind the invariant and window tables is docs/regime_gpu_phase0.md."
 echo "==============================================================================="

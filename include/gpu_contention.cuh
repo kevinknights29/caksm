@@ -189,7 +189,7 @@ inline void report_contention(const DeviceContention& c)
  * compiled anything. Toolkit version is load-bearing, since code generation and default FMA
  * contraction both move between major CUDA versions and land on the measured FP64 peak the
  * roofline gate divides by. __CUDACC_VER_* are baked in at compile time, so PATH cannot fool
- * this. See docs/regime_gpu_phase0.md.
+ * this.
  */
 inline void report_toolkit()
 {
