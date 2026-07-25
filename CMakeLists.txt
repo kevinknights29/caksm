@@ -200,11 +200,32 @@ if(CMAKE_CUDA_COMPILER)
     target_link_libraries(gpu-fma-loop PRIVATE CUDA::nvml)
     target_compile_options(gpu-fma-loop PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
 
+    # Times baseline SpMV to test the vertical mechanism's precondition.
+    add_executable(regime-gpu-spmv src/regime_gpu_spmv.cu)
+    target_include_directories(regime-gpu-spmv PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(regime-gpu-spmv PRIVATE CUDA::nvml CUDA::cusparse)
+    target_compile_options(regime-gpu-spmv PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Timed MGS: the reduction-bound half of the cycle, and R_h's denominator.
+    # cuBLAS supplies the dot / axpy / norm kernels a real implementation calls.
+    add_executable(regime-gpu-mgs src/regime_gpu_mgs.cu)
+    target_include_directories(regime-gpu-mgs PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(regime-gpu-mgs PRIVATE CUDA::nvml CUDA::cublas)
+    target_compile_options(regime-gpu-mgs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Times s-step orthogonalization: CholQR runs on cuBLAS (Gram, triangular solve)
+    # and cuSOLVER (Cholesky). Compares against MGS to locate the horizontal crossover,
+    # and reports the Gram block's FP64 rate for the two-card contrast.
+    add_executable(regime-gpu-sstep src/regime_gpu_sstep.cu)
+    target_include_directories(regime-gpu-sstep PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(regime-gpu-sstep PRIVATE CUDA::nvml CUDA::cublas CUDA::cusolver)
+    target_compile_options(regime-gpu-sstep PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
     # The interconnect rungs need a real collectives library: the reduction timed must be the
     # one an implementation would actually call, or R_h's calibrated constant is the slope of
     # code nobody runs.
     #
-    # NCCL is required for this target; MPI is optional. Both of synge's V100s sit on one
+    # NCCL is required for this target, MPI is optional. Both of synge's V100s sit on one
     # node, so ncclCommInitAll drives the DEVICE_P2P rung from a single process with no
     # launcher, and that is the rung Phase 0 predicts carries the production operator into
     # Upper-Right. MPI buys only the NODE rung, so a site without it loses the fabric
