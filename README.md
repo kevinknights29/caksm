@@ -616,17 +616,22 @@ Measured, the data sits far below that line and grows only *logarithmically*:
 
 | Mechanism                                                      | Fitted slope of (error in decades) vs $\log_{10}\kappa(X)$ |
 |----------------------------------------------------------------|------------------------------------------------------------|
-| constant-coefficient (advection, correlation, $\rho + \gamma$) | **0.061**                                                  |
+| constant-coefficient (advection, correlation, $\rho + \gamma$) | **0.069**                                                  |
 | variable-coefficient advection (position-dependent ramp)       | **0.250** (~4x steeper)                                    |
 
 The two slopes differ by a factor of four, so the law is **scoped to the
 constant-coefficient family**, not mechanism-independent - which is exactly why the
-variable-advection knob exists in the instrument. The figure's horizontal axis is currently
-the dense $\kappa(X)$, which for the zero-correlation half of the constant-coefficient arm
-is degenerate and inflated (up to $173\times$, see [the asset-dimension
-law](#the-asset-dimension-law)); refitting that arm on the canonical axis moves its slope to
-0.069, leaving the separation intact. The variable-coefficient arm ramps a single axis, so
-its spectrum is simple and its axis is sound either way.
+variable-advection knob exists in the instrument.
+
+Both are fitted on the canonical axis. This matters for the constant-coefficient arm, whose
+zero-correlation half is a pure Kronecker sum: its axes are interchangeable, so the dense
+$\kappa(X)$ there is degenerate and inflated by up to $173\times$ (see [the asset-dimension
+law](#the-asset-dimension-law)). Fitted on that dense axis the slope reads 0.061 instead of
+0.069 - a shift small enough not to disturb the conclusion, but the two arms would have been
+compared on axes of different validity, since the variable-coefficient arm ramps a single
+axis and therefore keeps a simple spectrum and a sound dense value. The `--real-bs` and
+variable-advection points legitimately retain the dense value for the same reason;
+`regime_plot.py` reports the split (19 canonical, 11 dense) on every run.
 
 A *decade* here is one factor of ten in the basis condition number: the error plotted is
 $\lvert \log_{10}\kappa_{\text{meas}} - \log_{10}\kappa_{\text{pred}} \rvert$, so 1.0
