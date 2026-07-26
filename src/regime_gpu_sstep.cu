@@ -37,6 +37,8 @@
 #include <vector>
 
 #include "gpu_contention.cuh"
+#include "gram_splitk.cuh"
+#include "trsm_tallskinny.cuh"
 
 namespace {
 
@@ -122,9 +124,8 @@ struct Args {
     std::vector<int>     s_list{1, 2, 4, 6, 8};
     int         s_max   = 9;   // certified block-width cap: kappa(B) <= u^-1/2 holds below it,
                                // the largest s the monomial basis carries on the Laplacian scaffold
-    int64_t     gram_n  = 20000;  // rows per block for the batched Gram rate, small on purpose,
-                                  // the ~s/4 intensity is n-independent so a modest n suffices
-    int         gram_batch = 512; // independent blocks contracted at once, to raise occupancy
+    int64_t     gram_n  = 1000000; // rows for the split-K Gram rate. Large enough to spill L2 so
+                                   // the achieved rate is a clean roofline read
     std::string csv_path;
 };
 
@@ -157,7 +158,6 @@ template <typename T>
         else if (arg == "--t-reduce-us") a.t_reduce_us = std::stod(next());
         else if (arg == "--s-max")       a.s_max = std::stoi(next());
         else if (arg == "--gram-n")      a.gram_n = std::stoll(next());
-        else if (arg == "--gram-batch")  a.gram_batch = std::stoi(next());
         else if (arg == "--n-list")      a.n_list = parse_list<int64_t>(next());
         else if (arg == "--s-list")      a.s_list = parse_list<int>(next());
         else if (arg == "--csv")         a.csv_path = next();
@@ -171,9 +171,8 @@ template <typename T>
                 "  --dram-gbs G     DRAM roof, for the Gram block's memory roof.\n"
                 "  --s-max S        certified block-width cap (default 9); s beyond it is\n"
                 "                   dropped, since the block loses orthogonality there.\n"
-                "  --gram-n N       rows per block for the batched Gram rate (default 20000).\n"
-                "  --gram-batch B   independent blocks contracted at once (default 512), to raise\n"
-                "                   the occupancy of the Gram-rate measurement.\n"
+                "  --gram-n N       rows for the split-K Gram rate (default 1e6, spills L2 for a\n"
+                "                   clean roofline read).\n"
                 "  --t-reduce-us T  reduction cost at one tier. The crossover against MGS is\n"
                 "                   compared to it and to the point where R_h crosses 1.\n");
             std::exit(0);
@@ -190,53 +189,40 @@ struct GramRate {
     double gbs      = 0.0;   ///< achieved effective bandwidth against the block footprint
     double pct_fp64 = 0.0;
     double pct_roof = 0.0;
-    double ai       = 0.0;   ///< arithmetic intensity, ~s/4 for s << n
+    double ai       = 0.0;   ///< arithmetic intensity, ~(s+1)/8 for the triangle syrk
 };
 
 /// The negative-arm measurement: the Gram block's achieved FP64 rate, isolated from the block.
 ///
-/// One tall-skinny G = B^T B has only s x s outputs, too few threads to hide memory latency, so
-/// timing it alone is latency-bound. Contracting nb independent blocks with a strided-batched
-/// gemm raises occupancy; cuBLAS still serializes the batch at s >= 2, so the rate is a floor,
-/// not the roofline, and the verdict rests on the intensity (~s/4), not the achieved rate. The
-/// intensity is n-independent, so a modest n keeps memory bounded. Values do not matter: only the
-/// contraction is timed, no factorization.
-[[nodiscard]] GramRate measure_gram_rate(cublasHandle_t blas, int s, int64_t n, int nb,
-                                         int repeats, double fp64_peak, double dram_roof)
+/// The tall-skinny G = B^T B is run with the split-K kernel (include/gram_splitk.cuh), which
+/// parallelizes the k = n dimension so it reaches the roofline rather than the latency-bound rate
+/// cuBLAS gives on this shape. n is large enough to spill L2, so the achieved rate is a clean
+/// DRAM-roof read. Only the contraction is timed.
+[[nodiscard]] GramRate measure_gram_rate(int s, int64_t n, int repeats, int sm_count,
+                                         double fp64_peak, double dram_roof)
 {
-    const int ni = static_cast<int>(n);
-    const std::size_t belems = static_cast<std::size_t>(n) * static_cast<std::size_t>(s)
-                             * static_cast<std::size_t>(nb);
-    double *d_b = nullptr, *d_c = nullptr;
+    const std::size_t belems = static_cast<std::size_t>(n) * static_cast<std::size_t>(s);
+    double *d_b = nullptr, *d_g = nullptr;
     CUDA_CHECK(cudaMalloc(&d_b, belems * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_c, static_cast<std::size_t>(s) * static_cast<std::size_t>(s)
-                                    * static_cast<std::size_t>(nb) * sizeof(double)));
-
+    CUDA_CHECK(cudaMalloc(&d_g, static_cast<std::size_t>(s) * static_cast<std::size_t>(s)
+                                    * sizeof(double)));
     std::vector<double> h_b(belems);
-    for (std::size_t i = 0; i < belems; ++i)
-        h_b[i] = std::sin(0.7 * static_cast<double>(i) + 1.0);
+    for (int c = 0; c < s; ++c)
+        for (int64_t r = 0; r < n; ++r)
+            h_b[static_cast<std::size_t>(c) * static_cast<std::size_t>(n) + static_cast<std::size_t>(r)] =
+                std::sin(0.7 * static_cast<double>(c + 1) * static_cast<double>(r) + 1.0);
     CUDA_CHECK(cudaMemcpy(d_b, h_b.data(), belems * sizeof(double), cudaMemcpyHostToDevice));
 
-    const double one = 1.0, zero = 0.0;
-    const long long strideB = static_cast<long long>(n) * s;
-    const long long strideC = static_cast<long long>(s) * s;
-    // C_i = B_i^T B_i: op(A)=T gives s x n, op(B)=N gives n x s, output s x s. A and B are the
-    // same block; the blocks are distinct memory, so L2 reuse across the batch cannot inflate it.
-    auto batched = [&] {
-        CUBLAS_CHECK(cublasDgemmStridedBatched(
-            blas, CUBLAS_OP_T, CUBLAS_OP_N, s, s, ni,
-            &one, d_b, ni, strideB, d_b, ni, strideB,
-            &zero, d_c, s, strideC, nb));
-    };
-    (void)time_it(batched);
+    auto run = [&] { CUDA_CHECK(gram_splitk(d_b, n, s, d_g, sm_count)); };
+    (void)time_it(run);
     std::vector<double> secs;
     secs.reserve(static_cast<std::size_t>(repeats));
-    for (int r = 0; r < repeats; ++r) secs.push_back(time_it(batched));
+    for (int r = 0; r < repeats; ++r) secs.push_back(time_it(run));
     const double t = median(secs);
 
-    const double dnb   = static_cast<double>(nb);
-    const double flops = 2.0 * static_cast<double>(n) * s * s * dnb;
-    const double bytes = (8.0 * static_cast<double>(n) * s + 8.0 * static_cast<double>(s) * s) * dnb;
+    // Triangle syrk work: s(s+1)/2 FMAs per row at 2 flops each. B read once (8ns).
+    const double flops = static_cast<double>(n) * static_cast<double>(s) * static_cast<double>(s + 1);
+    const double bytes = 8.0 * static_cast<double>(n) * s + 8.0 * static_cast<double>(s) * s;
     GramRate g;
     g.gflops   = t > 0.0 ? flops / t * 1e-9 : 0.0;
     g.gbs      = t > 0.0 ? bytes / t * 1e-9 : 0.0;
@@ -245,7 +231,7 @@ struct GramRate {
     g.ai       = bytes > 0.0 ? flops / bytes : 0.0;
 
     CUDA_CHECK(cudaFree(d_b));
-    CUDA_CHECK(cudaFree(d_c));
+    CUDA_CHECK(cudaFree(d_g));
     return g;
 }
 
@@ -303,10 +289,9 @@ struct SstepResult {
 
 /// One CholQR2 block of width s on an n x s block, timed, with the orthogonality of the result
 /// measured. The Gram rate is measured separately and saturated (see measure_gram_rate).
-[[nodiscard]] SstepResult measure_sstep(cublasHandle_t blas, cusolverDnHandle_t solver,
-                                        int64_t n, int s, int repeats)
+[[nodiscard]] SstepResult measure_sstep(cusolverDnHandle_t solver,
+                                        int64_t n, int s, int repeats, int sm_count)
 {
-    const int ni = static_cast<int>(n);
     const std::size_t belems = static_cast<std::size_t>(n) * s;
     double *d_b = nullptr, *d_b0 = nullptr, *d_g = nullptr;
     int    *d_info = nullptr;
@@ -332,26 +317,19 @@ struct SstepResult {
     double* d_work = nullptr;
     CUDA_CHECK(cudaMalloc(&d_work, static_cast<std::size_t>(std::max(lwork, 1)) * sizeof(double)));
 
-    const double one = 1.0, zero = 0.0;
     auto reset = [&] {
         CUDA_CHECK(cudaMemcpy(d_b, d_b0, belems * sizeof(double), cudaMemcpyDeviceToDevice));
         CUDA_CHECK(cudaDeviceSynchronize());
     };
-    // One CholeskyQR pass: G = B^T B, G = R^T R, B <- B R^-1.
+    // One CholeskyQR pass: G = B^T B (split-K Gram), G = R^T R, B <- B R^-1 (tall-skinny trsm).
     auto cholqr = [&] {
-        CUBLAS_CHECK(cublasDsyrk(blas, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_T, s, ni,
-                                 &one, d_b, ni, &zero, d_g, s));
+        CUDA_CHECK(gram_splitk(d_b, n, s, d_g, sm_count));
         CUSOLVER_CHECK(cusolverDnDpotrf(solver, CUBLAS_FILL_MODE_UPPER, s, d_g, s,
                                         d_work, lwork, d_info));
-        CUBLAS_CHECK(cublasDtrsm(blas, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
-                                 CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, ni, s,
-                                 &one, d_g, s, d_b, ni));
+        CUDA_CHECK(trsm_tallskinny(d_g, d_b, n, s, sm_count));
     };
     auto cholqr2 = [&] { cholqr(); cholqr(); };
-    auto gram_only = [&] {
-        CUBLAS_CHECK(cublasDsyrk(blas, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_T, s, ni,
-                                 &one, d_b, ni, &zero, d_g, s));
-    };
+    auto gram_only = [&] { CUDA_CHECK(gram_splitk(d_b, n, s, d_g, sm_count)); };
 
     reset();
     (void)time_it(cholqr2);
@@ -434,29 +412,26 @@ int main(int argc, char** argv)
     CUBLAS_CHECK(cublasCreate(&blas));
     CUSOLVER_CHECK(cusolverDnCreate(&solver));
 
-    // The negative-arm reading. The verdict is the intensity against the ridge (the predicted
-    // column); the achieved rate is a batched floor, since cuBLAS serializes the tall-skinny Gram
-    // at s >= 2. See measure_gram_rate.
+    // The negative-arm reading: the split-K Gram's achieved FP64 rate against each roof, at the
+    // roofline (not the cuBLAS latency-bound floor). The predicted column is the intensity against
+    // the ridge, %fp64 and %roof are the achieved confirmation. See measure_gram_rate.
     const double ridge = fp64_peak > 0.0 && dram_roof > 0.0 ? fp64_peak / (dram_roof * 1e9) : 0.0;
     std::vector<GramRate> grates;
     grates.reserve(s_list.size());
-    std::printf("  Gram FP64 rate (batched: %d independent %lld x s blocks contracted at once)\n",
-                a.gram_batch, static_cast<long long>(a.gram_n));
+    std::printf("  Gram FP64 rate (split-K, %lld x s block per s)\n",
+                static_cast<long long>(a.gram_n));
     std::printf("  %4s %8s %8s %11s %8s %8s   %s\n",
                 "s", "AI", "ridge", "GFLOP/s", "%fp64", "%roof", "predicted");
     std::printf("  %s\n", std::string(70, '-').c_str());
     for (const int s : s_list) {
-        const GramRate g = measure_gram_rate(blas, s, a.gram_n, a.gram_batch, a.repeats,
+        const GramRate g = measure_gram_rate(s, a.gram_n, a.repeats, prop.multiProcessorCount,
                                              fp64_peak, dram_roof);
         grates.push_back(g);
         std::printf("  %4d %8.2f %8.2f %11.1f %7.0f%% %7.0f%%   %s\n",
                     s, g.ai, ridge, g.gflops, g.pct_fp64, g.pct_roof,
                     ridge > 0.0 ? (g.ai > ridge ? "compute-bound" : "memory-bound") : "no roof");
     }
-    std::printf("  %s\n", std::string(70, '-').c_str());
-    // A measurement caveat, not a verdict: cuBLAS serializes the tall-skinny batch at s >= 2, so
-    // the achieved rate is a floor. The predicted column carries the roofline call.
-    std::printf("  (achieved GFLOP/s is a cuBLAS floor for s>=2, not the roofline)\n\n");
+    std::printf("  %s\n\n", std::string(70, '-').c_str());
 
     auto gram_for = [&](int s) -> GramRate {
         for (std::size_t i = 0; i < s_list.size(); ++i)
@@ -486,7 +461,7 @@ int main(int argc, char** argv)
         std::printf("  %s\n", std::string(show_cross ? 67 : 57, '-').c_str());
 
         for (const int s : s_list) {
-            const SstepResult r = measure_sstep(blas, solver, n, s, a.repeats);
+            const SstepResult r = measure_sstep(solver, n, s, a.repeats, prop.multiProcessorCount);
             const int64_t blocks = (a.m + s - 1) / s;
             const int64_t r_ca   = ca_reductions(a.m, s);
             const double sstep_local = static_cast<double>(blocks) * r.block_s;
@@ -514,7 +489,7 @@ int main(int argc, char** argv)
     }
 
     // The breakdown reading: the largest block width that both factored and stayed orthonormal,
-    // against the certified cap. Reaching the cap means no breakdown was seen in range; a smaller
+    // against the certified cap. Reaching the cap means no breakdown was seen in range, a smaller
     // value means cuSOLVER potrf gives out before the certificate says it should.
     constexpr double kOrthoTol = 1e-8;   // O(u) ~ 1e-15 under CholQR2; well clear of a broken block
     int s_ortho_max = 0;

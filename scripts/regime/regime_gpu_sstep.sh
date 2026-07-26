@@ -19,9 +19,8 @@ M="${M:-12}"
 REPEATS="${REPEATS:-7}"
 N_LIST="${N_LIST:-61000 227000 705000}"
 S_LIST="${S_LIST:-1 2 4 6 8}"
-S_MAX="${S_MAX:-9}"           # certified block-width cap; s beyond it loses orthogonality
-GRAM_N="${GRAM_N:-20000}"     # rows per block for the batched Gram rate
-GRAM_BATCH="${GRAM_BATCH:-512}"  # independent blocks contracted at once, to saturate the device
+S_MAX="${S_MAX:-9}"              # certified block-width cap, s beyond it loses orthogonality
+GRAM_N="${GRAM_N:-1000000}"      # rows for the split-K Gram rate, spills L2 for a clean roofline read
 
 case "$MACHINE" in
     v100-pcie-16gb) FP64="${FP64:-6.375}"; DRAM_GBS="${DRAM_GBS:-818.3}"; T_REDUCE_US="${T_REDUCE_US:-11.46}" ;;
@@ -38,7 +37,6 @@ fi
 mkdir -p "$DATA_DIR"
 
 "$SSTEP" --machine "$MACHINE" --device "$DEVICE" --m "$M" --repeats "$REPEATS" \
-         --n-list "$N_LIST" --s-list "$S_LIST" --s-max "$S_MAX" \
-         --gram-n "$GRAM_N" --gram-batch "$GRAM_BATCH" \
+         --n-list "$N_LIST" --s-list "$S_LIST" --s-max "$S_MAX" --gram-n "$GRAM_N" \
          --fp64-tflops "$FP64" --dram-gbs "$DRAM_GBS" --t-reduce-us "$T_REDUCE_US" \
          --csv "$DATA_DIR/regime_gpu_sstep_${MACHINE}.csv"
