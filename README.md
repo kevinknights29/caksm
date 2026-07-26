@@ -64,10 +64,12 @@ integrator itself is not yet implemented; the map exists to decide what to build
 ## Platform
 
 Every CPU and single-GPU result in this README was gathered on a local workstation ("puffin")
-with an NVIDIA RTX 3090 - see the note below on why one bare-metal machine. The GPU regime work
-adds a second, deliberately controlled machine: **synge**, a two-GPU node of NVIDIA Tesla V100s,
-the datacenter half of the FP64-throttled pair the [negative arm](#the-pair-measured-the-negative-arm-fires)
-is measured on, and the only host with the two GPUs the horizontal crossover needs.
+with an NVIDIA RTX 3090 - see the note below on why bare metal. The GPU regime work adds a second,
+deliberately controlled machine: **synge**, a two-node cluster with a pair of NVIDIA Tesla V100s
+per node (four in total) joined by InfiniBand. Synge's V100 is the datacenter half of the
+FP64-throttled pair the [negative arm](#the-pair-measured-the-negative-arm-fires) is measured on;
+its two-GPU node carries the DEVICE_P2P reduction the horizontal crossover needs, and its
+InfiniBand fabric the node-to-node rung.
 
 | GPU              | VRAM  | Driver  | CUDA |
 |------------------|-------|---------|------|
@@ -89,9 +91,23 @@ CPU details (from `lscpu`):
 | L3 cache         | 128 MiB (8 instances, 16 MiB per CCX, 3 cores per slice)                                 |
 
 The machine's derived constants live in [`include/machine.hpp`](include/machine.hpp) under the
-key `amd-3960x`, and every predicted coordinate in the regime study is computed from them.
+key `amd-3960x`, and every predicted coordinate in the CPU regime study is computed from them.
 
-> **Why one bare-metal machine, and not a cloud VM.** An earlier cloud arm was dropped, on
+**synge** hosts the GPU controlled pair. Each of its two nodes carries two Tesla V100-PCIE-16GB
+cards; the FP64-throttled contrast the negative arm rests on is this V100 against puffin's 3090.
+
+| GPU                    | per node | total | VRAM  | Driver     | CUDA |
+|------------------------|----------|-------|-------|------------|------|
+| NVIDIA Tesla V100-PCIE | 2        | 4     | 16 GB | 570.124.06 | 12.8 |
+
+Host CPU per node (from `lscpu`): 2x Intel Xeon Gold 6148 (Skylake-SP), 20 cores per socket (40
+total, no SMT), 2 NUMA nodes, 27.5 MiB L3 per socket, 2.40 GHz base / 3.70 GHz turbo. The two V100s
+in a node sit on separate NUMA sockets, so the SYS / DEVICE_P2P rung is a PCIe plus cross-socket UPI
+hop with no NVLink; the two nodes are joined by InfiniBand (the node rung). Synge's derived
+constants live in [`include/gpu_machine.hpp`](include/gpu_machine.hpp) under the key
+`v100-pcie-16gb`, and puffin's 3090 under `rtx-3090`; every GPU coordinate is computed from them.
+
+> **Why bare metal, and not a cloud VM.** An earlier cloud arm was dropped, on
 > two grounds. Contention: timing variance that looks internally consistent is
 > simultaneously evidence of memory-bound behavior and of noise from co-tenants, and from
 > inside the guest the two are not separable. Topology, the sharper objection: the
