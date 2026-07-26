@@ -57,12 +57,19 @@ integrator itself is not yet implemented; the map exists to decide what to build
   - [The map, and where the real operator travels](#the-map-and-where-the-real-operator-travels)
   - [Running the regime study](#running-the-regime-study)
   - [Standing caveats](#standing-caveats)
+- [Porting the map to GPUs](#porting-the-map-to-gpus-branch-regime-analysis-gpu)
+  - [The pair, measured: the negative arm fires](#the-pair-measured-the-negative-arm-fires)
 - [Repository layout](#repository-layout)
 
 ## Platform
 
-Every result in this README was gathered on a local workstation ("puffin") with an
-NVIDIA RTX 3090. It is the project's only compute environment - see the note below.
+Every CPU and single-GPU result in this README was gathered on a local workstation ("puffin")
+with an NVIDIA RTX 3090 - see the note below on why bare metal. The GPU regime work adds a second,
+deliberately controlled machine: **synge**, a two-node cluster with a pair of NVIDIA Tesla V100s
+per node (four in total) joined by InfiniBand. Synge's V100 is the datacenter half of the
+FP64-throttled pair the [negative arm](#the-pair-measured-the-negative-arm-fires) is measured on;
+its two-GPU node carries the DEVICE_P2P reduction the horizontal crossover needs, and its
+InfiniBand fabric the node-to-node rung.
 
 | GPU              | VRAM  | Driver  | CUDA |
 |------------------|-------|---------|------|
@@ -84,9 +91,23 @@ CPU details (from `lscpu`):
 | L3 cache         | 128 MiB (8 instances, 16 MiB per CCX, 3 cores per slice)                                 |
 
 The machine's derived constants live in [`include/machine.hpp`](include/machine.hpp) under the
-key `amd-3960x`, and every predicted coordinate in the regime study is computed from them.
+key `amd-3960x`, and every predicted coordinate in the CPU regime study is computed from them.
 
-> **Why one bare-metal machine, and not a cloud VM.** An earlier cloud arm was dropped, on
+**synge** hosts the GPU controlled pair. Each of its two nodes carries two Tesla V100-PCIE-16GB
+cards; the FP64-throttled contrast the negative arm rests on is this V100 against puffin's 3090.
+
+| GPU                    | per node | total | VRAM  | Driver     | CUDA |
+|------------------------|----------|-------|-------|------------|------|
+| NVIDIA Tesla V100-PCIE | 2        | 4     | 16 GB | 570.124.06 | 12.8 |
+
+Host CPU per node (from `lscpu`): 2x Intel Xeon Gold 6148 (Skylake-SP), 20 cores per socket (40
+total, no SMT), 2 NUMA nodes, 27.5 MiB L3 per socket, 2.40 GHz base / 3.70 GHz turbo. The two V100s
+in a node sit on separate NUMA sockets, so the SYS / DEVICE_P2P rung is a PCIe plus cross-socket UPI
+hop with no NVLink; the two nodes are joined by InfiniBand (the node rung). Synge's derived
+constants live in [`include/gpu_machine.hpp`](include/gpu_machine.hpp) under the key
+`v100-pcie-16gb`, and puffin's 3090 under `rtx-3090`; every GPU coordinate is computed from them.
+
+> **Why bare metal, and not a cloud VM.** An earlier cloud arm was dropped, on
 > two grounds. Contention: timing variance that looks internally consistent is
 > simultaneously evidence of memory-bound behavior and of noise from co-tenants, and from
 > inside the guest the two are not separable. Topology, the sharper objection: the
@@ -552,7 +573,7 @@ The obvious confound is that $s_{\max}$ might just be tracking $m$. It does not:
 | Experiment      | What varies                                                            | Certified $s_{\max}$ |
 |-----------------|------------------------------------------------------------------------|----------------------|
 | spectrum pinned | $m = 5, 6, 7, 8, 9, 11, 12$ (moved by $h$ and tol)                     | **flat at 7**        |
-| $m$ pinned at 5 | spectrum scale $\sigma \in \{1,2,4,8\}$, shift $\mu \in \{0, 2, 3.5\}$ | **4 to 14**           |
+| $m$ pinned at 5 | spectrum scale $\sigma \in \{1,2,4,8\}$, shift $\mu \in \{0, 2, 3.5\}$ | **4 to 14**          |
 
 Safety is a property of the spectrum, not of the Krylov dimension.
 
@@ -630,14 +651,14 @@ every fit. Its prediction error runs 0.19 to 0.85 decades at $\kappa(X)$ up to $
 Operator-by-operator, what the spectral prediction needs is normality; definiteness and
 separability are conveniences:
 
-| Operator | Normal? | Definite? | Separable? | Spectral prediction |
-|----------|---------|-----------|------------|---------------------|
-| Laplacian | yes | PSD | yes | exact (closed form) |
-| shift $\mu$ | yes | indefinite | yes | exact ($\kappa(X) = 1$) |
-| correlation $\rho$ | yes | PSD | no | exact (dense eigensolve) |
-| constant $\gamma$ advection | no | - | yes | survives (< 1 step) |
-| $\rho + \gamma$ | no | - | no | survives (< 1 step) |
-| variable $\gamma$ advection | no | - | no | must be measured (> 1 step) |
+| Operator                    | Normal? | Definite?  | Separable? | Spectral prediction         |
+|-----------------------------|---------|------------|------------|-----------------------------|
+| Laplacian                   | yes     | PSD        | yes        | exact (closed form)         |
+| shift $\mu$                 | yes     | indefinite | yes        | exact ($\kappa(X) = 1$)     |
+| correlation $\rho$          | yes     | PSD        | no         | exact (dense eigensolve)    |
+| constant $\gamma$ advection | no      | -          | yes        | survives (< 1 step)         |
+| $\rho + \gamma$             | no      | -          | no         | survives (< 1 step)         |
+| variable $\gamma$ advection | no      | -          | no         | must be measured (> 1 step) |
 
 #### The asset-dimension law
 
@@ -670,12 +691,12 @@ carry no cross term, so interchanging any two of them is an exact symmetry of $A
 spectrum repeats, and inside a repeated eigenspace every basis is admissible, so the value
 reported is whichever basis the eigensolver's rounding happened to produce.
 
-| $d$ | $N$  | distinct eigenvalues | max multiplicity | dense $\kappa(X)$ over 8 permutations | spread    | canonical $\kappa(X)$ |
-|-----|------|----------------------|------------------|---------------------------------------|-----------|-----------------------|
-| 2   | 16   | 16                   | 1                | 6.6713 to 6.6713                      | $1+3\text{e-}15$ | 6.671          |
-| 3   | 64   | 64                   | 1                | 16.951 to 16.951                      | $1+8\text{e-}14$ | 16.951         |
-| 4   | 256  | 144                  | 4                | 81.8 to 314.3                         | 3.84x     | 43.073                |
-| 5   | 1024 | 256                  | 9                | 373.9 to 2903                         | 7.76x     | 109.45                |
+| $d$ | $N$  | distinct eigenvalues | max multiplicity | dense $\kappa(X)$ over 8 permutations | spread           | canonical $\kappa(X)$ |
+|-----|------|----------------------|------------------|---------------------------------------|------------------|-----------------------|
+| 2   | 16   | 16                   | 1                | 6.6713 to 6.6713                      | $1+3\text{e-}15$ | 6.671                 |
+| 3   | 64   | 64                   | 1                | 16.951 to 16.951                      | $1+8\text{e-}14$ | 16.951                |
+| 4   | 256  | 144                  | 4                | 81.8 to 314.3                         | 3.84x            | 43.073                |
+| 5   | 1024 | 256                  | 9                | 373.9 to 2903                         | 7.76x            | 109.45                |
 
 A symmetric permutation $P A P^{\top}$ is an exact similarity, so any function of the
 operator is invariant under it. The dense value is invariant to rounding while the spectrum
@@ -797,8 +818,8 @@ bandwidth-bound regime, so the experiment never got to test $\theta_v$. A diagno
 that skips the halo entirely (wrong basis, throughput only) separates the two tile levels
 cleanly:
 
-| Tile level | Panels / halo           | Removing the halo                                                                      | Reading                                                                                                                                                        |
-|------------|-------------------------|----------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Tile level | Panels / halo           | Removing the halo                                                                             | Reading                                                                                                                                                        |
+|------------|-------------------------|-----------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | L2         | small panels, fat halo  | GFLOP/s recovers toward baseline (1.17 rising to 2.13 against a 2.70 baseline at $n_1 = 400$) | cache-blocking *works*; the shortfall is redundant halo arithmetic traded for DRAM traffic - a bad trade at these panel sizes, not a broken kernel             |
 | L3         | large panels, thin halo | GFLOP/s barely moves (2.06 rising to 2.11 against a 2.76 baseline at $n_1 = 400$)             | neither arm is bandwidth-bound; both are capped by something insensitive to cache residency, most consistent with gather latency on the indirect column access |
 
@@ -931,25 +952,148 @@ slow, check that first.
 
 Carried explicitly so no figure is read as claiming more than it measures.
 
-| Caveat                                                                                                                        | Consequence                                                                                                                                                                                                                                                          |
-|-------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| DRAM bytes are **modeled, not counted** (puffin's uncore counters need root)                                                  | vertical-mechanism traffic claims are reconciled against the roofline, which is weaker evidence; every such curve is labeled as a model                                                                                                                              |
-| $s_{\max}$ is reported at a **chosen tolerance** of $\pm 1$ step (`kSMaxStepTolerance`), not a measured cross-compiler noise floor | quote block *counts*, not raw $s_{\max}$; it is now stated as a chosen tolerance with its reasoning, but the cross-compiler spread has still not been measured                                                                                                        |
-| $\kappa(X)$ is dense-eigensolvable only to $N \le 32768$ (`kControlMaxN`)                                                     | the certificate is validated well below where the performance claims live - the real-BS control tops out at $N = 8{,}000$ ($n = 20$) against a production $N \approx 2.3 \times 10^5$ ($n = 61$); `structured_kappa_X` lifts the cap for the synthetic operator only |
-| The upper-right corner is unreachable on a single-NUMA socket                                                                 | its status is a portability argument, not a measurement                                                                                                                                                                                                              |
-| Coordinates are **not portable across memory systems**                                                                        | both axes must be re-derived from a new machine's constants (`include/machine.hpp`) before any port; a GPU's tiny L2, large bandwidth and cheap on-chip reductions move both                                                                                         |
+| Caveat                                                                                                                                          | Consequence                                                                                                                                                                                                                                                          |
+|-------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| DRAM bytes are **modeled, not counted** (puffin's uncore counters need root)                                                                    | vertical-mechanism traffic claims are reconciled against the roofline, which is weaker evidence; every such curve is labeled as a model                                                                                                                              |
+| $s_{\max}$ is reported at a **chosen tolerance** of $\pm 1$ step (`kSMaxStepTolerance`), not a measured cross-compiler noise floor              | quote block *counts*, not raw $s_{\max}$; the floor is asserted, and either measuring it or restating it as a tolerance is outstanding                                                                                                                               |
+| $\kappa(X)$ is dense-eigensolvable only to $N \le 32768$ (`kControlMaxN`)                                                                       | the certificate is validated well below where the performance claims live - the real-BS control tops out at $N = 8{,}000$ ($n = 20$) against a production $N \approx 2.3 \times 10^5$ ($n = 61$); `structured_kappa_X` lifts the cap for the synthetic operator only |
+| The upper-right corner is unreachable on a single-NUMA socket                                                                                   | its status is a portability argument, not a measurement                                                                                                                                                                                                              |
+| `regime_control.csv` predates the canonical $\kappa(X)$, so the log-robustness figure still fits its constant-coefficient arm on the dense axis | the fitted slope moves from 0.061 to 0.069 when refitted canonically, which does not disturb the conclusion; re-run `scripts/regime/regime_control.sh` to regenerate the figure on the correct axis                                                                  |
+| Coordinates are **not portable across memory systems**                                                                                          | both axes must be re-derived from a new machine's constants (`include/machine.hpp`) before any port; a GPU's tiny L2, large bandwidth and cheap on-chip reductions move both                                                                                         |
+
+## Porting the map to GPUs (branch `regime-analysis-gpu`)
+
+The last caveat above is the whole of this work. The map's central claim is that $R_v$ and
+$R_h$ are *dimensionless* - ratios, not times - so a reader can place their own operator and
+machine and read off which mechanism can pay. That has never been tested against a memory
+system that differs in kind, so the GPU work is not a port: **it is the falsification test of
+that claim.**
+
+Three results came out of Phase 0, before a kernel was written:
+
+1. **The $R_v \cdot R_h$ invariant survives - with the mechanism reversed.** On puffin the
+   product is $P$-free by *cancellation*: $R_v \sim 1/P$ and $R_h \sim P$ annihilate, which is
+   what made the upper-right corner unreachable. On a GPU, L2 is one fixed block and the
+   bandwidth roof is device-wide, so **both coordinates are separately $P$-free** and the axes
+   decouple: $N$ moves $R_v$ alone, the reduction tier moves $R_h$ alone, and the SM count
+   moves neither. In closed form,
+
+   $$R_v \cdot R_h = g(m)\,R(m)\,\Lambda, \qquad \Lambda = \frac{\tau \cdot \text{BW}}{C},$$
+
+   with $\Lambda$ the dimensionless "cache-fulls delivered per reduction". The corner cannot be
+   opened by engaging more of the GPU - only by climbing the reduction ladder.
+
+2. **The upper-right window is wide, and 16 GB is not what closes it.** The window is
+   non-empty exactly when that product exceeds 1, and its width in $N$ *is* the product - the
+   spec's two blocking questions turn out to be one question. The threshold is
+   $\tau^{*} \approx 0.94\ \mu s$, which every rung from the grid tier upward is expected to
+   clear. Device memory misses binding by two orders of magnitude; $R_h$'s ceiling binds first.
+
+3. **The roofline gate fires on a different kernel than the spec expected.** Arnoldi's
+   intensity (SpMV 0.135, MGS 0.375 FLOP/B) sits below even a 1:64-throttled FP64 ridge, so
+   *both* cards are on-map for the baseline method. The pair discriminates on the tall-skinny
+   Gram matrix that s-step introduces and MGS does not have ($\text{AI} \sim s/4$), which
+   crosses the 3090's ridge at $s \approx 2.4$ - below the certified $s_{\max} = 9$. The
+   negative arm survives, sharpened: on consumer silicon the CA treatment's *own* kernel is
+   compute-bound while the baseline is not.
+
+`include/gpu_machine.hpp` is a separate type from `Machine` on purpose, so a CPU constant
+reaching a GPU coordinate is a compile error rather than a plausible wrong number. Its
+reduction ladder is a five-rung vector (warp, block, grid, device-to-device, node) with
+kernel-launch latency carried as its own term, and `roofline_gate()` is evaluated **per kernel
+and at the engaged SM count** - a whole-device ridge would certify a point on-map that the
+cycle model then prices on the compute branch.
+
+```bash
+# Phase 0.2/0.3: the machine facts. Run under the BATCH scheduler, not just salloc.
+sbatch --nodes=2 --gpus-per-node=2 --exclusive scripts/regime/gpu_probe.sh
+
+# Phase 1.2: calibrate. On-device ladder + achieved roofs, then the interconnect rungs.
+./scripts/regime/calibrate_gpu.sh                 # needs CUDA
+./scripts/regime/calibrate_gpu_p2p.sh             # needs CUDA + NCCL + MPI, >= 2 GPUs
+
+# The a-priori placements and the Phase 0 tables. Host-only: no GPU needed.
+./scripts/regime/regime_gpu_place.sh
+```
+
+Until a preset's `reduction_calibrated` and `roofline_gated` are both true, every magnitude is
+stamped `ASSUMED` and no horizontal verdict may be published - the same suppression the CPU
+side already enforces, for the same reason.
+
+### The pair, measured: the negative arm fires
+
+The predictions above were then tested on the controlled pair - **synge's Tesla V100** (datacenter
+FP64, 6.4 TFLOP/s) and **puffin's RTX 3090** (consumer, 0.57 TFLOP/s, an 11x gap) - two cards with
+the same 6 MiB L2 and ~820 GB/s bandwidth class, differing almost only in the FP64 rate. Every
+number below was gathered on an idle device (NVML-gated) and read against each card's measured
+FP64 peak and DRAM roof; Nsight Compute settled the roofline verdicts directly.
+
+**The tall-skinny kernels cuBLAS cannot serve.** s-step's block orthogonalization is CholeskyQR:
+a Gram matrix $G = B^{\mathsf T}B$ (a `syrk`), a Cholesky (`potrf`), and a triangular solve
+$B \leftarrow B R^{-1}$ (a `trsm`). For an $n \times s$ block with $s \le 9$ both BLAS-3 operations
+are *tall and skinny* - a huge $k = n$ against a tiny $s \times s$ - and cuBLAS is built for square
+matrices. Measured, its `dsyrk` ran at **~0.7 GFLOP/s** (under 0.1% of roof, latency-bound on a
+handful of output threads) and its `dtrsm` was **compute-bound at ~2% useful FP64**, tiling $m$
+into 44 000 blocks. The map's mechanism was invisible behind library inefficiency, so two
+kernels were written (`include/gram_splitk.cuh`, `include/trsm_tallskinny.cuh`): a split-K Gram
+that parallelizes the $k = n$ dimension and reduces the partials (after Ernst et al. 2020), and a
+per-row triangular solve (the $m$ row-solves are independent). Both are validated bit-close to
+cuBLAS and reach the roofline:
+
+| kernel (n=1-2M, s=8) | vs cuBLAS | V100                            | 3090                                    |
+|----------------------|-----------|---------------------------------|-----------------------------------------|
+| split-K Gram         | ~1900x    | 85% of DRAM roof (memory-bound) | 71% of FP64 peak (compute-bound)        |
+| per-row trsm         | 27x       | 95% of DRAM roof (memory-bound) | 94% of roof, at the compute/memory knee |
+
+Reproduce with `scripts/regime/gram_splitk_test.sh` and `scripts/regime/trsm_test.sh`.
+
+**The negative arm, measured.** With roofline-bound kernels, the two-card contrast the map
+predicted appears directly. At the certified block width $s = 8$ the Gram's arithmetic intensity
+($\sim 1.1$ FLOP/B) sits **above** the 3090's ridge (0.69) and **below** the V100's (7.79), so the
+*same kernel* is compute- and memory-bound on the two cards (Nsight Compute, $n = 2 \times 10^6$):
+
+| $s = 8$ Gram | DRAM throughput | SM (compute) throughput | verdict                  |
+|--------------|-----------------|-------------------------|--------------------------|
+| **V100**     | **86%**         | 16%                     | memory-bound (FP64 idle) |
+| **3090**     | 38%             | **94%**                 | compute-bound            |
+
+This is the negative arm as a hardware measurement, not a prediction: on consumer silicon s-step's
+own orthogonalization kernel is compute-bound while the baseline (SpMV 0.135, MGS 0.375 FLOP/B) is
+memory-bound on both. The triangular solve, whose intensity ($\sim s/16 \approx 0.56$) sits just
+*below* the 3090 ridge, is memory-bound on the V100 and at the knee on the 3090 - so the **Gram is
+the sole unambiguous carrier of the arm**, exactly the kernel the roofline gate named.
+
+**The s-step crossover.** Timed against MGS at matched $m = 12$ (`scripts/regime/regime_gpu_sstep.sh`),
+with roofline-bound kernels s-step beats MGS on *both* cards at every $n$: its BLAS-3 block
+(orthogonality $\lVert I - Q^{\mathsf T}Q \rVert \sim 10^{-15}$ throughout) plus its $1 + 2\lceil
+m/s\rceil$ reductions against MGS's $1 + m(m+3)/2$. The horizontal boundary $\theta_h$ itself needs
+*expensive* reductions, so it was measured across two GPUs
+(`scripts/regime/regime_gpu_sstep_2gpu.sh`): the $n$ rows split across the pair, and every MGS dot
+and s-step Gram becomes a real NCCL all-reduce over the PCIe/UPI link. The measured all-reduce cost
+lands at **~11.5 $\mu$s**, matching the calibrated DEVICE_P2P rung (11.46 $\mu$s) - cross-checked
+independently by the two-GPU MGS decomposition and an Nsight Systems kernel trace. At that rung
+s-step pays across the whole production range of $n$, its 5 reductions beating MGS's 91.
+
+**What the pair costs in discipline.** cuBLAS/cuSOLVER served the CPU story cleanly (dot, axpy,
+`syrk` on square operators), but the tall-skinny CholQR kernels forced two hand-written kernels to
+make the mechanism legible - a real change from "the libraries a practitioner would call". The
+single-GPU crossover is then a statement about a *competent* CA implementation (BLAS-3 block plus
+fewer reductions), and the two-GPU crossover is the reduction saving paying at a real inter-GPU
+rung. Both rest on measured hardware limits rather than library artifacts, which is the whole point
+of chasing the kernels to the roofline.
 
 ## Repository layout
 
-| Path               | Contents                                                                                                                                                                                            |
-|--------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/`             | executables: `main` (pricer), `profiler`, `scaling`, `regime_control`, `regime_sweep`, `calibrate_alpha`, `fma_loop`, `stream`                                                                      |
-| `include/`         | PDE assembly (`pde_operators`), solvers (`solvers`, `arnoldi`, `ca_arnoldi`), CA kernels (`mpk`, `akx`, `reduction`), regime machinery (`regime`, `regime_control_support`, `synthetic`, `machine`) |
-| `tests/`           | Catch2 suites, including the regime tests (coordinates, kernels, Krylov, non-normality, synthetic)                                                                                                  |
-| `scripts/sweep/`   | benchmark sweeps for `n=31` / `n=61`                                                                                                                                                                |
-| `scripts/scaling/` | strong, weak, `m(n)`, and locality sweeps                                                                                                                                                           |
-| `scripts/regime/`  | $\alpha$ calibration, numerics gate, `d`-sweep, vertical sweep, block-width sweep                                                                                                                   |
-| `scripts/stream/`  | STREAM Triad bandwidth sweep                                                                                                                                                                        |
-| `scripts/plots/`   | all figures (each is a `uv` script with inline dependencies)                                                                                                                                        |
-| `data/`            | CSVs written by the sweeps. Generated locally and gitignored, so every number quoted here names the script that reproduces it                                                                        |
-| `logs/`            | sweep logs from detached tmux runs                                                                                                                                                                  |
+| Path               | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+|--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `src/`             | executables: `main` (pricer), `profiler`, `scaling`, `regime_control`, `regime_sweep`, `calibrate_alpha`, `fma_loop`, `stream`; GPU (`.cu`, built only where CUDA is present): `regime_gpu_place` (host-only), `calibrate_gpu_reduction`, `gpu_stream`, `calibrate_gpu_p2p`, the timed instruments `regime_gpu_spmv` / `regime_gpu_mgs` / `regime_gpu_sstep`, the two-GPU crossover `regime_gpu_sstep_2gpu` (NCCL), and the kernel validators `gram_splitk_test` / `trsm_test` |
+| `include/`         | PDE assembly (`pde_operators`), solvers (`solvers`, `arnoldi`, `ca_arnoldi`), CA kernels (`mpk`, `akx`, `reduction`), regime machinery (`regime`, `regime_control_support`, `synthetic`, `machine`), GPU regime machinery (`gpu_machine`, `gpu_regime`), GPU kernels (`gpu_contention`, `gram_splitk`, `trsm_tallskinny`)                                                                                                                                                      |
+| `tests/`           | Catch2 suites, including the regime tests (coordinates, kernels, Krylov, non-normality, synthetic) and the GPU map's structural invariants (`test_gpu_regime`)                                                                                                                                                                                                                                                                                                                 |
+| `scripts/sweep/`   | benchmark sweeps for `n=31` / `n=61`                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `scripts/scaling/` | strong, weak, `m(n)`, and locality sweeps                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `scripts/regime/`  | $\alpha$ calibration, numerics gate, `d`-sweep, vertical sweep, block-width sweep; GPU: `gpu_probe`, `calibrate_gpu`, `calibrate_gpu_p2p`, `regime_gpu_place`, `regime_gpu_spmv`, `regime_gpu_mgs`, `regime_gpu_sstep`, `regime_gpu_sstep_2gpu`, `gram_splitk_test`, `trsm_test`                                                                                                                                                                                               |
+| `docs/`            | `thesis/` (the project write-up)                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `scripts/stream/`  | STREAM Triad bandwidth sweep                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `scripts/plots/`   | all figures (each is a `uv` script with inline dependencies)                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `data/`            | CSVs written by the sweeps. Generated locally and gitignored, so every number quoted here names the script that reproduces it                                                                                                                                                                                                                                                                                                                                                  |
+| `logs/`            | sweep logs from detached tmux runs                                                                                                                                                                                                                                                                                                                                                                                                                                             |
