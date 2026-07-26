@@ -221,6 +221,22 @@ if(CMAKE_CUDA_COMPILER)
     target_link_libraries(regime-gpu-sstep PRIVATE CUDA::nvml CUDA::cublas CUDA::cusolver)
     target_compile_options(regime-gpu-sstep PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
 
+    # Split-K Gram kernel (include/gram_splitk.cuh) validated and timed against cuBLAS: the
+    # tall-skinny G = B^T B that cuBLAS runs latency-bound, parallelized over the k = n dimension
+    # so it reaches the ~s/4 roofline. Correctness vs a cuBLAS gemm, rate vs cuBLAS dsyrk.
+    add_executable(gram-splitk-test src/gram_splitk_test.cu)
+    target_include_directories(gram-splitk-test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(gram-splitk-test PRIVATE CUDA::nvml CUDA::cublas)
+    target_compile_options(gram-splitk-test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Tall-skinny triangular solve (include/trsm_tallskinny.cuh): the B <- B R^-1 step of CholQR,
+    # which cuBLAS runs compute-bound on this shape. One thread per row (independent solves) makes
+    # it memory-bound. Correctness vs cuBLAS dtrsm, rate against the DRAM roof.
+    add_executable(trsm-test src/trsm_test.cu)
+    target_include_directories(trsm-test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(trsm-test PRIVATE CUDA::nvml CUDA::cublas)
+    target_compile_options(trsm-test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
     # The interconnect rungs need a real collectives library: the reduction timed must be the
     # one an implementation would actually call, or R_h's calibrated constant is the slope of
     # code nobody runs.
@@ -246,6 +262,17 @@ if(CMAKE_CUDA_COMPILER)
                 PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
         target_link_libraries(calibrate-gpu-p2p PRIVATE ${NCCL_LIBRARY} CUDA::nvml)
         target_compile_options(calibrate-gpu-p2p PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+        # Two-GPU measured horizontal crossover: MGS vs s-step with real inter-GPU all-reduces.
+        # DEVICE_P2P rung only (single process, both local GPUs), so it only needs NCCL.
+        # cuBLAS and cuSOLVER supply the same kernels the single-GPU s-step harness calls.
+        add_executable(regime-gpu-sstep-2gpu src/regime_gpu_sstep_2gpu.cu)
+        target_include_directories(regime-gpu-sstep-2gpu
+                PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(regime-gpu-sstep-2gpu
+                PRIVATE ${NCCL_LIBRARY} CUDA::nvml CUDA::cublas CUDA::cusolver)
+        target_compile_options(regime-gpu-sstep-2gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
         if(MPI_CXX_FOUND)
             target_link_libraries(calibrate-gpu-p2p PRIVATE MPI::MPI_CXX)
             target_compile_definitions(calibrate-gpu-p2p PRIVATE CAKSM_HAVE_MPI)
