@@ -13,8 +13,11 @@
  *              [--peak-gflops X] [--l2-kb X] [--l3-kb X]
  *
  * Hardware presets (--hw, required):
- *   intel-8358  Intel Xeon Platinum 8358 (Lambda AI cloud VM)
  *   amd-3960x   AMD Ryzen Threadripper 3960X (puffin local cluster)
+ *
+ * One preset, because there is one machine. --hw stays required rather than defaulted:
+ * every roofline figure here is machine-specific, and a result that does not record which
+ * machine produced it is not reproducible.
  *
  * @author Kevin Knights
  * @date 2026-06-26
@@ -71,20 +74,10 @@ struct HWPreset {
     HardwareConfig   hw;
 };
 
-// Two presets for the two compute environments in the project.
-// Cache sizes are per-core / per-CCX figures used for single-threaded probing.
-// Intel figures are per-vCPU as reported by lscpu on the Lambda AI VM.
-// AMD figures are per-CCX (3 cores share 16 MiB L3; L2 is private per core).
-static const std::array<HWPreset, 2> kHWPresets {{
-    {
-        "intel-8358",
-        {
-            "Intel Xeon Platinum 8358 (Lambda AI)",
-            86.1,        // measured: fma-loop AVX-512 path, taskset -c 2
-            4L << 20,    // 4 MiB L2 per vCPU  (120 MiB / 30 vCPUs)
-            16L << 20,   // 16 MiB L3 per vCPU  (480 MiB / 30 vCPUs)
-        }
-    },
+// One preset for the project's one compute environment. Cache sizes are the per-core /
+// per-CCX figures used for single-threaded probing: 3 cores share 16 MiB of L3, and L2 is
+// private per core.
+static const std::array<HWPreset, 1> kHWPresets {{
     {
         "amd-3960x",
         {
@@ -102,7 +95,7 @@ static const HardwareConfig& lookup_hw_preset(std::string_view key)
         if (p.key == key)
             return p.hw;
     throw std::invalid_argument("Unknown hardware preset: " + std::string(key)
-        + ".  Valid keys: intel-8358, amd-3960x");
+        + ".  Valid keys: amd-3960x");
 }
 
 // Memory analysis
@@ -633,7 +626,7 @@ static ProfilerConfig parse_profiler_args(std::span<const char* const> args)
             std::println("                  [--option basket|rainbow] [--csv PATH]");
             std::println("                  [--peak-gflops X] [--l2-kb X] [--l3-kb X]");
             std::println("");
-            std::println("  --hw PRESET       hardware preset (required): intel-8358 | amd-3960x");
+            std::println("  --hw PRESET       hardware preset (required): amd-3960x");
             std::println("  --n N             grid points per dimension (default 15)");
             std::println("  --steps S         KSM-EI time steps (default 100)");
             std::println("  --tol T           KSM-EI convergence tolerance (default 1e-8)");
@@ -644,7 +637,6 @@ static ProfilerConfig parse_profiler_args(std::span<const char* const> args)
             std::println("  --l3-kb X         override per-core/per-CCX L3 size [KiB]");
             std::println("");
             std::println("  Preset cache sizes (single-core, per lscpu):");
-            std::println("    intel-8358  L2=4096 KiB  L3=16384 KiB  peak=86.1 GFLOP/s  (fma-loop AVX-512)");
             std::println("    amd-3960x   L2=512 KiB   L3=16384 KiB  peak=68.12 GFLOP/s (fma-loop AVX2+FMA)");
             std::exit(0);
         }
@@ -652,7 +644,7 @@ static ProfilerConfig parse_profiler_args(std::span<const char* const> args)
     }
     if (!hw_opt)
         throw std::invalid_argument(
-            "Missing required flag: --hw  (intel-8358 | amd-3960x)\n"
+            "Missing required flag: --hw  (amd-3960x)\n"
             "  Run ./profiler --help for usage.");
 
     pde_cfg.ei_steps = tol_given ? 100 : pde_cfg.temporal_steps;
