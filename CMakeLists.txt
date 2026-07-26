@@ -99,6 +99,224 @@ target_include_directories(calibrate-alpha PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(calibrate-alpha PRIVATE OpenMP::OpenMP_CXX)
 target_compile_options(calibrate-alpha PRIVATE -march=native -O3)
 
+# Regime GPU Place (the GPU map's predictor)
+#
+# Places points on the GPU (R_v, R_h) plane, evaluates the roofline gate that must pass
+# before either coordinate means anything, and regenerates docs/regime_gpu_phase0.md's
+# tables from whatever constants the calibration has recorded.
+#
+# Host-only and CUDA-free by design: it links neither a solver nor a timer, so every
+# number it prints is an a-priori coordinate. It builds and runs on a login node or a
+# laptop, which is what lets the predictions be published before the hardware is touched.
+add_executable(regime-gpu-place src/regime_gpu_place.cpp)
+target_link_libraries(regime-gpu-place PRIVATE caksm)
+target_compile_options(regime-gpu-place PRIVATE -O2)
+
+# GPU instruments (optional: built only where a CUDA toolkit is present)
+#
+# The GPU analogues of calibrate-alpha and stream. Everything they measure is an offline
+# machine constant, recorded into include/gpu_machine.hpp by hand, exactly as the CPU
+# reduction constants are: no binary writes a preset, so a calibration is always a
+# deliberate, reviewable edit.
+#
+#   calibrate-gpu-reduction  warp / block / grid rungs + kernel-launch latency (CUDA only)
+#   gpu-stream               achieved HBM and L2 roofs + the occupancy sweep (CUDA only)
+#   gpu-fma-loop             measured FP64/FP32 peak: the roof the gate divides by (CUDA only)
+#   calibrate-gpu-p2p        device-to-device and node rungs (CUDA + NCCL; MPI optional)
+#
+# The p2p target is separated so a missing NCCL cannot block Phase A: the first three
+# calibrate with nothing but a CUDA toolkit and a single device, which is the whole of what
+# the negative arm needs.
+#
+# Host compiler: use the CUDAHOSTCXX environment variable, not -DCMAKE_CUDA_HOST_COMPILER.
+# nvcc refuses host compilers newer than it knows about (CUDA 12.8 caps GCC at 14), and both
+# target machines default to a newer GCC than that. Passing -DCMAKE_CUDA_HOST_COMPILER on the
+# command line does not work, because CMake's compiler-identification step runs before that
+# cache variable is available and invokes bare `gcc` from PATH. CUDAHOSTCXX is read early
+# enough to apply:
+#
+#   CUDAHOSTCXX=/usr/bin/g++ cmake -B build \
+#       -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=86
+#
+# check_language() is a silent probe: it try_compiles a scratch CUDA project and reports only
+# NOTFOUND on failure, discarding the compiler's complaint. That is the right default, since a
+# machine with no toolkit must still configure the CPU targets, but it is useless when nvcc
+# plainly works from the shell and the probe still fails.
+#
+# The escape hatch is to pass -DCMAKE_CUDA_COMPILER=/path/to/nvcc explicitly. check_language()
+# short-circuits when the variable is already defined, so enable_language(CUDA) runs the real
+# detection and fails with the underlying error. Configure then aborts, taking the CPU targets
+# with it, which is deliberate: at that point the error message is what you want.
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)          # not 23: nvcc's host pass lags the C++ targets here
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+    # sm_70 = V100 (synge), sm_86 = RTX 3090 (puffin). Both are compiled so one build serves
+    # the controlled pair.
+    #
+    # Override per host with -DCMAKE_CUDA_ARCHITECTURES=70 on synge, 86 on puffin. The
+    # default is the pair, not a promise that both compile everywhere.
+    #
+    # Pin the toolkit to 12.8 on both. CUDA 13.x removed offline compilation for Volta, so
+    # synge has no choice and puffin meets synge rather than the reverse. The reason is
+    # control, not convenience: the two cards are a controlled pair differing only in FP64
+    # rate, and two different nvcc versions would put code generation and default FMA
+    # contraction into that comparison, both of which land on the measured FP64 peak the
+    # roofline gate divides by. See docs/regime_gpu_phase0.md.
+    #   cmake -B build -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc ...
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES 70 86)
+    endif()
+
+    # NVML (CUDA::nvml) backs the contention check in include/gpu_contention.cuh, which needs
+    # to enumerate resident PIDs and exclude our own: cudaMemGetInfo counts this process's
+    # ~265 MiB context and so flagged an idle 3090 as contended. CUDAToolkit links the stub at
+    # build and the driver's libnvidia-ml at runtime. Part of every CUDA install, so this does
+    # not add an external dependency the way NCCL does.
+    find_package(CUDAToolkit REQUIRED)
+
+    # The include path only, not the caksm interface target: these binaries must not see Eigen
+    # or the solver. They pick up include/gpu_contention.cuh and nothing else, which keeps them
+    # offline instruments in the same sense calibrate-alpha is.
+    add_executable(calibrate-gpu-reduction src/calibrate_gpu_reduction.cu)
+    set_target_properties(calibrate-gpu-reduction PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON)  # required for cooperative-groups grid.sync()
+    target_include_directories(calibrate-gpu-reduction PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(calibrate-gpu-reduction PRIVATE CUDA::nvml)
+    target_compile_options(calibrate-gpu-reduction PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    add_executable(gpu-stream src/gpu_stream.cu)
+    target_include_directories(gpu-stream PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(gpu-stream PRIVATE CUDA::nvml)
+    target_compile_options(gpu-stream PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # No -use_fast_math and no -ffast-math analogue: the FMA chain must stay exactly the
+    # dependent sequence written, or what is measured is whatever ptxas contracted it into.
+    add_executable(gpu-fma-loop src/gpu_fma_loop.cu)
+    target_include_directories(gpu-fma-loop PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(gpu-fma-loop PRIVATE CUDA::nvml)
+    target_compile_options(gpu-fma-loop PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Times baseline SpMV to test the vertical mechanism's precondition.
+    add_executable(regime-gpu-spmv src/regime_gpu_spmv.cu)
+    target_include_directories(regime-gpu-spmv PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(regime-gpu-spmv PRIVATE CUDA::nvml CUDA::cusparse)
+    target_compile_options(regime-gpu-spmv PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Timed MGS: the reduction-bound half of the cycle, and R_h's denominator.
+    # cuBLAS supplies the dot / axpy / norm kernels a real implementation calls.
+    add_executable(regime-gpu-mgs src/regime_gpu_mgs.cu)
+    target_include_directories(regime-gpu-mgs PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(regime-gpu-mgs PRIVATE CUDA::nvml CUDA::cublas)
+    target_compile_options(regime-gpu-mgs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Times s-step orthogonalization: CholQR runs on cuBLAS (Gram, triangular solve)
+    # and cuSOLVER (Cholesky). Compares against MGS to locate the horizontal crossover,
+    # and reports the Gram block's FP64 rate for the two-card contrast.
+    add_executable(regime-gpu-sstep src/regime_gpu_sstep.cu)
+    target_include_directories(regime-gpu-sstep PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(regime-gpu-sstep PRIVATE CUDA::nvml CUDA::cublas CUDA::cusolver)
+    target_compile_options(regime-gpu-sstep PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Split-K Gram kernel (include/gram_splitk.cuh) validated and timed against cuBLAS: the
+    # tall-skinny G = B^T B that cuBLAS runs latency-bound, parallelized over the k = n dimension
+    # so it reaches the ~s/4 roofline. Correctness vs a cuBLAS gemm, rate vs cuBLAS dsyrk.
+    add_executable(gram-splitk-test src/gram_splitk_test.cu)
+    target_include_directories(gram-splitk-test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(gram-splitk-test PRIVATE CUDA::nvml CUDA::cublas)
+    target_compile_options(gram-splitk-test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Tall-skinny triangular solve (include/trsm_tallskinny.cuh): the B <- B R^-1 step of CholQR,
+    # which cuBLAS runs compute-bound on this shape. One thread per row (independent solves) makes
+    # it memory-bound. Correctness vs cuBLAS dtrsm, rate against the DRAM roof.
+    add_executable(trsm-test src/trsm_test.cu)
+    target_include_directories(trsm-test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(trsm-test PRIVATE CUDA::nvml CUDA::cublas)
+    target_compile_options(trsm-test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # The interconnect rungs need a real collectives library: the reduction timed must be the
+    # one an implementation would actually call, or R_h's calibrated constant is the slope of
+    # code nobody runs.
+    #
+    # NCCL is required for this target, MPI is optional. Both of synge's V100s sit on one
+    # node, so ncclCommInitAll drives the DEVICE_P2P rung from a single process with no
+    # launcher, and that is the rung Phase 0 predicts carries the production operator into
+    # Upper-Right. MPI buys only the NODE rung, so a site without it loses the fabric
+    # measurement rather than the headline one.
+    #
+    # NAMES carries libnccl.so.2 explicitly: a pip-installed NCCL (nvidia-nccl-cu12) ships the
+    # versioned soname with no unversioned symlink, and plain `nccl` would miss it.
+    find_package(MPI COMPONENTS CXX)
+    find_library(NCCL_LIBRARY NAMES nccl libnccl.so.2
+            HINTS ENV NCCL_HOME ENV NCCL_ROOT ENV CUDA_HOME
+            PATH_SUFFIXES lib lib64 nvidia/nccl/lib)
+    find_path(NCCL_INCLUDE_DIR nccl.h
+            HINTS ENV NCCL_HOME ENV NCCL_ROOT ENV CUDA_HOME
+            PATH_SUFFIXES include nvidia/nccl/include)
+    if(NCCL_LIBRARY AND NCCL_INCLUDE_DIR)
+        add_executable(calibrate-gpu-p2p src/calibrate_gpu_p2p.cu)
+        target_include_directories(calibrate-gpu-p2p
+                PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(calibrate-gpu-p2p PRIVATE ${NCCL_LIBRARY} CUDA::nvml)
+        target_compile_options(calibrate-gpu-p2p PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+        # Two-GPU measured horizontal crossover: MGS vs s-step with real inter-GPU all-reduces.
+        # DEVICE_P2P rung only (single process, both local GPUs), so it only needs NCCL.
+        # cuBLAS and cuSOLVER supply the same kernels the single-GPU s-step harness calls.
+        add_executable(regime-gpu-sstep-2gpu src/regime_gpu_sstep_2gpu.cu)
+        target_include_directories(regime-gpu-sstep-2gpu
+                PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(regime-gpu-sstep-2gpu
+                PRIVATE ${NCCL_LIBRARY} CUDA::nvml CUDA::cublas CUDA::cusolver)
+        target_compile_options(regime-gpu-sstep-2gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+        if(MPI_CXX_FOUND)
+            target_link_libraries(calibrate-gpu-p2p PRIVATE MPI::MPI_CXX)
+            target_compile_definitions(calibrate-gpu-p2p PRIVATE CAKSM_HAVE_MPI)
+            message(STATUS "calibrate-gpu-p2p: NCCL + MPI, both DEVICE_P2P and NODE rungs")
+        else()
+            message(STATUS
+                "calibrate-gpu-p2p: NCCL only, no MPI. The DEVICE_P2P rung is reachable "
+                "(single process, both local GPUs), the NODE rung is not. reduction_calibrated "
+                "must stay false until the fabric rung lands.")
+        endif()
+    else()
+        message(STATUS
+            "calibrate-gpu-p2p skipped: NCCL not found. Set NCCL_HOME to a directory holding "
+            "include/nccl.h and lib/libnccl.so*. Both interconnect rungs stay uncalibrated, so "
+            "reduction_calibrated must remain false and no horizontal verdict may be published.")
+    endif()
+else()
+    # Distinguish "no toolkit" from "toolkit present but the compiler check failed": they need
+    # different fixes and the bare CMake message conflates them. nvcc pins a maximum supported
+    # host GCC, and both synge and puffin ship a newer default compiler than their toolkit
+    # accepts, so check_language()'s try_compile fails with nvcc plainly on PATH.
+    find_program(CAKSM_NVCC nvcc)
+    if(CAKSM_NVCC)
+        message(WARNING
+            "GPU instruments skipped, but nvcc is on PATH at ${CAKSM_NVCC}.\n"
+            "check_language(CUDA) compiled nothing and discarded the reason. The likely cause "
+            "is that nvcc rejected this build's default host compiler "
+            "(${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}) as too new: CUDA 12.8 "
+            "caps GCC at 14, and CMake's compiler-identification step invokes bare `gcc` from "
+            "PATH regardless of -DCMAKE_CUDA_HOST_COMPILER.\n"
+            "Set the environment variable instead, which is read early enough to apply, and "
+            "force the compiler so the silent probe is bypassed and any remaining failure is "
+            "reported in full:\n"
+            "  CUDAHOSTCXX=/usr/bin/g++ cmake -B build -DCMAKE_CUDA_COMPILER=${CAKSM_NVCC} "
+            "-DCMAKE_CUDA_ARCHITECTURES=<86 for RTX 3090, 70 for V100>\n"
+            "The .cu sources are C++17, so an older host compiler costs nothing; only the "
+            "C++23 targets need a recent GCC, and they keep using CMAKE_CXX_COMPILER "
+            "(${CMAKE_CXX_COMPILER}).")
+    else()
+        message(STATUS "GPU instruments skipped: no CUDA compiler found. "
+                       "regime-gpu-place still builds; it is host-only by design.")
+    endif()
+endif()
+
 # FMA Loop (peak FP64 throughput benchmark)
 # Requires AVX2+FMA (AMD/Intel Haswell+).
 # Uses -march=native so the compiler selects the right ISA path automatically.
@@ -140,6 +358,7 @@ add_executable(regime_tests
         tests/test_regime_krylov.cpp
         tests/test_regime_nonnormal.cpp
         tests/test_regime_kernels.cpp
+        tests/test_gpu_regime.cpp
 )
 target_link_libraries(regime_tests PRIVATE caksm Catch2::Catch2WithMain)
 target_compile_options(regime_tests PRIVATE -O2)
