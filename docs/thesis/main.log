@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  24 JUL 2026 19:16
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  26 JUL 2026 21:25
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1397,7 +1397,7 @@ LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <14.4> not available
 
 
 [3]
-Underfull \hbox (badness 10000) in paragraph at lines 73--89
+Underfull \hbox (badness 10000) in paragraph at lines 73--94
 
  []
 
@@ -1409,7 +1409,7 @@ Underfull \hbox (badness 10000) in paragraph at lines 73--89
 ]
 
 LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <20.74> not available
-(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 93.
+(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 98.
 
 (./main.toc)
 \tf@toc=\write6
@@ -1426,10 +1426,10 @@ LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <20.74> not available
 [7]
 
 LaTeX Font Warning: Font shape `T1/cmss/m/sc' in size <12> not available
-(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 266.
+(Font)              Font shape `T1/cmr/m/sc' tried instead on input line 271.
 
 
-Underfull \hbox (badness 2600) in paragraph at lines 278--279
+Underfull \hbox (badness 2600) in paragraph at lines 283--284
 []|\T1/cmr/m/n/10.95 matrix pow-ers / cache
  []
 
@@ -1440,147 +1440,146 @@ Underfull \hbox (badness 2600) in paragraph at lines 278--279
 [9]
 
 [10]
-<benchmark_plots.png, id=267, 803.1606pt x 658.6206pt>
+<benchmark_plots.png, id=274, 803.1606pt x 658.6206pt>
 File: benchmark_plots.png Graphic file (type png)
 <use benchmark_plots.png>
-Package pdftex.def Info: benchmark_plots.png  used on input line 311.
-(pdftex.def)             Requested size: 483.69687pt x 396.64267pt.
+Package pdftex.def Info: benchmark_plots.png  used on input line 318.
+(pdftex.def)             Requested size: 338.58632pt x 277.64383pt.
 
 
 [11 <./benchmark_plots.png>]
-<cache_roofline.png, id=284, 947.7006pt x 369.5406pt>
+<cache_roofline.png, id=291, 947.7006pt x 369.5406pt>
 File: cache_roofline.png Graphic file (type png)
 <use cache_roofline.png>
-Package pdftex.def Info: cache_roofline.png  used on input line 347.
+Package pdftex.def Info: cache_roofline.png  used on input line 354.
 (pdftex.def)             Requested size: 435.32422pt x 169.74826pt.
 
 
-[12 <./cache_roofline.png>]
-<scaling_strong.png, id=302, 947.7006pt x 383.9946pt>
+[12]
+
+[13 <./cache_roofline.png>]
+<scaling_strong.png, id=318, 947.7006pt x 383.9946pt>
 File: scaling_strong.png Graphic file (type png)
 <use scaling_strong.png>
-Package pdftex.def Info: scaling_strong.png  used on input line 390.
-(pdftex.def)             Requested size: 483.69687pt x 195.98698pt.
-
-
-[13]
-<scaling_weak.png, id=312, 622.4856pt x 405.6756pt>
+Package pdftex.def Info: scaling_strong.png  used on input line 397.
+(pdftex.def)             Requested size: 435.32422pt x 176.3877pt.
+<scaling_weak.png, id=319, 622.4856pt x 405.6756pt>
 File: scaling_weak.png Graphic file (type png)
 <use scaling_weak.png>
-Package pdftex.def Info: scaling_weak.png  used on input line 398.
-(pdftex.def)             Requested size: 483.69687pt x 315.231pt.
+Package pdftex.def Info: scaling_weak.png  used on input line 405.
+(pdftex.def)             Requested size: 290.22107pt x 189.1386pt.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 404.
+(hyperref)                removing `math shift' on input line 411.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 404.
+(hyperref)                removing `math shift' on input line 411.
 
 
 
 [14 <./scaling_strong.png> <./scaling_weak.png>]
-<scaling_mn.png, id=324, 586.3506pt x 383.9946pt>
+<scaling_mn.png, id=331, 586.3506pt x 383.9946pt>
 File: scaling_mn.png Graphic file (type png)
 <use scaling_mn.png>
-Package pdftex.def Info: scaling_mn.png  used on input line 410.
-(pdftex.def)             Requested size: 411.14528pt x 269.2514pt.
+Package pdftex.def Info: scaling_mn.png  used on input line 417.
+(pdftex.def)             Requested size: 386.95897pt x 253.41377pt.
 
-Underfull \hbox (badness 3449) in paragraph at lines 431--431
+Underfull \hbox (badness 3449) in paragraph at lines 438--438
 []|\T1/cmr/m/n/10.95 cache-line blocks dealt round-
  []
 
-<scaling_locality.png, id=328, 947.7006pt x 383.9946pt>
-File: scaling_locality.png Graphic file (type png)
-<use scaling_locality.png>
-Package pdftex.def Info: scaling_locality.png  used on input line 439.
-(pdftex.def)             Requested size: 459.51054pt x 186.18442pt.
 
 
 [15 <./scaling_mn.png>]
+<scaling_locality.png, id=344, 947.7006pt x 383.9946pt>
+File: scaling_locality.png Graphic file (type png)
+<use scaling_locality.png>
+Package pdftex.def Info: scaling_locality.png  used on input line 446.
+(pdftex.def)             Requested size: 459.51054pt x 186.18442pt.
+
 
 [16 <./scaling_locality.png>]
-Underfull \hbox (badness 6575) in paragraph at lines 472--472
+Underfull \hbox (badness 6575) in paragraph at lines 479--479
 []|\T1/cmr/bx/n/10.95 vertical\T1/cmr/m/n/10.95 : matrix-powers
- []
-
-
-Underfull \hbox (badness 1303) in paragraph at lines 503--503
-[]|\T1/cmr/m/n/10.95 measured $\OML/cmm/m/it/10.95 m$ \T1/cmr/m/n/10.95 obeys t
-he Hochbruck--Lubich spec-tral
- []
-
-
-Underfull \hbox (badness 1082) in paragraph at lines 507--507
-[]|\T1/cmr/m/n/10.95 worst-case block count over the phys-i-cal en-sem-ble
  []
 
 
 
 [17]
-<regime_conditioning.png, id=364, 1092.2406pt x 355.0866pt>
+Underfull \hbox (badness 1303) in paragraph at lines 510--510
+[]|\T1/cmr/m/n/10.95 measured $\OML/cmm/m/it/10.95 m$ \T1/cmr/m/n/10.95 obeys t
+he Hochbruck--Lubich spec-tral
+ []
+
+
+Underfull \hbox (badness 1082) in paragraph at lines 514--514
+[]|\T1/cmr/m/n/10.95 worst-case block count over the phys-i-cal en-sem-ble
+ []
+
+<regime_conditioning.png, id=372, 1092.2406pt x 355.0866pt>
 File: regime_conditioning.png Graphic file (type png)
 <use regime_conditioning.png>
-Package pdftex.def Info: regime_conditioning.png  used on input line 521.
+Package pdftex.def Info: regime_conditioning.png  used on input line 528.
 (pdftex.def)             Requested size: 459.51054pt x 149.38458pt.
 
 
-[18 <./regime_conditioning.png>]
-<regime_confound.png, id=375, 875.4306pt x 355.0866pt>
+[18]
+<regime_confound.png, id=383, 875.4306pt x 355.0866pt>
 File: regime_confound.png Graphic file (type png)
 <use regime_confound.png>
-Package pdftex.def Info: regime_confound.png  used on input line 536.
+Package pdftex.def Info: regime_confound.png  used on input line 543.
 (pdftex.def)             Requested size: 459.51054pt x 186.38531pt.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 541.
+(hyperref)                removing `math shift' on input line 548.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 541.
+(hyperref)                removing `math shift' on input line 548.
 
 
 
-[19 <./regime_confound.png>]
-<regime_nonnormality.png, id=391, 550.2156pt x 369.5406pt>
+[19 <./regime_conditioning.png> <./regime_confound.png>]
+<regime_nonnormality.png, id=399, 550.2156pt x 369.5406pt>
 File: regime_nonnormality.png Graphic file (type png)
 <use regime_nonnormality.png>
-Package pdftex.def Info: regime_nonnormality.png  used on input line 574.
+Package pdftex.def Info: regime_nonnormality.png  used on input line 581.
 (pdftex.def)             Requested size: 459.51054pt x 308.63014pt.
 
 
 [20]
 
 [21 <./regime_nonnormality.png>]
-<regime_dsweep.png, id=414, 947.7006pt x 362.3136pt>
+<regime_dsweep.png, id=423, 947.7006pt x 362.3136pt>
 File: regime_dsweep.png Graphic file (type png)
 <use regime_dsweep.png>
-Package pdftex.def Info: regime_dsweep.png  used on input line 636.
+Package pdftex.def Info: regime_dsweep.png  used on input line 643.
 (pdftex.def)             Requested size: 459.51054pt x 175.67212pt.
 
 
 [22]
 
 [23 <./regime_dsweep.png>]
-<scaling_reduction.png, id=432, 939.51pt x 375.804pt>
+<scaling_reduction.png, id=441, 939.51pt x 375.804pt>
 File: scaling_reduction.png Graphic file (type png)
 <use scaling_reduction.png>
-Package pdftex.def Info: scaling_reduction.png  used on input line 679.
+Package pdftex.def Info: scaling_reduction.png  used on input line 686.
 (pdftex.def)             Requested size: 435.32422pt x 174.12775pt.
 
 
 [24 <./scaling_reduction.png>]
-<regime_sweep.png, id=445, 615.37904pt x 413.02306pt>
+<regime_sweep.png, id=454, 615.37904pt x 413.02306pt>
 File: regime_sweep.png Graphic file (type png)
 <use regime_sweep.png>
-Package pdftex.def Info: regime_sweep.png  used on input line 713.
-(pdftex.def)             Requested size: 459.51054pt x 308.40524pt.
-<regime_sweep_mechanism.png, id=447, 947.82104pt x 384.11505pt>
+Package pdftex.def Info: regime_sweep.png  used on input line 720.
+(pdftex.def)             Requested size: 386.95897pt x 259.71432pt.
+<regime_sweep_mechanism.png, id=456, 947.82104pt x 384.11505pt>
 File: regime_sweep_mechanism.png Graphic file (type png)
 <use regime_sweep_mechanism.png>
-Package pdftex.def Info: regime_sweep_mechanism.png  used on input line 723.
+Package pdftex.def Info: regime_sweep_mechanism.png  used on input line 730.
 (pdftex.def)             Requested size: 459.51054pt x 186.21938pt.
 
 
@@ -1588,25 +1587,25 @@ Package pdftex.def Info: regime_sweep_mechanism.png  used on input line 723.
 
 [26{/usr/local/texlive/2025/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.en
 c} <./regime_sweep_mechanism.png>]
-<regime_swidth.png, id=468, 911.68605pt x 369.66106pt>
+<regime_swidth.png, id=477, 911.68605pt x 369.66106pt>
 File: regime_swidth.png Graphic file (type png)
 <use regime_swidth.png>
-Package pdftex.def Info: regime_swidth.png  used on input line 765.
+Package pdftex.def Info: regime_swidth.png  used on input line 772.
 (pdftex.def)             Requested size: 459.51054pt x 186.31918pt.
 
 
 [27 <./regime_swidth.png>]
-<regime_trajectory.png, id=482, 600.8046pt x 485.1726pt>
+<regime_trajectory.png, id=491, 600.8046pt x 485.1726pt>
 File: regime_trajectory.png Graphic file (type png)
 <use regime_trajectory.png>
-Package pdftex.def Info: regime_trajectory.png  used on input line 799.
+Package pdftex.def Info: regime_trajectory.png  used on input line 806.
 (pdftex.def)             Requested size: 459.51054pt x 371.0818pt.
 
 
 [28 <./regime_trajectory.png>]
 
 [29]
-Underfull \hbox (badness 10000) in paragraph at lines 854--855
+Underfull \hbox (badness 10000) in paragraph at lines 861--862
 []|\T1/cmr/m/n/10.95 expensive; car-ries
  []
 
@@ -1614,13 +1613,33 @@ Underfull \hbox (badness 10000) in paragraph at lines 854--855
 
 [30]
 
-[31] (./main.bbl
+[31]
 
-[32
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 920.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 920.
+
+
+Overfull \hbox (6.14616pt too wide) in paragraph at lines 929--937
+ [][] 
+ []
+
+
+
+[32]
+
+[33]
+
+[34] (./main.bbl
+
+[35
 
 ])
 
-[33] 
+[36] 
 enddocument/afterlastpage (AED): lastpage setting LastPage.
 (./main.aux)
  ***********
@@ -1635,11 +1654,11 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: D41D8CD98F00B204E9800998ECF8427E;0.
  ) 
 Here is how much of TeX's memory you used:
- 36721 strings out of 473190
- 711452 string characters out of 5715801
- 1359641 words of memory out of 5000000
- 59182 multiletter control sequences out of 15000+600000
- 597062 words of font info for 139 fonts, out of 8000000 for 9000
+ 36759 strings out of 473190
+ 711989 string characters out of 5715801
+ 1358641 words of memory out of 5000000
+ 59204 multiletter control sequences out of 15000+600000
+ 598274 words of font info for 143 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  132i,18n,134p,10942b,704s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
@@ -1658,34 +1677,35 @@ exlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/local/tex
 live/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/local/texliv
 e/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive/2
 025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/texlive/2025
-/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2025/
-texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/texlive/2025/te
-xmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2025/texm
-f-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/local/texlive/2025/texmf-
-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/local/texlive/2025/te
-xmf-dist/fonts/type1/public/cm-super/sfbx0600.pfb></usr/local/texlive/2025/texm
-f-dist/fonts/type1/public/cm-super/sfbx1000.pfb></usr/local/texlive/2025/texmf-
-dist/fonts/type1/public/cm-super/sfbx1095.pfb></usr/local/texlive/2025/texmf-di
-st/fonts/type1/public/cm-super/sfbx1728.pfb></usr/local/texlive/2025/texmf-dist
-/fonts/type1/public/cm-super/sfcc1095.pfb></usr/local/texlive/2025/texmf-dist/f
-onts/type1/public/cm-super/sfcc1200.pfb></usr/local/texlive/2025/texmf-dist/fon
-ts/type1/public/cm-super/sfcc1440.pfb></usr/local/texlive/2025/texmf-dist/fonts
-/type1/public/cm-super/sfcc2074.pfb></usr/local/texlive/2025/texmf-dist/fonts/t
-ype1/public/cm-super/sfit1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/typ
-e1/public/cm-super/sfrm0800.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1
-/public/cm-super/sfrm1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/p
-ublic/cm-super/sfrm1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/pub
-lic/cm-super/sfrm1440.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/publi
-c/cm-super/sfrm1728.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/
-cm-super/sfrm2074.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm
--super/sfti1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-s
-uper/sftt1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-sup
-er/sftt1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-super
-/sftt1440.pfb>
-Output written on main.pdf (33 pages, 4909373 bytes).
+/texmf-dist/fonts/type1/public/amsfonts/cm/cmss8.pfb></usr/local/texlive/2025/t
+exmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2025/te
+xmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/texlive/2025/texm
+f-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2025/texmf-
+dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/local/texlive/2025/texmf-di
+st/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/local/texlive/2025/texm
+f-dist/fonts/type1/public/cm-super/sfbx0600.pfb></usr/local/texlive/2025/texmf-
+dist/fonts/type1/public/cm-super/sfbx1000.pfb></usr/local/texlive/2025/texmf-di
+st/fonts/type1/public/cm-super/sfbx1095.pfb></usr/local/texlive/2025/texmf-dist
+/fonts/type1/public/cm-super/sfbx1728.pfb></usr/local/texlive/2025/texmf-dist/f
+onts/type1/public/cm-super/sfcc1095.pfb></usr/local/texlive/2025/texmf-dist/fon
+ts/type1/public/cm-super/sfcc1200.pfb></usr/local/texlive/2025/texmf-dist/fonts
+/type1/public/cm-super/sfcc1440.pfb></usr/local/texlive/2025/texmf-dist/fonts/t
+ype1/public/cm-super/sfcc2074.pfb></usr/local/texlive/2025/texmf-dist/fonts/typ
+e1/public/cm-super/sfit1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1
+/public/cm-super/sfrm0800.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/p
+ublic/cm-super/sfrm1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/pub
+lic/cm-super/sfrm1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/publi
+c/cm-super/sfrm1440.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/
+cm-super/sfrm1728.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm
+-super/sfrm2074.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-s
+uper/sfti1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-sup
+er/sftt1000.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-super
+/sftt1095.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/cm-super/s
+ftt1440.pfb>
+Output written on main.pdf (36 pages, 4936606 bytes).
 PDF statistics:
- 820 PDF objects out of 1000 (max. 8388607)
- 664 compressed objects within 7 object streams
- 178 named destinations out of 1000 (max. 500000)
- 330 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 868 PDF objects out of 1000 (max. 8388607)
+ 706 compressed objects within 8 object streams
+ 191 named destinations out of 1000 (max. 500000)
+ 354 words of extra memory for PDF output out of 10000 (max. 10000000)
 

@@ -83,6 +83,11 @@ synchronization-bound. Cache-blocked matrix powers trades halo arithmetic for DR
 at a loss, a kernel ceiling that leaves the vertical boundary untested rather than refuted.
 And the production operator's trajectory under grid refinement lands squarely in
 vertical-only territory: matrix-powers tiling is the mechanism the application needs.
+Finally, the map's portability is tested on a GPU memory system that differs in kind:
+recomputed---not refitted---coordinates place the production operator in an upper-right
+corner the single-socket CPU could not reach, and a roofline gate correctly predicts that
+the $s$-step arm's own orthogonalization kernel pays on a datacenter GPU while turning
+compute-bound on a consumer one.
 \\
 \newline
 \textbf{Keywords:} Krylov subspace methods, communication-avoiding algorithms, matrix exponential, option pricing, roofline model, $s$-step methods, performance modeling
@@ -104,7 +109,7 @@ Two artifacts support that answer. A \textbf{benchmark pricer} in C++23 implemen
 
 One design rule keeps the map non-circular, and everything else depends on it: \emph{coordinates are predictors}, computed before a run from the problem size, the sparsity pattern, the spectrum, and the machine constants; \emph{outcomes} (wall-clock, orthogonality loss, achieved bytes) test the boundaries and never enter a coordinate. A coordinate that ingested a measurement could always be tuned until the crossover landed at 1, and the map would prove nothing.
 
-The thesis proceeds as follows. \Cref{sec:model} states the pricing problem and its discretization. \Cref{sec:ksm} presents the Krylov exponential integrator, its cost structure, and the CA reformulations that target it. \Cref{sec:platform} describes the experimental platform and measurement methodology. \Cref{sec:benchmark} reproduces the Niesen--Wright benchmark as a control. \Cref{sec:profile} profiles the solver and places its kernels on a cache-aware roofline. \Cref{sec:scaling} presents the OpenMP scaling study that motivates the two CA mechanisms. \Cref{sec:regime} develops the regime map and its numerical and measured results. \Cref{sec:gpu} derives what recomputing the coordinates for a GPU memory system requires, and why the recomputation is structural rather than a constant swap. \Cref{sec:conclusion} concludes.
+The thesis proceeds as follows. \Cref{sec:model} states the pricing problem and its discretization. \Cref{sec:ksm} presents the Krylov exponential integrator, its cost structure, and the CA reformulations that target it. \Cref{sec:platform} describes the experimental platform and measurement methodology. \Cref{sec:benchmark} reproduces the Niesen--Wright benchmark as a control. \Cref{sec:profile} profiles the solver and places its kernels on a cache-aware roofline. \Cref{sec:scaling} presents the OpenMP scaling study that motivates the two CA mechanisms. \Cref{sec:regime} develops the regime map and its numerical and measured results. \Cref{sec:gpu} recomputes the coordinates for a GPU memory system---a structural change rather than a constant swap---and tests the map's portability claim by measurement on a controlled pair of GPUs. \Cref{sec:conclusion} concludes.
 
 \section{The pricing problem and its discretization}\label{sec:model}
 
@@ -294,7 +299,9 @@ An alternative not pursued here is the rational Krylov subspace \cite{berljafa-g
 
 \section{Experimental platform and methodology}\label{sec:platform}
 
-Every result in this thesis was gathered on a single bare-metal workstation (``puffin''): an AMD Ryzen Threadripper 3960X, 24 cores in a single socket and a single NUMA node, organized as 8 \emph{core complexes} (CCX)---clusters of 3 cores that share one 16\,MiB slice of L3 cache (128\,MiB total). Per-core caches are 32\,KiB L1d and 512\,KiB L2, nominal maximum clock is 3.8\,GHz, and main memory is 4-channel DDR4-3200 with a theoretical 102.4\,GB/s roof. Each core also exposes a second hardware thread via simultaneous multithreading (SMT). The machine also hosts an NVIDIA RTX~3090 (24\,GB). The machine's derived constants live in a single header (\texttt{include/machine.hpp}) under the key \texttt{amd-3960x}, and every predicted coordinate in the regime study is computed from them.
+Every CPU result in this thesis was gathered on a single bare-metal workstation (``puffin''): an AMD Ryzen Threadripper 3960X, 24 cores in a single socket and a single NUMA node, organized as 8 \emph{core complexes} (CCX)---clusters of 3 cores that share one 16\,MiB slice of L3 cache (128\,MiB total). Per-core caches are 32\,KiB L1d and 512\,KiB L2, nominal maximum clock is 3.8\,GHz, and main memory is 4-channel DDR4-3200 with a theoretical 102.4\,GB/s roof. Each core also exposes a second hardware thread via simultaneous multithreading (SMT). The machine also hosts an NVIDIA RTX~3090 (24\,GB), which is one half of the GPU pair below. The machine's derived constants live in a single header (\texttt{include/machine.hpp}) under the key \texttt{amd-3960x}, and every predicted coordinate in the regime study is computed from them.
+
+\paragraph{The GPU platform.} The GPU study of \Cref{sec:gpu} adds a second, deliberately controlled machine, ``synge'': a two-node cluster carrying a pair of NVIDIA Tesla V100-PCIE-16GB cards per node (four in total), the two cards within a node joined by PCIe across a cross-socket hop with no NVLink, and the two nodes by a 100\,Gb/s Omni-Path fabric (over which the NCCL collective library selects its InfiniBand-verbs transport). Synge's V100 is the datacenter half of a near-controlled pair whose consumer half is puffin's RTX~3090: the two cards share a 6\,MB L2 and a ${\sim}820$\,GB/s achieved bandwidth class and differ almost only in double-precision throughput---an $11\times$ gap that the two-card experiments turn into an instrument. Their constants live in a separate header (\texttt{include/gpu\_machine.hpp}), typed distinctly from the CPU constants so that a CPU value reaching a GPU coordinate is a compile error rather than a plausible wrong number, and are calibrated per card on an idle device rather than read from datasheets.
 
 \paragraph{Workstation selection.} A cloud arm was seriously considered, and its attractions are real: cloud providers offer server-grade hardware at reasonable hourly cost where puffin is commodity desktop silicon, better hardware would open larger problem configurations, and in a commercial setting these services are exactly where a desk would run its own research. It was dropped anyway, on two grounds. Contention: timing variance that looks internally consistent is simultaneously evidence of memory-bound behavior and of noise from co-tenants, and from inside the guest the two are not separable---so economic feasibility comes bundled with uninterpretable measurements. Topology, the sharper objection: the hypervisor reports a socket and a private last-level cache slice \emph{per vCPU}, a fiction of the virtualization rather than the silicon. Both coordinates of the regime map are functions of real cache geometry (one is a cache-capacity ratio, the other is set by how many cache-domain boundaries a reduction tree crosses), so neither is knowable on an invented topology, and the map cannot be drawn there at all. The conclusion is that this study needs not merely competitive hardware but \emph{fully controlled} hardware; the same reasoning applies on shared clusters, where other users' large jobs contend for the same memory system. Bare metal removes the hypervisor but not OS scheduling noise, so every timed quantity below is reported as a median with an inter-quartile range over repeated trials; on a boost-enabled chip timing noise is right-skewed, and the median reports \emph{sustainable} throughput where the minimum would report an unsustainable boost spike.
 
@@ -308,7 +315,7 @@ The benchmark reproduces Figure~1 of Niesen and Wright \cite{niesen-wright-2012}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\textwidth]{benchmark_plots.png}
+\includegraphics[width=0.7\textwidth]{benchmark_plots.png}
 \caption{ODE error vs.\ CPU time for the five methods, across both payoffs and grid sizes, reproducing Niesen--Wright Figure~1. The Krylov integrator dominates in the ${\sim}10^{-4}$ accuracy band; Crank--Nicolson's non-monotone stiff-mode ringing ($R(-\infty) = -1$) is visible as predicted.}
 \label{fig:benchmark}
 \end{figure}
@@ -387,7 +394,7 @@ thread first-touch exactly the row partition it will later compute on. The two a
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\textwidth]{scaling_strong.png}
+\includegraphics[width=0.9\textwidth]{scaling_strong.png}
 \caption{Per-kernel strong scaling at $n=31$ and $n=61$, both initialization arms. SpMV shows a plateau at $n=31$ and a superlinear transition at $n=61$; Gram--Schmidt shows the
 synchronization staircase.}
 \label{fig:strong}
@@ -395,7 +402,7 @@ synchronization staircase.}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\textwidth]{scaling_weak.png}
+\includegraphics[width=0.6\textwidth]{scaling_weak.png}
 \caption{Per-kernel weak-scaling efficiency $T(1)/T(P)$ with $n(P) = n_1 P^{1/3}$ rounded
 odd, cache-tier crossings annotated.}
 \label{fig:weak}
@@ -407,7 +414,7 @@ The harness freezes $m$ so that the scaling curves measure hardware; the genuine
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.85\textwidth]{scaling_mn.png}
+\includegraphics[width=0.8\textwidth]{scaling_mn.png}
 \caption{The $m(n)$ Krylov-growth curve, measured with the convergence check enabled and quarantined from the scaling instrument, which pins $m=8$.}
 \label{fig:mn}
 \end{figure}
@@ -710,7 +717,7 @@ scattered & L3 & 0.035--2.69 & 1.00$\times$ (falls back to naive) & 4$\times$ \\
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\textwidth]{regime_sweep.png}
+\includegraphics[width=0.8\textwidth]{regime_sweep.png}
 \caption{The vertical sweep: measured speedup of cache-blocked matrix powers across $\Rv$. The projected curve is an explicit model claim, drawn dashed, never presented as
 data.}
 \label{fig:sweep}
@@ -812,23 +819,23 @@ That 25$\times$ is not exotic---any machine with multiple NUMA nodes or a multi-
 
 The map's central claim is that $\Rv$ and $\Rh$ are \emph{dimensionless}---ratios, not times---so a reader can place their own operator and machine on the map. Within this thesis the claim is tested on one memory system only: puffin is one socket, one NUMA node, one cache hierarchy. A GPU memory system differs in kind, not in constants, so recomputing the coordinates for one is not a port: it is a genuine test of the dimensionless framing, and both outcomes are informative. Either coordinates recomputed from GPU constants predict a measured GPU crossover at $\theta_v = \theta_h = 1$, or they do not---in which case the map is scoped to CPU-like memory systems and the failure names the missing term. This section derives the structural content of that recomputation from the CPU study's own results.
 
-Two GPU classes make a near-controlled pair, and the pair is a sharper instrument than either card alone (\Cref{tab:gpus}): a consumer card and a datacenter card whose memory systems are nearly identical---same 6\,MB L2, same bandwidth class---while the double-precision (FP64) rate differs by ${\sim}12\times$. The pair holds the map's vertical axis roughly fixed and varies only the compute roof.
+Two GPU classes make a near-controlled pair, and the pair is a sharper instrument than either card alone (\Cref{tab:gpus}): a consumer card and a datacenter card whose memory systems are nearly identical---same 6\,MB L2, same bandwidth class---while the double-precision (FP64) rate differs by ${\sim}11\times$. The pair holds the map's vertical axis roughly fixed and varies only the compute roof.
 
 \begin{table}[H]
 \centering
-\caption{The two-GPU controlled pair.}
+\caption{The two-GPU controlled pair, calibrated on idle devices. Memory bandwidth is achieved (STREAM); the FP64 ridge is peak FP64 over achieved bandwidth. The pair holds L2 and bandwidth nearly fixed and moves the compute roof by ${\sim}11\times$.}
 \label{tab:gpus}
 \begin{tabular}{@{}lcccc@{}}
 \toprule
- & \textbf{L2} & \textbf{Memory BW} & \textbf{FP64 peak} & \textbf{FP64:FP32} \\
+ & \textbf{L2} & \textbf{Memory BW} & \textbf{FP64 peak} & \textbf{FP64 ridge} \\
 \midrule
-RTX 3090 (consumer, puffin)      & 6\,MB & ${\sim}936$\,GB/s & ${\sim}0.56$\,TFLOP/s & 1/64 \\
-Tesla V100 (datacenter, synge)   & 6\,MB & ${\sim}900$\,GB/s & ${\sim}7.0$\,TFLOP/s  & 1/2  \\
+RTX 3090 (consumer, puffin)      & 6\,MB & 821\,GB/s & 0.570\,TFLOP/s & 0.69\,FLOP/B \\
+Tesla V100 (datacenter, synge)   & 6\,MB & 818\,GB/s & 6.375\,TFLOP/s & 7.79\,FLOP/B \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-That lever exposes a precondition the map has so far carried implicitly. Both axes are \emph{communication} axes, presupposing the kernel is on the memory side of the roofline; a hard-throttled FP64 rate does not move a point around the map, it throws the point \emph{off} the map into compute-bound territory neither coordinate charts. Placement must therefore be gated by an explicit roofline check---$AI \cdot BW_{\text{achieved}} < \text{FLOP/s}_{\text{peak}}$ in the relevant precision---evaluated before the map is read. The gate turns the two-card pair into a designed experiment: from datasheet constants alone it should pass on the datacenter card (FP64 memory-bound) and fail on the consumer card (FP64 compute-bound), so the consumer card is a negative arm rather than a hazard. A map that can state where it stops applying is a stronger form of the dimensionless claim than any single-machine crossover.
+That lever exposes a precondition the map has so far carried implicitly. Both axes are \emph{communication} axes, presupposing the kernel is on the memory side of the roofline; a hard-throttled FP64 rate does not move a point around the map, it throws the point \emph{off} the map into compute-bound territory neither coordinate charts. Placement must therefore be gated by an explicit roofline check---$AI \cdot BW_{\text{achieved}} < \text{FLOP/s}_{\text{peak}}$ in the relevant precision---evaluated before the map is read. The gate turns the two-card pair into a designed experiment: from the cards' constants alone it should pass on the datacenter card (FP64 memory-bound) and fail on the consumer card (FP64 compute-bound), so the consumer card is a negative arm rather than a hazard. A map that can state where it stops applying is a stronger form of the dimensionless claim than any single-machine crossover.
 
 \subsection{What transfers, and what breaks}
 
@@ -858,6 +865,81 @@ Node   & network fabric                  & inter-node & dominant \\
 \end{tabular}
 \end{table}
 
+\subsection{The decoupled invariant}\label{sec:gpu-invariant}
+
+On the CPU the product $\Rv \cdot \Rh$ is independent of the core count $P$ by \emph{cancellation}: $\Rv \sim 1/P$ and $\Rh \sim P\log P$ pull in opposite directions, so $P$ slides a point along the map's anti-diagonal but can never lift it off---which is exactly what made the upper-right corner unreachable on one socket. Recomputing the coordinates for a GPU replaces that cancellation with something stronger. Take $P$ to be the number of streaming multiprocessors (SM) engaged, the unit that carries its own FP64 pipelines and so the GPU analogue of a core. Neither coordinate then depends on it: $\Rv$'s denominator is the single fixed L2, so engaging more SMs adds no cache, and $\Rh$'s denominator is the device-wide bandwidth roof, flat once saturated. The axes are not cancelling but \emph{decoupled}---the grid size $N$ moves $\Rv$ alone, the reduction tier moves $\Rh$ alone, and $P$ moves neither. In the memory-bound regime the roofline gate certifies, the modeled cycle time collapses to bytes over bandwidth and the product takes the closed form
+\begin{equation}
+\Rv \cdot \Rh = g(m)\, R(m)\, \Lambda, \qquad \Lambda = \frac{\tau\,\text{BW}}{C},
+\label{eq:gpu-invariant}
+\end{equation}
+in which $g(m)$ (a byte ratio) and $R(m)$ (the MGS reduction count) are the machine-independent method terms, and $\Lambda$---the only place the machine enters---is dimensionless and reads as how many cache-fulls of data the memory system delivers during one reduction. Two consequences follow at once. First, the upper-right window (both $\Rv \ge 1$ and $\Rh \ge 1$ at a footprint under the 16\,GB device memory) is non-empty exactly when this product exceeds 1, and its width in $N$ \emph{is} the product: the two questions of whether a corner exists and how wide it is collapse to one. Second, the 16\,GB ceiling never binds---it is out by two orders of magnitude at every reachable tier---so the constraint that closes the window from above is $\Rh$, the reduction cost, not capacity. Setting the product to 1 and solving for the reduction latency gives the recomputation's single sharpest prediction: a reduction costing more than $\tau^{\star} \approx 0.9\,\mu$s carries the production operator into the corner.
+
+That threshold is measured, not assumed. Calibrating the V100's full reduction ladder---each rung timed as a bare all-reduce over an empty team, no payload---places the same operator at five different $\Rh$ values by changing only the reduction hardware (\Cref{tab:ladder}). The corner opens between the block and grid rungs, at a measured $\tau^{\star} = 0.92\,\mu$s, and that boundary falls \emph{inside a single device}: the on-device grid reduction (a second kernel launch) already clears it, so the upper-right corner is reachable without leaving the GPU. Two features of the ladder were not anticipated. The fabric step is shallow---node-to-node costs only $1.9\times$ device-to-device, against the CPU study's $5.4\times$ for a single cache-domain crossing---because synge's intra-node link is PCIe plus a cross-socket hop with no NVLink, slow enough that leaving the node barely doubles it; the horizontal axis is effectively \{on-device, off-device\}, with the fabric a modest extension rather than a new decade. And the widest single step is grid over block at $7\times$, most of it kernel-launch latency---a fixed software cost with no CPU analogue, so the ladder's biggest jump is not an interconnect at all.
+
+\begin{table}[H]
+\centering
+\caption{The V100 reduction ladder, calibrated. Each rung is a bare all-reduce and $\tau$ is
+cumulative. The corner opens ($\Rv \cdot \Rh > 1$) between the block and grid rungs---inside
+a single device.}
+\label{tab:ladder}
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Rung} & \textbf{Scope} & $\tau$ \textbf{(cumulative)} & \textbf{Corner} \\
+\midrule
+warp (register shuffle)      & on-die     & 0.42\,$\mu$s  & closed \\
+block (shared + barrier)     & on-die     & 0.79\,$\mu$s  & closed \\
+grid (second kernel launch)  & on-die     & 5.54\,$\mu$s  & \textbf{open} \\
+device (PCIe + cross-socket) & intra-node & 11.46\,$\mu$s & \textbf{open} \\
+node (inter-node fabric)     & inter-node & 22.09\,$\mu$s & \textbf{open} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reaching the corner, and the gate that discriminates}\label{sec:gpu-corner}
+
+At production resolution ($n_1 = 61$, $m = 12$, $s = 8$) the recomputed coordinates place the operator at $\Rv = 7.2$, $\Rh = 1.7$ on \emph{both} cards---for the 3090 at its on-device grid rung, for the V100 at the device-to-device rung---squarely in the upper-right corner the single-NUMA CPU was structurally barred from. The dimensionless framing transfers in the strongest sense available: the thresholds $\theta_v = \theta_h = 1$ did not move, only the coordinates were recomputed from constants measured on a memory system that differs in kind, and the operator landed where the recomputation said it would.
+
+Reaching the corner is only half the test, because both axes presuppose the kernel is on the memory side of the roofline. The pair was built to probe exactly that precondition: with near-identical L2 and bandwidth and an $11\times$ gap in FP64 rate, the gate should---from the cards' constants alone---pass on the datacenter card and fail on the consumer one, and it fires precisely where the a-priori gate analysis said it would (\Cref{tab:gpu-gate}). The baseline method is on-map on both cards: SpMV (arithmetic intensity 0.135\,FLOP/B) and MGS (0.375) sit so far below even the 3090's throttled ridge of 0.69 that a $1{:}66$ FP64 penalty is irrelevant to them---so the negative arm as one might first state it, ``CA is pointless on the 3090 because its FP64 is throttled,'' would not have fired on the baseline kernels at all. What separates the cards is the tall-skinny Gram matrix $\mat{B}^{\mathsf T}\mat{B}$ that the $s$-step arm introduces and MGS does not have: its intensity grows with the block width (${\sim}s/4$) and crosses the 3090's ridge at $s \approx 2.4$, well below the certified $s_{\max}$. At the production width $s = 8$ that same kernel is memory-bound on the V100 (a $3.9\times$ margin) and compute-bound on the 3090. Both cards exhibit the corner; the map predicts that only one of them can pay for it. A map that states where it stops applying, and is right, is a stronger result than any single-machine crossover.
+
+\begin{table}[H]
+\centering
+\caption{The roofline gate at production resolution, per kernel. The baseline kernels are
+on-map on both cards; the $s$-step Gram block is memory-bound only on the datacenter card.}
+\label{tab:gpu-gate}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Kernel (AI, FLOP/B)} & \textbf{V100 (ridge 7.79)} & \textbf{3090 (ridge 0.69)} \\
+\midrule
+SpMV (0.135)                 & on map & on map \\
+MGS (0.375)                  & on map & on map \\
+$s$-step Gram (${\sim}1.1$)  & \textbf{memory-bound} ($3.9\times$) & \textbf{compute-bound} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Roofline-bound kernels and the $s$-step crossover}\label{sec:gpu-sstep}
+
+Reading the gate on the real kernel required first making that kernel efficient, and the vendor library could not. The $s$-step block orthogonalization is CholeskyQR: a Gram matrix ($\mat{B}^{\mathsf T}\mat{B}$, a \texttt{syrk}), a Cholesky factorization (\texttt{potrf}), and a triangular solve ($\mat{B} \leftarrow \mat{B}\mat{R}^{-1}$, a \texttt{trsm}). For an $n \times s$ block with $s \le 9$ both level-3 BLAS operations are \emph{tall and skinny}---a huge $k = n$ against a tiny $s \times s$---and cuBLAS, built for square matrices, serves them badly: its \texttt{dsyrk} ran at ${\sim}0.7$\,GFLOP/s (under $0.1\%$ of roof, latency-bound on a handful of output threads) and its \texttt{dtrsm} was compute-bound at ${\sim}2\%$ useful FP64. The map's mechanism was invisible behind library inefficiency, so two kernels were written: a split-K Gram that parallelizes the $k = n$ dimension and reduces the partials \cite{ernst-2021}, and a per-row triangular solve exploiting that the $m$ row-solves are independent. Both are validated bit-close to cuBLAS and reach the roofline (\Cref{tab:gpu-kernels})---the split-K Gram roughly $1900\times$ faster than cuBLAS, the per-row solve $27\times$.
+
+\begin{table}[H]
+\centering
+\caption{The two hand-written tall-skinny kernels at the production block width. Both reach
+the roofline; the two-card split appears on the Gram exactly as the gate predicts.}
+\label{tab:gpu-kernels}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Kernel} & \textbf{vs.\ cuBLAS} & \textbf{V100} & \textbf{3090} \\
+\midrule
+split-K Gram & ${\sim}1900\times$ & 85\% DRAM roof (memory-bound) & 71\% FP64 peak (compute-bound) \\
+per-row trsm & $27\times$          & 95\% DRAM roof (memory-bound) & 94\% roof (at the knee) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+With roofline-bound kernels the two-card contrast becomes a hardware measurement rather than a prediction. Profiled with Nsight Compute at $s = 8$, $n = 2 \times 10^6$, the \emph{same} Gram kernel runs at 86\% of DRAM throughput and 16\% of compute on the V100 (memory-bound, FP64 idle) and at 38\% of DRAM against 94\% of compute on the 3090 (compute-bound). The triangular solve, whose intensity (${\sim}0.56$) sits just below the 3090's ridge, is memory-bound on the V100 and at the compute/memory knee on the 3090, so the Gram is the sole unambiguous carrier of the negative arm---exactly the kernel the roofline gate named. On consumer silicon the CA treatment's own orthogonalization kernel is compute-bound while the baseline it replaces is memory-bound on both cards.
+
+The reduction saving itself was then timed. Against MGS at matched $m = 12$, the $s$-step block---orthogonality $\lVert \mat{I} - \mat{Q}^{\mathsf T}\mat{Q} \rVert \sim 10^{-15}$ throughout---trades MGS's $1 + m(m+3)/2 = 91$ reductions for $1 + 2\lceil m/s \rceil = 5$. On a single device, with the roofline-bound kernels, $s$-step beats MGS at every grid on both cards. But an on-device reduction is cheap, and the horizontal threshold $\theta_h$ by definition needs an expensive one, so the crossing was measured across two GPUs: the $n$ basis rows split across the pair, and every MGS dot and every $s$-step Gram becomes a real NCCL all-reduce over the device-to-device link. That all-reduce measured ${\sim}11.5\,\mu$s, matching the calibrated device rung (11.46\,$\mu$s) and cross-checked independently by a two-GPU MGS decomposition and an Nsight Systems trace. At that rung the $s$-step block's five reductions beat MGS's ninety-one across the whole production range of $n$: the horizontal saving that moved nothing on the single CPU socket pays once the reduction crosses a real device boundary---the upper-right corner, entered and collected. The instruments here are the orthogonalizer and its reductions, not an end-to-end priced solve; what the two-card pair establishes is that coordinates recomputed from GPU constants place, and correctly gate, the same operator the CPU study could only argue about.
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Conclusion}\label{sec:conclusion}
 
@@ -867,7 +949,7 @@ On the numerical side, the certified $s$-step block width is predicted from the 
 
 On the measurement side, the study delivers three placed results. The horizontal mechanism is a null result with a mechanism: an 11--16$\times$ cut in reduction count moves wall-clock by nothing, because the reduction primitive was never the bottleneck and Gram--Schmidt is bandwidth-bound---exactly as the map's $\Rh = 0.080$ predicted. The vertical mechanism is a shortfall with a mechanism: cache-blocked matrix powers loses to its own halo arithmetic at L2 tile sizes and to a residency-insensitive cap at L3, so the predicted crossover $\theta_v$ remains untested by this kernel rather than refuted. And the real operator's trajectory under refinement---lower-right, lower-left, upper-left, crossing $\theta_v$ near $n = 74$---says the mechanism the application needs at production resolution is matrix-powers tiling, not $s$-step, and that the upper-right corner is structurally unreachable on a single-NUMA socket.
 
-The map's central claim---that its coordinates transfer---is also its least-tested one, and \Cref{sec:gpu} derives what any test on a GPU memory system must recompute: a fixed shared L2 replaces a scaling aggregate cache in $\Rv$'s denominator, a five-tier reduction ladder replaces two tiers in $\Rh$'s numerator, and an explicit roofline gate must precede any placement. Those recomputations are structural, which is precisely why the test is worth running.
+The map's central claim---that its coordinates transfer---was also its least-tested one, and \Cref{sec:gpu} put it on a GPU memory system that differs in kind. The recomputation is structural, not a constant swap: a fixed shared L2 replaces a scaling aggregate cache in $\Rv$'s denominator, which decouples the two axes that cancelled on the CPU; a five-tier reduction ladder replaces two tiers in $\Rh$'s numerator; and an explicit roofline gate must precede any placement. Carried out on a controlled pair of GPUs---a datacenter V100 and a consumer 3090, near-identical in memory and $11\times$ apart in FP64---the recomputed coordinates place the production operator in the upper-right corner the single-socket CPU was barred from, and the gate correctly predicts that the $s$-step arm's own orthogonalization kernel, hand-written to reach the roofline, is memory-bound on the datacenter card but compute-bound on the consumer one. The reduction saving that moved nothing on the CPU pays once the reduction crosses a real device boundary. The thresholds never moved; only the coordinates were recomputed, and the operator landed where they said---the dimensionless framing vindicated on hardware it had never seen.
 
 \newpage
 \addcontentsline{toc}{section}{References}

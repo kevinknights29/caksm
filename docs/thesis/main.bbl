@@ -52,6 +52,13 @@ Jim Douglas and Henry~H. Rachford.
 \newblock {\em Transactions of the American Mathematical Society}, 82:421--439,
   1956.
 
+\bibitem{ernst-2021}
+Dominik Ernst, Georg Hager, Jonas Thies, and Gerhard Wellein.
+\newblock Performance engineering for real and complex tall \& skinny matrix
+  multiplication kernels on {GPU}s.
+\newblock {\em International Journal of High Performance Computing
+  Applications}, 35(1):5--19, 2021.
+
 \bibitem{ghysels-vanroose-2014}
 Pieter Ghysels and Wim Vanroose.
 \newblock Hiding global synchronization latency in the preconditioned conjugate
