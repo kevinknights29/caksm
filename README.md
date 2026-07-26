@@ -57,12 +57,17 @@ integrator itself is not yet implemented; the map exists to decide what to build
   - [The map, and where the real operator travels](#the-map-and-where-the-real-operator-travels)
   - [Running the regime study](#running-the-regime-study)
   - [Standing caveats](#standing-caveats)
+- [Porting the map to GPUs](#porting-the-map-to-gpus-branch-regime-analysis-gpu)
+  - [The pair, measured: the negative arm fires](#the-pair-measured-the-negative-arm-fires)
 - [Repository layout](#repository-layout)
 
 ## Platform
 
-Every result in this README was gathered on a local workstation ("puffin") with an
-NVIDIA RTX 3090. It is the project's only compute environment - see the note below.
+Every CPU and single-GPU result in this README was gathered on a local workstation ("puffin")
+with an NVIDIA RTX 3090 - see the note below on why one bare-metal machine. The GPU regime work
+adds a second, deliberately controlled machine: **synge**, a two-GPU node of NVIDIA Tesla V100s,
+the datacenter half of the FP64-throttled pair the [negative arm](#the-pair-measured-the-negative-arm-fires)
+is measured on, and the only host with the two GPUs the horizontal crossover needs.
 
 | GPU              | VRAM  | Driver  | CUDA |
 |------------------|-------|---------|------|
@@ -994,18 +999,80 @@ Until a preset's `reduction_calibrated` and `roofline_gated` are both true, ever
 stamped `ASSUMED` and no horizontal verdict may be published - the same suppression the CPU
 side already enforces, for the same reason.
 
+### The pair, measured: the negative arm fires
+
+The predictions above were then tested on the controlled pair - **synge's Tesla V100** (datacenter
+FP64, 6.4 TFLOP/s) and **puffin's RTX 3090** (consumer, 0.57 TFLOP/s, an 11x gap) - two cards with
+the same 6 MiB L2 and ~820 GB/s bandwidth class, differing almost only in the FP64 rate. Every
+number below was gathered on an idle device (NVML-gated) and read against each card's measured
+FP64 peak and DRAM roof; Nsight Compute settled the roofline verdicts directly.
+
+**The tall-skinny kernels cuBLAS cannot serve.** s-step's block orthogonalization is CholeskyQR:
+a Gram matrix $G = B^{\mathsf T}B$ (a `syrk`), a Cholesky (`potrf`), and a triangular solve
+$B \leftarrow B R^{-1}$ (a `trsm`). For an $n \times s$ block with $s \le 9$ both BLAS-3 operations
+are *tall and skinny* - a huge $k = n$ against a tiny $s \times s$ - and cuBLAS is built for square
+matrices. Measured, its `dsyrk` ran at **~0.7 GFLOP/s** (under 0.1% of roof, latency-bound on a
+handful of output threads) and its `dtrsm` was **compute-bound at ~2% useful FP64**, tiling $m$
+into 44 000 blocks. The map's mechanism was invisible behind library inefficiency, so two
+kernels were written (`include/gram_splitk.cuh`, `include/trsm_tallskinny.cuh`): a split-K Gram
+that parallelizes the $k = n$ dimension and reduces the partials (after Ernst et al. 2020), and a
+per-row triangular solve (the $m$ row-solves are independent). Both are validated bit-close to
+cuBLAS and reach the roofline:
+
+| kernel (n=1-2M, s=8) | vs cuBLAS | V100                            | 3090                                    |
+|----------------------|-----------|---------------------------------|-----------------------------------------|
+| split-K Gram         | ~1900x    | 85% of DRAM roof (memory-bound) | 71% of FP64 peak (compute-bound)        |
+| per-row trsm         | 27x       | 95% of DRAM roof (memory-bound) | 94% of roof, at the compute/memory knee |
+
+Reproduce with `scripts/regime/gram_splitk_test.sh` and `scripts/regime/trsm_test.sh`.
+
+**The negative arm, measured.** With roofline-bound kernels, the two-card contrast the map
+predicted appears directly. At the certified block width $s = 8$ the Gram's arithmetic intensity
+($\sim 1.1$ FLOP/B) sits **above** the 3090's ridge (0.69) and **below** the V100's (7.79), so the
+*same kernel* is compute- and memory-bound on the two cards (Nsight Compute, $n = 2 \times 10^6$):
+
+| $s = 8$ Gram | DRAM throughput | SM (compute) throughput | verdict                  |
+|--------------|-----------------|-------------------------|--------------------------|
+| **V100**     | **86%**         | 16%                     | memory-bound (FP64 idle) |
+| **3090**     | 38%             | **94%**                 | compute-bound            |
+
+This is the negative arm as a hardware measurement, not a prediction: on consumer silicon s-step's
+own orthogonalization kernel is compute-bound while the baseline (SpMV 0.135, MGS 0.375 FLOP/B) is
+memory-bound on both. The triangular solve, whose intensity ($\sim s/16 \approx 0.56$) sits just
+*below* the 3090 ridge, is memory-bound on the V100 and at the knee on the 3090 - so the **Gram is
+the sole unambiguous carrier of the arm**, exactly the kernel the roofline gate named.
+
+**The s-step crossover.** Timed against MGS at matched $m = 12$ (`scripts/regime/regime_gpu_sstep.sh`),
+with roofline-bound kernels s-step beats MGS on *both* cards at every $n$: its BLAS-3 block
+(orthogonality $\lVert I - Q^{\mathsf T}Q \rVert \sim 10^{-15}$ throughout) plus its $1 + 2\lceil
+m/s\rceil$ reductions against MGS's $1 + m(m+3)/2$. The horizontal boundary $\theta_h$ itself needs
+*expensive* reductions, so it was measured across two GPUs
+(`scripts/regime/regime_gpu_sstep_2gpu.sh`): the $n$ rows split across the pair, and every MGS dot
+and s-step Gram becomes a real NCCL all-reduce over the PCIe/UPI link. The measured all-reduce cost
+lands at **~11.5 $\mu$s**, matching the calibrated DEVICE_P2P rung (11.46 $\mu$s) - cross-checked
+independently by the two-GPU MGS decomposition and an Nsight Systems kernel trace. At that rung
+s-step pays across the whole production range of $n$, its 5 reductions beating MGS's 91.
+
+**What the pair costs in discipline.** cuBLAS/cuSOLVER served the CPU story cleanly (dot, axpy,
+`syrk` on square operators), but the tall-skinny CholQR kernels forced two hand-written kernels to
+make the mechanism legible - a real change from "the libraries a practitioner would call". The
+single-GPU crossover is then a statement about a *competent* CA implementation (BLAS-3 block plus
+fewer reductions), and the two-GPU crossover is the reduction saving paying at a real inter-GPU
+rung. Both rest on measured hardware limits rather than library artifacts, which is the whole point
+of chasing the kernels to the roofline.
+
 ## Repository layout
 
-| Path               | Contents                                                                                                                                                                                                                                                                    |
-|--------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/`             | executables: `main` (pricer), `profiler`, `scaling`, `regime_control`, `regime_sweep`, `calibrate_alpha`, `fma_loop`, `stream`; GPU: `regime_gpu_place` (host-only), `calibrate_gpu_reduction`, `gpu_stream`, `calibrate_gpu_p2p` (`.cu`, built only where CUDA is present) |
-| `include/`         | PDE assembly (`pde_operators`), solvers (`solvers`, `arnoldi`, `ca_arnoldi`), CA kernels (`mpk`, `akx`, `reduction`), regime machinery (`regime`, `regime_control_support`, `synthetic`, `machine`), GPU regime machinery (`gpu_machine`, `gpu_regime`)                     |
-| `tests/`           | Catch2 suites, including the regime tests (coordinates, kernels, Krylov, non-normality, synthetic) and the GPU map's structural invariants (`test_gpu_regime`)                                                                                                              |
-| `scripts/sweep/`   | benchmark sweeps for `n=31` / `n=61`                                                                                                                                                                                                                                        |
-| `scripts/scaling/` | strong, weak, `m(n)`, and locality sweeps                                                                                                                                                                                                                                   |
-| `scripts/regime/`  | $\alpha$ calibration, numerics gate, `d`-sweep, vertical sweep, block-width sweep; GPU: `gpu_probe`, `calibrate_gpu`, `calibrate_gpu_p2p`, `regime_gpu_place`                                                                                                               |
-| `docs/`            | `thesis/` (the project write-up)                                                                                                                                                                                                                                           |
-| `scripts/stream/`  | STREAM Triad bandwidth sweep                                                                                                                                                                                                                                                |
-| `scripts/plots/`   | all figures (each is a `uv` script with inline dependencies)                                                                                                                                                                                                                |
-| `data/`            | CSVs written by the sweeps. Generated locally and gitignored, so every number quoted here names the script that reproduces it                                                                                                                                               |
-| `logs/`            | sweep logs from detached tmux runs                                                                                                                                                                                                                                          |
+| Path               | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+|--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `src/`             | executables: `main` (pricer), `profiler`, `scaling`, `regime_control`, `regime_sweep`, `calibrate_alpha`, `fma_loop`, `stream`; GPU (`.cu`, built only where CUDA is present): `regime_gpu_place` (host-only), `calibrate_gpu_reduction`, `gpu_stream`, `calibrate_gpu_p2p`, the timed instruments `regime_gpu_spmv` / `regime_gpu_mgs` / `regime_gpu_sstep`, the two-GPU crossover `regime_gpu_sstep_2gpu` (NCCL), and the kernel validators `gram_splitk_test` / `trsm_test` |
+| `include/`         | PDE assembly (`pde_operators`), solvers (`solvers`, `arnoldi`, `ca_arnoldi`), CA kernels (`mpk`, `akx`, `reduction`), regime machinery (`regime`, `regime_control_support`, `synthetic`, `machine`), GPU regime machinery (`gpu_machine`, `gpu_regime`), GPU kernels (`gpu_contention`, `gram_splitk`, `trsm_tallskinny`)                                                                                                                                                      |
+| `tests/`           | Catch2 suites, including the regime tests (coordinates, kernels, Krylov, non-normality, synthetic) and the GPU map's structural invariants (`test_gpu_regime`)                                                                                                                                                                                                                                                                                                                 |
+| `scripts/sweep/`   | benchmark sweeps for `n=31` / `n=61`                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `scripts/scaling/` | strong, weak, `m(n)`, and locality sweeps                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `scripts/regime/`  | $\alpha$ calibration, numerics gate, `d`-sweep, vertical sweep, block-width sweep; GPU: `gpu_probe`, `calibrate_gpu`, `calibrate_gpu_p2p`, `regime_gpu_place`, `regime_gpu_spmv`, `regime_gpu_mgs`, `regime_gpu_sstep`, `regime_gpu_sstep_2gpu`, `gram_splitk_test`, `trsm_test`                                                                                                                                                                                               |
+| `docs/`            | `thesis/` (the project write-up)                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `scripts/stream/`  | STREAM Triad bandwidth sweep                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `scripts/plots/`   | all figures (each is a `uv` script with inline dependencies)                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `data/`            | CSVs written by the sweeps. Generated locally and gitignored, so every number quoted here names the script that reproduces it                                                                                                                                                                                                                                                                                                                                                  |
+| `logs/`            | sweep logs from detached tmux runs                                                                                                                                                                                                                                                                                                                                                                                                                                             |
