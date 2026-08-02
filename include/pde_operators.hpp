@@ -61,7 +61,7 @@ inline Grid build_grid(int n,
 
 // 1-D building blocks
 /**
- * @brief Skew-centred first-derivative stencil.
+ * @brief Skew-centered first-derivative stencil.
  *
  * T[i, i-1] = -1, T[i, i+1] = +1 for interior rows.
  * @param rainbow_bc If true, last row becomes [-2, +2] (zero-gamma BC).
@@ -89,7 +89,7 @@ inline SpMat build_T(int n, bool rainbow_bc = false)
 }
 
 /**
- * @brief Centred second-derivative stencil.
+ * @brief Centered second-derivative stencil.
  *
  * S[i, i-1] = +1, S[i, i] = -2, S[i, i+1] = +1 for interior rows.
  * @param rainbow_bc If true, last row is zeroed (zero-gamma BC).

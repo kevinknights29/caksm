@@ -135,7 +135,7 @@ using SpMatS = Eigen::SparseMatrix<double>;
 {
     const double dn = static_cast<double>(n);
     const double dm = static_cast<double>(m);
-    return 3.0 * dn                     // normalise V.col(0)
+    return 3.0 * dn                     // normalize V.col(0)
          + 2.0 * dn * dm * (dm + 1.0)   // sum_j 4n(j+1)
          + 3.0 * dn * dm;               // per-j norm + scale
 }
