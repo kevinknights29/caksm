@@ -54,6 +54,9 @@ namespace {
 
 // The measured 3090 preset: guard the transcribed constants against silent drift
 
+/// The transcribed preset constants must not drift silently, since every point
+/// placed on this card inherits them.
+/// Expected: the internal relationships between the recorded fields hold.
 TEST_CASE("the calibrated rtx-3090 preset is self-consistent", "[regime][gpu][preset]")
 {
     const GpuMachine& gm = lookup_gpu_machine("rtx-3090");
@@ -85,6 +88,10 @@ TEST_CASE("the calibrated rtx-3090 preset is self-consistent", "[regime][gpu][pr
     REQUIRE(gm.l2_bw_gbs_achieved > gm.hbm_bw_gbs_achieved);
 }
 
+/// The negative arm of the two-card study, and it has to fail for the stated
+/// reason rather than by assumption.
+/// Expected: at production width the 3090 is compute-bound and so off-map, on
+/// its own measured FP64 roof rather than on a datasheet figure.
 TEST_CASE("the 3090 fails the CA gate at production s, on measured constants",
           "[regime][gpu][preset]")
 {
@@ -102,6 +109,10 @@ TEST_CASE("the 3090 fails the CA gate at production s, on measured constants",
     REQUIRE(gram_ridge_s(gm, Precision::FP64) < 9.0);   // measured ~2.8
 }
 
+/// The cards are a near-controlled pair, matched on cache and bandwidth and
+/// differing by more than an order of magnitude in FP64, so the roofline gate
+/// is the only thing that can separate them.
+/// Expected: the gate admits one and rejects the other.
 TEST_CASE("the two-card contrast discriminates on measured constants", "[regime][gpu][preset]")
 {
     const GpuMachine& v100  = lookup_gpu_machine("v100-pcie-16gb");
@@ -134,6 +145,10 @@ TEST_CASE("the two-card contrast discriminates on measured constants", "[regime]
     REQUIRE(treatment_on_map(a));  REQUIRE_FALSE(treatment_on_map(b));
 }
 
+/// A rung that costs nothing is either uncalibrated or not a distinct
+/// mechanism; either way it must not be placed on.
+/// Expected: every tier is calibrated and each adds a strictly positive
+/// increment over the one below it.
 TEST_CASE("the V100 ladder is complete and every rung is a real step",
           "[regime][gpu][preset]")
 {
@@ -167,6 +182,9 @@ TEST_CASE("the V100 ladder is complete and every rung is a real step",
     REQUIRE(tier_multiplier(v100, ReductionTier::NODE) > 1.5);
 }
 
+/// The guard that stops a missing measurement from being read as a free rung.
+/// Expected: an uncalibrated tier reports unavailable rather than returning the
+/// accumulated cost of the rung below it.
 TEST_CASE("an uncalibrated rung is never placed on", "[regime][gpu][preset]")
 {
     // Both presets are complete now, so the guard is exercised on a constructed machine: a
@@ -190,6 +208,11 @@ TEST_CASE("an uncalibrated rung is never placed on", "[regime][gpu][preset]")
 
 // The structural break: L2 does not grow with the team
 
+/// The structural break between the two machine models. On the CPU every
+/// engaged CCX brings its own cache slice; on the GPU, L2 is one device-wide
+/// block and engaging more SMs adds none.
+/// Expected: aggregate L2 is identical at every P, so R_v becomes a pure
+/// function of the working set. The whole GPU decoupling follows from this.
 TEST_CASE("aggregate L2 is flat in P, unlike the CPU's aggregate L3", "[regime][gpu][rv]")
 {
     const GpuMachine& gm = lookup_gpu_machine("v100-pcie-16gb");
@@ -210,6 +233,13 @@ TEST_CASE("aggregate L2 is flat in P, unlike the CPU's aggregate L3", "[regime][
 
 // The invariant
 
+/// The central GPU identity. Both coordinates are separately free of P, so
+/// their product is too, for a different reason than on the CPU where
+/// reciprocal powers of P canceled.
+/// Expected: the product is constant across P from 8 to 80, checked on placed
+/// coordinates rather than only on the closed form, so a P creeping back into
+/// either axis would be caught. Across three decades of N the product holds to
+/// 5%, the residual being the boundary correction to nnz/N.
 TEST_CASE("R_v * R_h is independent of P and of N on a GPU", "[regime][gpu][invariant]")
 {
     const GpuMachine gm = calibrated_v100();
@@ -244,6 +274,9 @@ TEST_CASE("R_v * R_h is independent of P and of N on a GPU", "[regime][gpu][inva
     }
 }
 
+/// The invariant is scoped to the memory side of the roofline, so a
+/// compute-bound point must be ruled off-map rather than placed.
+/// Expected: the gate rejects it instead of reporting a position.
 TEST_CASE("the gate closes the compute-bound escape hatch", "[regime][gpu][invariant]")
 {
     const GpuMachine gm = calibrated_v100();
@@ -267,6 +300,10 @@ TEST_CASE("the gate closes the compute-bound escape hatch", "[regime][gpu][invar
     REQUIRE_FALSE(roofline_gate(gm, 1, few.ai, Precision::FP64).memory_bound);   // at P=1: fails
 }
 
+/// The CPU form of the identity depends on the cache roof scaling with P, which
+/// stops once the working set spills.
+/// Expected: once spilled the product falls with P, marking the boundary of the
+/// CPU identity rather than of the GPU one.
 TEST_CASE("the CPU invariant survives only while cache-resident", "[regime][gpu][invariant]")
 {
     // The contrast the GPU result is stated against. On the CPU the cancellation needs BOTH
@@ -286,6 +323,10 @@ TEST_CASE("the CPU invariant survives only while cache-resident", "[regime][gpu]
     REQUIRE(lo.rv * lo.rh > hi.rv * hi.rh);     // the product falls with P once spilled
 }
 
+/// tau* is defined as the reduction cost at which the invariant equals one, so
+/// it must be exactly that and not approximately.
+/// Expected: setting the ladder so the top rung costs exactly tau* puts the
+/// product on 1.0 to 1e-9 and flips the upper-right flag.
 TEST_CASE("tau* is the reduction cost at which the corner opens", "[regime][gpu][invariant]")
 {
     GpuMachine gm = calibrated_v100();
@@ -307,6 +348,12 @@ TEST_CASE("tau* is the reduction cost at which the corner opens", "[regime][gpu]
 
 // The reduction ladder
 
+/// The ladder is cumulative, because a device-to-device all-reduce necessarily
+/// performs the on-device combines first, and launch is a fixed per-reduction
+/// cost rather than a per-rung or per-level one.
+/// Expected: each tier equals the sum of the increments below it; launch enters
+/// at the grid rung and exactly once; and the ladder is strictly monotone, since
+/// one that is not is a bug rather than a finding.
 TEST_CASE("reduction cost accumulates the rungs and adds launch once", "[regime][gpu][rh]")
 {
     GpuMachine gm = calibrated_v100();
@@ -331,6 +378,11 @@ TEST_CASE("reduction cost accumulates the rungs and adds launch once", "[regime]
     }
 }
 
+/// If launch latency swamps every rung above the block tier, the ladder
+/// collapses to a constant and the horizontal mechanism stops being
+/// interesting. That is a result, and it is invisible unless reported.
+/// Expected: the share is negligible when launch is, and is flagged when launch
+/// dominates.
 TEST_CASE("launch_share flags a ladder hidden behind launch cost", "[regime][gpu][rh]")
 {
     GpuMachine gm = calibrated_v100();
@@ -347,6 +399,8 @@ TEST_CASE("launch_share flags a ladder hidden behind launch cost", "[regime][gpu
     REQUIRE_THAT(tier_multiplier(gm, ReductionTier::DEVICE_P2P), WithinAbs(1.0, 0.05));
 }
 
+/// A host with one GPU has no device-to-device or node rung to measure.
+/// Expected: those tiers report unreachable rather than returning a cost.
 TEST_CASE("a single-device preset cannot reach the interconnect rungs", "[regime][gpu][rh]")
 {
     const GpuMachine& g3090 = lookup_gpu_machine("rtx-3090");
@@ -359,8 +413,44 @@ TEST_CASE("a single-device preset cannot reach the interconnect rungs", "[regime
     REQUIRE(highest_reachable_tier(v100) == ReductionTier::NODE);
 }
 
+/// The rung a collective actually crosses is set by the topology, not by how
+/// the ranks were launched. Deriving it from process count would price a
+/// two-node run at the on-device rung.
+/// Expected: the selected tier follows GPU and node counts.
+TEST_CASE("the solver reduction tier follows GPUs and nodes, not process count",
+          "[regime][gpu][rh]")
+{
+    REQUIRE(collective_tier_for_topology(1, 1) == ReductionTier::GRID);
+    REQUIRE(collective_tier_for_topology(2, 1)
+            == ReductionTier::DEVICE_P2P);
+    REQUIRE(collective_tier_for_topology(2, 2) == ReductionTier::NODE);
+    REQUIRE(collective_tier_for_topology(4, 2) == ReductionTier::NODE);
+    REQUIRE_THROWS_AS(collective_tier_for_topology(0, 1),
+                      std::invalid_argument);
+    REQUIRE_THROWS_AS(collective_tier_for_topology(1, 2),
+                      std::invalid_argument);
+
+    const GpuMachine& v100 = lookup_gpu_machine("v100-pcie-16gb");
+    REQUIRE(tier_cost_available(v100, ReductionTier::GRID));
+    REQUIRE(tier_cost_available(v100, ReductionTier::DEVICE_P2P));
+    REQUIRE(tier_cost_available(v100, ReductionTier::NODE));
+    GpuMachine incomplete = v100;
+    incomplete.tier_calibrated[tier_index(ReductionTier::NODE)] = false;
+    REQUIRE_FALSE(tier_cost_available(incomplete, ReductionTier::NODE));
+    REQUIRE(tier_cost_available(incomplete, ReductionTier::DEVICE_P2P));
+
+    const GpuMachine& g3090 = lookup_gpu_machine("rtx-3090");
+    REQUIRE(tier_cost_available(g3090, ReductionTier::GRID));
+    REQUIRE_FALSE(tier_cost_available(g3090, ReductionTier::DEVICE_P2P));
+    REQUIRE_FALSE(tier_cost_available(g3090, ReductionTier::NODE));
+}
+
 // The gate, per kernel
 
+/// The two cards must separate on the kernel the study is about. SpMV is too
+/// memory-bound to tell them apart, so a gate that discriminated there would be
+/// measuring the wrong thing.
+/// Expected: the cards differ on the CA kernel and agree on SpMV.
 TEST_CASE("the gate discriminates the two cards on the CA kernel, not on SpMV",
           "[regime][gpu][gate]")
 {
@@ -394,6 +484,9 @@ TEST_CASE("the gate discriminates the two cards on the CA kernel, not on SpMV",
     REQUIRE_FALSE(treatment_on_map(b));
 }
 
+/// The block Gram is what carries the arithmetic intensity up as width grows,
+/// which is the mechanism that eventually crosses the ridge.
+/// Expected: intensity increases with s, and the crossing follows from it.
 TEST_CASE("Gram intensity rises with s and sets the crossing", "[regime][gpu][gate]")
 {
     const int64_t n = 226981;
@@ -413,6 +506,12 @@ TEST_CASE("Gram intensity rises with s and sets the crossing", "[regime][gpu][ga
                           Precision::FP64).memory_bound == true);
 }
 
+/// A gate evaluated against a theoretical roof over-states the memory side and
+/// would wave through a point that is really compute-bound.
+/// Expected: without a measured achieved bandwidth the verdict is provisional;
+/// the theoretical roof is higher and its ridge lower, so the fallback
+/// over-rejects. It can lose a point that is on the map but never admit one
+/// that is not, which is why it is a fallback and not a hard error.
 TEST_CASE("an unmeasured roof marks every verdict provisional", "[regime][gpu][gate]")
 {
     // Build the ungated machine explicitly rather than leaning on a preset happening to be
@@ -437,6 +536,10 @@ TEST_CASE("an unmeasured roof marks every verdict provisional", "[regime][gpu][g
 
 // The window
 
+/// The two blocking questions, whether the corner is reachable and over what
+/// range of N, are one question.
+/// Expected: at every rung, feasibility agrees with the invariant exceeding 1,
+/// and where feasible the window width is the invariant product to 5%.
 TEST_CASE("the window is non-empty exactly when the invariant exceeds 1",
           "[regime][gpu][window]")
 {
@@ -458,6 +561,11 @@ TEST_CASE("the window is non-empty exactly when the invariant exceeds 1",
     }
 }
 
+/// Identifies which ceiling actually binds, so the open question is stated
+/// correctly.
+/// Expected: the R_h ceiling binds more than ten times sooner than the 16 GB
+/// capacity, so memory is not what closes the corner, and production resolution
+/// sits inside the window on the interconnect rungs.
 TEST_CASE("device memory is not the constraint that closes the window", "[regime][gpu][window]")
 {
     const GpuMachine gm = calibrated_v100();
@@ -479,6 +587,11 @@ TEST_CASE("device memory is not the constraint that closes the window", "[regime
     REQUIRE(N <= w.n_max);
 }
 
+/// The lower edge of the window is a real physical boundary rather than a
+/// solver artifact: below it the operator is cache-resident and the vertical
+/// mechanism buys nothing.
+/// Expected: R_v is at least 1 at N_min by construction, and below 1 one step
+/// under it.
 TEST_CASE("the window closes from below at the L2 capacity, not at N=0",
           "[regime][gpu][window]")
 {
@@ -499,8 +612,39 @@ TEST_CASE("the window closes from below at the L2 capacity, not at N=0",
                                           below, 12)) < 1.0);
 }
 
+// Device selection
+
+/// An instrument that predicts before measuring must take its constants from
+/// the device it is about to run on, not from a hardcoded key.
+/// Expected: each known device name maps to its own preset, and an unknown one
+/// is rejected loudly rather than silently defaulting.
+TEST_CASE("a preset is selected from the driver-reported device name",
+          "[regime][gpu][preset]")
+{
+    // The failure this guards is not a crash. An instrument that predicts before
+    // it measures used to hardcode the V100 key, which is right on Synge and
+    // silently wrong on every other host, including a Puffin smoke test.
+    REQUIRE(lookup_gpu_machine_for_device("Tesla V100-PCIE-16GB").key
+            == lookup_gpu_machine("v100-pcie-16gb").key);
+    REQUIRE(lookup_gpu_machine_for_device("NVIDIA GeForce RTX 3090").key
+            == lookup_gpu_machine("rtx-3090").key);
+    // Case and vendor prefixes vary between driver versions; the token does not.
+    REQUIRE(lookup_gpu_machine_for_device("NVIDIA Tesla V100-PCIE-16GB").key
+            == lookup_gpu_machine("v100-pcie-16gb").key);
+    REQUIRE(lookup_gpu_machine_for_device("tesla v100-pcie-16gb").key
+            == lookup_gpu_machine("v100-pcie-16gb").key);
+    // An uncalibrated device names itself rather than borrowing constants.
+    REQUIRE_THROWS_AS(
+        lookup_gpu_machine_for_device("NVIDIA A100-SXM4-40GB"),
+        std::invalid_argument);
+}
+
 // Type safety
 
+/// Every CPU field is meaningless on a GPU and vice versa, so feeding one into
+/// the other formulas would give a wrong answer that still looks plausible.
+/// Expected: the separate types make that a compile-time impossibility; this
+/// records the intent the type split exists to enforce.
 TEST_CASE("GPU and CPU coordinates cannot be mixed", "[regime][gpu][types]")
 {
     // Not a runtime assertion: the point of the separate type is that the mixing error is a
