@@ -9,9 +9,11 @@
  *
  * CA arm: matrix-powers kernel + Block Gram-Schmidt + CholeskyQR. The basis
  * [v, Av, ..., A^s v] is built with zero reductions and orthogonalized with one Gram
- * all-reduce per block. The price is orthogonality: CholeskyQR squares the condition
+ * all-reduce per block. A solver cycle also factors one residual vector for H assembly.
+ * The price is orthogonality: CholeskyQR squares the condition
  * number, so a stable arm uses CholeskyQR2 (a second Gram all-reduce), giving
- * 1 + 2*ceil(m/s) reductions, valid inside the certificate kappa(B) <= u^(-1/2).
+ * 1 + 2*ceil((m+1)/s) reductions for the full m-step Arnoldi relation, valid
+ * inside the certificate kappa(B) <= u^(-1/2).
  *
  * These are serial, Eigen-dense numerical kernels.
  * The OpenMP timing path lives in src/scaling.cpp.
@@ -56,6 +58,43 @@
     B.col(0) = v;
     for (int k = 1; k <= s; ++k)
         B.col(k).noalias() = A * B.col(k - 1);
+    return B;
+}
+
+enum class CaPolynomialBasis {
+    Monomial,
+    Chebyshev
+};
+
+/**
+ * @brief Scaled Chebyshev basis for M using X = (M - center I) / half_width.
+ *
+ * The standard remedy named above, for when kappa(B) is what bounds s. The columns are
+ * T_k(X) v from the three-term recurrence T_0 = I, T_1 = X, T_{k+1} = 2 X T_k - T_{k-1}, and
+ * because |T_k| <= 1 on [-1, 1] no column runs away toward the dominant eigenvector the way
+ * A^k v does, so kappa(B) grows far more slowly in s. The affine map needs an interval
+ * containing the spectrum: center and half_width come from a Gershgorin enclosure of the same
+ * scaled operator the recurrence applies. What it costs is one more live column, since each
+ * step reads two predecessors instead of one, which on the GPU is a third shared tile and
+ * therefore a lower ceiling on s before shared memory binds.
+ */
+[[nodiscard]] inline Eigen::MatrixXd chebyshev_basis(
+    const SpMatS& M, const Eigen::VectorXd& v, int s,
+    double center, double half_width)
+{
+    if (s < 0) throw std::invalid_argument("chebyshev_basis: s must be >= 0");
+    if (!(half_width > 0.0))
+        throw std::invalid_argument("chebyshev_basis: half_width must be positive");
+
+    Eigen::MatrixXd B(M.rows(), static_cast<Eigen::Index>(s) + 1);
+    B.col(0) = v;
+    if (s == 0) return B;
+
+    B.col(1).noalias() = (M * B.col(0) - center * B.col(0)) / half_width;
+    for (int k = 1; k < s; ++k)
+        B.col(k + 1).noalias() =
+            (2.0 / half_width) * (M * B.col(k) - center * B.col(k))
+            - B.col(k - 1);
     return B;
 }
 
@@ -193,7 +232,8 @@ struct ArnoldiResult {
 // CA arm: s-step block Arnoldi (matrix-powers + BGS + CholeskyQR)
 struct CaArnoldiResult {
     Eigen::MatrixXd V;               ///< n x m orthonormal basis of K_m(A, v0)
-    Eigen::MatrixXd H;               ///< m x m projected operator V^T A V
+    Eigen::MatrixXd V_extended;      ///< n x (m+1) basis used by the Arnoldi relation
+    Eigen::MatrixXd H;               ///< (m+1) x m upper-Hessenberg Arnoldi factor
     int     m_used      = 0;
     int64_t reductions  = 0;
     double  beta        = 0.0;
@@ -207,37 +247,64 @@ struct CaArnoldiResult {
  * @brief s-step Arnoldi: builds K_m(A, v0) in ceil(m/s) blocks, one reduction each.
  *
  * Per block: matrix-powers builds s vectors with no communication; Block Gram-Schmidt
- * projects off the existing basis; CholeskyQR orthonormalises with one Gram reduction.
- * H is recovered as V^T A V (correct but not communication-optimal), which suits the
- * numerical control this kernel serves.
+ * projects off the existing basis. CholeskyQR orthonormalizes with one Gram reduction.
+ * The block projection C and local triangular factor R give B = V [C; R].
+ * The first vector of every block after the first is A times the previous basis
+ * boundary, so its coefficients are one Hessenberg column. Within a block,
+ * A B(:,j) = B(:,j+1) recursively determines the remaining columns by triangular
+ * substitution. This does not form V^T A V or add a projection reduction.
+ * One extra vector is orthogonalized to supply the residual row used by the
+ * a-posteriori exponential error estimate.
  *
  * @param reorth  a second BGS pass and CholeskyQR2: one extra reduction per block,
  *                restoring orthogonality to O(u).
  */
 [[nodiscard]] inline CaArnoldiResult ca_arnoldi(const SpMatS& A, const Eigen::VectorXd& v0,
-                                                int m, int s, bool reorth = false)
+                                                int m, int s, bool reorth = false,
+                                                CaPolynomialBasis basis =
+                                                    CaPolynomialBasis::Monomial,
+                                                double center = 0.0,
+                                                double half_width = 1.0)
 {
     if (m <= 0 || s <= 0) throw std::invalid_argument("ca_arnoldi: require m > 0 and s > 0");
+    if (basis == CaPolynomialBasis::Chebyshev && !(half_width > 0.0))
+        throw std::invalid_argument("ca_arnoldi: Chebyshev half_width must be positive");
 
     const Eigen::Index n = A.rows();
+    if (A.cols() != n || v0.size() != n || static_cast<Eigen::Index>(m) >= n)
+        throw std::invalid_argument("ca_arnoldi: require square A, matching v0, and m < n");
+
     CaArnoldiResult r;
     r.beta = v0.norm();
+    if (!(r.beta > 0.0)) throw std::invalid_argument("ca_arnoldi: v0 must be nonzero");
 
-    Eigen::MatrixXd V(n, m);
+    const Eigen::Index target = static_cast<Eigen::Index>(m) + 1;
+    Eigen::MatrixXd V(n, target);
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(target, m);
     Eigen::Index filled = 0;
     Eigen::VectorXd start = v0 / r.beta;
 
-    while (filled < static_cast<Eigen::Index>(m)) {
-        const int blk = static_cast<int>(std::min<Eigen::Index>(s, static_cast<Eigen::Index>(m) - filled));
+    while (filled < target) {
+        const int blk =
+            static_cast<int>(std::min<Eigen::Index>(s, target - filled));
 
         // No reductions here: the communication the s-step formulation avoids.
-        Eigen::MatrixXd B = matrix_powers(A, start, blk - 1);
+        Eigen::MatrixXd B =
+            basis == CaPolynomialBasis::Chebyshev
+                ? chebyshev_basis(A, start, blk - 1, center, half_width)
+                : matrix_powers(A, start, blk - 1);
+        Eigen::MatrixXd C = Eigen::MatrixXd::Zero(filled, blk);
 
         // Block Gram-Schmidt against the existing basis (one reduction), optionally twice.
         if (filled > 0) {
             const Eigen::MatrixXd Vp = V.leftCols(filled);
-            B.noalias() -= Vp * (Vp.transpose() * B);
-            if (reorth) B.noalias() -= Vp * (Vp.transpose() * B);
+            C = Vp.transpose() * B;
+            B.noalias() -= Vp * C;
+            if (reorth) {
+                const Eigen::MatrixXd C2 = Vp.transpose() * B;
+                B.noalias() -= Vp * C2;
+                C += C2;
+            }
         }
 
         // Intra-block orthogonality is set by CholeskyQR, not by the BGS pass above.
@@ -250,18 +317,47 @@ struct CaArnoldiResult {
         }
 
         V.middleCols(filled, blk) = qr.Q;
+
+        Eigen::MatrixXd T = Eigen::MatrixXd::Zero(filled + blk, blk);
+        if (filled > 0) T.topRows(filled) = C;
+        T.bottomRows(blk) = qr.R;
+
+        if (filled > 0 && filled - 1 < m)
+            H.col(filled - 1).head(filled + 1) = T.col(0).head(filled + 1);
+
+        for (int j = 0; j + 1 < blk; ++j) {
+            const Eigen::Index col = filled + j;
+            if (col >= m) break;
+
+            Eigen::VectorXd rhs = Eigen::VectorXd::Zero(target);
+            if (basis == CaPolynomialBasis::Chebyshev) {
+                rhs.head(filled + blk) = center * T.col(j);
+                if (j == 0)
+                    rhs.head(filled + blk).noalias() += half_width * T.col(j + 1);
+                else
+                    rhs.head(filled + blk).noalias() +=
+                        0.5 * half_width * (T.col(j + 1) + T.col(j - 1));
+            } else {
+                rhs.head(filled + blk) = T.col(j + 1);
+            }
+            if (col > 0)
+                rhs.noalias() -= H.leftCols(col) * T.col(j).head(col);
+            H.col(col) = rhs / T(col, j);
+        }
+
         filled += blk;
-        if (filled < static_cast<Eigen::Index>(m))
-            start = A * V.col(filled - 1);
+        if (filled < target)
+            start.noalias() = A * V.col(filled - 1);
     }
 
-    r.m_used = static_cast<int>(filled);
-    if (r.m_used > 0) {
+    r.m_used = std::min(m, std::max(0, static_cast<int>(filled) - 1));
+    if (r.m_used > 0 && filled > r.m_used) {
         r.V = V.leftCols(r.m_used);
-        r.H = r.V.transpose() * (A * r.V);
+        r.V_extended = V.leftCols(r.m_used + 1);
+        r.H = H.topLeftCorner(r.m_used + 1, r.m_used);
         r.ortho_loss = orthogonality_loss(r.V);
     }
-    r.reductions = ca_reductions(r.m_used, s, reorth);
+    r.reductions = ca_reductions(static_cast<int>(filled), s, reorth);
     return r;
 }
 
