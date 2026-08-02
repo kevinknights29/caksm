@@ -18,18 +18,26 @@ static bool isOrthonormal(const MatrixXd& V, double tol = 1e-9) {
 
 // Input Validation
 
+/// A non-square operator has no Krylov subspace to build.
+/// Expected: rejected up front with invalid_argument, not a shape error deep
+/// inside the recurrence.
 TEST_CASE("arnoldi throws on non-square matrix", "[arnoldi][validation]") {
     MatrixXd A(3, 4);
     VectorXd v0 = VectorXd::Random(3);
     REQUIRE_THROWS_AS(arnoldi(A, v0, 2), std::invalid_argument);
 }
 
+/// The start vector must live in the operator's domain.
+/// Expected: a mismatched v0 is rejected with invalid_argument.
 TEST_CASE("arnoldi throws when v0 size mismatches A", "[arnoldi][validation]") {
     MatrixXd A = MatrixXd::Random(4, 4);
     VectorXd v0 = VectorXd::Random(3);  // wrong size
     REQUIRE_THROWS_AS(arnoldi(A, v0, 2), std::invalid_argument);
 }
 
+/// The Krylov dimension must be at least 1 and at most n.
+/// Expected: 0, negative, and m > n are each rejected. m > n matters most:
+/// it cannot be satisfied and would otherwise break down mid-recurrence.
 TEST_CASE("arnoldi throws when m is out of range", "[arnoldi][validation]") {
     MatrixXd A = MatrixXd::Random(4, 4);
     VectorXd v0 = VectorXd::Random(4);
@@ -40,6 +48,9 @@ TEST_CASE("arnoldi throws when m is out of range", "[arnoldi][validation]") {
 
 // Output Shape
 
+/// The factorization has a fixed shape that every caller indexes against.
+/// Expected: V is n x m and H is (m+1) x m. The extra row of H carries the
+/// subdiagonal entry the residual estimate reads.
 TEST_CASE("arnoldi returns correctly shaped matrices", "[arnoldi][shape]") {
     constexpr long n = 8, m = 4;
     MatrixXd A  = MatrixXd::Random(n, n);
@@ -55,6 +66,9 @@ TEST_CASE("arnoldi returns correctly shaped matrices", "[arnoldi][shape]") {
 
 // Mathematical Properties
 
+/// Orthonormality of the basis is what makes H a projection of A.
+/// Expected: V^T V is the identity to 1e-9. Repeated over several random
+/// operators, since a single draw could be accidentally well conditioned.
 TEST_CASE("V columns are orthonormal", "[arnoldi][orthonormality]") {
     // Run for several random matrices to increase confidence
     for (int trial = 0; trial < 5; ++trial) {
@@ -69,10 +83,17 @@ TEST_CASE("V columns are orthonormal", "[arnoldi][orthonormality]") {
     }
 }
 
+/// The defining invariant of the factorization, and the one property every
+/// use of it depends on.
+///
+/// Expected: A*V equals V_ext*H exactly, to 1e-9, where V_ext appends the
+/// next Krylov vector. Checking only the top m rows would not do: that
+/// residual is h_{m+1,m}*||v_{m+1}||, which is not zero, so the test
+/// reconstructs v_{m+1} and verifies the full (m+1)-row relation.
 TEST_CASE("Arnoldi relation: A*V = V*H_m + h_{m+1,m} * v_{m+1} * e_m^T",
           "[arnoldi][relation]")
 {
-    // The core invariant: A * V_m = V_{m+1} * H̃  (where H̃ is the (m+1 x m) matrix)
+    // The core invariant: A * V_m = V_{m+1} * H_bar, H_bar being (m+1) x m
     constexpr long n = 15, m = 5;
     MatrixXd A  = MatrixXd::Random(n, n);
     VectorXd v0 = VectorXd::Random(n);
@@ -80,7 +101,7 @@ TEST_CASE("Arnoldi relation: A*V = V*H_m + h_{m+1,m} * v_{m+1} * e_m^T",
     auto [V, H] = arnoldi(A, v0, m);
 
     // Reconstruct V_{m+1} by appending the next Krylov vector
-    // We verify: A * V_m ≈ V_m * H_m(top m rows) + h_{m+1,m}*v_{m+1}*e_m^T
+    // We verify: A * V_m ~= V_m * H_m(top m rows) + h_{m+1,m}*v_{m+1}*e_m^T
     // Equivalently: || A*V - V*H.topRows(m) ||_F should be small
     // (only checks top-m rows of the Hessenberg relation)
     MatrixXd lhs = A * V;                           // n x m
@@ -105,6 +126,10 @@ TEST_CASE("Arnoldi relation: A*V = V*H_m + h_{m+1,m} * v_{m+1} * e_m^T",
     REQUIRE_THAT(full_residual.norm(), WithinAbs(0.0, 1e-9));
 }
 
+/// Each new basis vector is orthogonalized against all previous ones, which
+/// is exactly what leaves H upper Hessenberg.
+/// Expected: every entry below the first subdiagonal is zero to 1e-12. A
+/// nonzero there would mean an orthogonalization step was skipped.
 TEST_CASE("H is upper Hessenberg", "[arnoldi][hessenberg]") {
     constexpr long n = 10, m = 5;
     MatrixXd A  = MatrixXd::Random(n, n);
@@ -121,6 +146,10 @@ TEST_CASE("H is upper Hessenberg", "[arnoldi][hessenberg]") {
     }
 }
 
+/// The subdiagonal entries are norms, so their sign is not a free choice.
+/// Expected: every h_{j+1,j} is non-negative. A negative one would mean the
+/// basis vector was normalized with the wrong sign, which makes the
+/// factorization non-unique and breaks comparison against another arm.
 TEST_CASE("Subdiagonal entries of H are non-negative", "[arnoldi][hessenberg]") {
     constexpr long n = 10, m = 4;
     MatrixXd A  = MatrixXd::Random(n, n);
@@ -134,6 +163,9 @@ TEST_CASE("Subdiagonal entries of H are non-negative", "[arnoldi][hessenberg]") 
     }
 }
 
+/// The subspace is anchored at the start vector.
+/// Expected: V's first column is v0 normalized, to 1e-12, so the Krylov
+/// space is the one the caller asked for.
 TEST_CASE("First column of V matches normalized v0", "[arnoldi][initialization]") {
     constexpr long n = 8, m = 3;
     MatrixXd A  = MatrixXd::Random(n, n);
@@ -146,6 +178,9 @@ TEST_CASE("First column of V matches normalized v0", "[arnoldi][initialization]"
 
 // Edge Cases
 
+/// The narrowest possible request, where the loop body never runs.
+/// Expected: one column, and it is a unit vector. This is the boundary an
+/// off-by-one in the recurrence bounds would break first.
 TEST_CASE("Works with m = 1", "[arnoldi][edge]") {
     constexpr long n = 5;
     MatrixXd A  = MatrixXd::Random(n, n);
@@ -157,6 +192,10 @@ TEST_CASE("Works with m = 1", "[arnoldi][edge]") {
     REQUIRE_THAT(V.col(0).norm(), WithinRel(1.0, 1e-12));
 }
 
+/// On a symmetric operator the recurrence is short and H is tridiagonal, so
+/// the general path meets many more exact zeros than on a random matrix.
+/// Expected: it completes without throwing; no breakdown is triggered by
+/// those zeros.
 TEST_CASE("Works with symmetric positive definite matrix", "[arnoldi][spd]") {
     constexpr long n = 10, m = 5;
     MatrixXd B  = MatrixXd::Random(n, n);
