@@ -420,7 +420,7 @@ static SolveTimes run_solve(WorkState& st, const PDESystem& sys, const Config& c
             double beta = std::sqrt(red.reduce(t, partial_dot(V, V, r0, r1)));
             const double binv = (beta > 0.0) ? 1.0 / beta : 0.0;
             for (int64_t r = r0; r < r1; ++r) V[static_cast<std::size_t>(r)] *= binv;
-            #pragma omp barrier   // V.col(0) normalised before first SpMV reads it
+            #pragma omp barrier   // V.col(0) normalized before first SpMV reads it
             #pragma omp masked
             {
                 const auto now = Clock::now();
@@ -539,7 +539,7 @@ static double quantile(std::vector<double> v, double q)  // v taken by value: so
     return v[lo] + frac * (v[hi] - v[lo]);
 }
 
-static Stat summarise(const std::vector<double>& v)
+static Stat summarize(const std::vector<double>& v)
 {
     return { quantile(v, 0.5), quantile(v, 0.25), quantile(v, 0.75) };
 }
@@ -709,11 +709,11 @@ int main(int argc, char* argv[])
             price = tsr.price;
         }
 
-        const Stat s_spmv = summarise(spmv);
-        const Stat s_gs   = summarise(gs);
-        const Stat s_expm = summarise(expm);
-        const Stat s_oth  = summarise(other);
-        const Stat s_tot  = summarise(total);
+        const Stat s_spmv = summarize(spmv);
+        const Stat s_gs   = summarize(gs);
+        const Stat s_expm = summarize(expm);
+        const Stat s_oth  = summarize(other);
+        const Stat s_tot  = summarize(total);
 
         // stdout report
         std::println("");

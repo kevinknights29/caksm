@@ -217,7 +217,7 @@ struct Stat { double median = 0.0; double q1 = 0.0; double q3 = 0.0; };
     return v[lo] + (pos - static_cast<double>(lo)) * (v[hi] - v[lo]);
 }
 
-[[nodiscard]] Stat summarise(const std::vector<double>& v)
+[[nodiscard]] Stat summarize(const std::vector<double>& v)
 {
     return { quantile(v, 0.5), quantile(v, 0.25), quantile(v, 0.75) };
 }
@@ -243,7 +243,7 @@ template <typename Launch>
         const double t_hi = time_it([&] { launch(iters_hi); });
         per.push_back((t_hi - t_lo) / static_cast<double>(iters_hi - iters_lo));
     }
-    return summarise(per);
+    return summarize(per);
 }
 
 // CLI

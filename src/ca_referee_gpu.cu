@@ -1013,8 +1013,8 @@ void save_metadata(
 ///
 /// Assemble, upload, gate the operator, run the action, restore original
 /// coordinates, verify against any stored reference, and write only if every
-/// gate held. The write gate is shared with the CPU audit so the two cannot
-/// drift on what counts as admissible.
+/// gate held. The write gate lives in ca_referee_scaled.hpp and is host-tested
+/// there, so what counts as admissible is not decided in this file alone.
 [[nodiscard]] bool run_option(
     const Args& args, const Model& model, bool rainbow,
     const DeviceContention& contention, const std::string& device_name)
