@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <numbers>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -485,7 +484,7 @@ inline constexpr double kUnitRoundoff = std::numeric_limits<double>::epsilon() /
         double err;
         if (dm >= 2.0 * rho) {
             err = 10.0 / rho * std::exp(-rho)
-                * std::pow(std::numbers::e_v<double> * rho / dm, dm);
+                * std::pow(std::exp(1.0) * rho / dm, dm);
         } else if (dm >= std::sqrt(4.0 * rho)) {
             err = 10.0 * std::exp(-(dm * dm) / (5.0 * rho));
         } else {
