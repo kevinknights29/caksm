@@ -221,11 +221,15 @@ struct ScaledAugmentationResult {
 }
 
 /**
- * CPU audit implementation of the scaled-augmentation baseline.
+ * @brief Reference CPU implementation of the scaled-augmentation action.
  *
  * The Taylor recurrence and strict stopping inequality are intentionally the
  * fixed referee's rules. Only the exactly similar representation and the
  * corresponding original-coordinate norm evaluation differ.
+ *
+ * The production generator is the GPU referee. This is the independent
+ * implementation the unit tests check the algebra against on a dense control,
+ * so a change to the scaling cannot pass unnoticed.
  */
 [[nodiscard]] inline ScaledAugmentationResult
 compute_scaled_augmentation_referee(
