@@ -1396,10 +1396,10 @@ for f in scripts/plots/ca_*.py; do
 done
 ```
 
-Each figure script writes a 300 dpi PNG beside the existing figures, a vector PDF under
-`docs/thesis/figures`, and a CSV of the plotted values, so a reader can check a number without
-re-running anything. A figure whose artifact is missing is recorded as blocked in a
-`.blocked.txt` sidecar naming what it waits on, rather than drawn from the report's prose. The
+Each figure script writes a 300 dpi PNG beside the existing figures and prints its headline
+numbers, so a number quoted in a caption can be checked by re-running that one script. A figure
+whose artifact is missing is recorded as blocked in a `.blocked.txt` sidecar naming what it
+waits on, rather than drawn from the report's prose. 
 scripts share `ca_figlib.py` for transcript parsing, the participant cost model and the drawing
 furniture, and `ca_figstyle.py` for the entity colors.
 
