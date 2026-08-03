@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <numbers>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -136,7 +135,7 @@ using SpMatS = Eigen::SparseMatrix<double>;
 {
     const double dn = static_cast<double>(n);
     const double dm = static_cast<double>(m);
-    return 3.0 * dn                     // normalise V.col(0)
+    return 3.0 * dn                     // normalize V.col(0)
          + 2.0 * dn * dm * (dm + 1.0)   // sum_j 4n(j+1)
          + 3.0 * dn * dm;               // per-j norm + scale
 }
@@ -485,7 +484,7 @@ inline constexpr double kUnitRoundoff = std::numeric_limits<double>::epsilon() /
         double err;
         if (dm >= 2.0 * rho) {
             err = 10.0 / rho * std::exp(-rho)
-                * std::pow(std::numbers::e_v<double> * rho / dm, dm);
+                * std::pow(std::exp(1.0) * rho / dm, dm);
         } else if (dm >= std::sqrt(4.0 * rho)) {
             err = 10.0 * std::exp(-(dm * dm) / (5.0 * rho));
         } else {

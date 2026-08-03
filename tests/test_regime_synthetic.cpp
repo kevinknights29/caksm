@@ -16,6 +16,9 @@ using namespace regime_test;
 
 // The synthetic operator's three knobs really are independent
 
+/// The scaffold claims a closed-form spectrum, and every prediction built on
+/// it inherits that claim.
+/// Expected: the analytic eigenvalues match a dense eigensolver to 1e-11.
 TEST_CASE("analytic Kronecker-sum spectrum matches a dense eigensolver", "[synthetic][spectrum]")
 {
     SyntheticSpec sp;
@@ -29,6 +32,10 @@ TEST_CASE("analytic Kronecker-sum spectrum matches a dense eigensolver", "[synth
     REQUIRE((analytic - numeric).cwiseAbs().maxCoeff() < 1e-11);
 }
 
+/// The scale and shift knobs must act on the spectrum exactly as advertised,
+/// or a swept point is not where the map says it is.
+/// Expected: each eigenvalue becomes scale*(lambda - shift) to 1e-12, and the
+/// assembled matrix agrees with that claim to 1e-10.
 TEST_CASE("scale and shift move the spectrum analytically", "[synthetic][spectrum]")
 {
     SyntheticSpec base;
@@ -51,6 +58,10 @@ TEST_CASE("scale and shift move the spectrum analytically", "[synthetic][spectru
     REQUIRE((analytic - numeric).cwiseAbs().maxCoeff() < 1e-10);
 }
 
+/// Krylov subspaces are invariant under a shift, so the required dimension
+/// must depend on the spread and not on where the spectrum sits.
+/// Expected: the predicted m is identical before and after a shift. If it
+/// moved, the predictor would be reading absolute position rather than spread.
 TEST_CASE("shift does not change the Krylov dimension: subspaces are shift-invariant",
           "[synthetic][spectrum]")
 {
@@ -67,6 +78,15 @@ TEST_CASE("shift does not change the Krylov dimension: subspaces are shift-invar
             == predict_krylov_dim(s.lambda_min, s.lambda_max, 1e-2, 1e-8));
 }
 
+/// The load-bearing property of the whole instrument: scatter must move the
+/// memory-access coordinate while leaving every arithmetic and numerical
+/// property fixed. Without it the two map axes cannot be varied independently
+/// and every point stays on the anti-diagonal.
+///
+/// Expected: nonzero count, dimension, working set, spectrum and basis
+/// conditioning are all preserved under a global shuffle, while the modeled
+/// gather reuse does drop. Each is a separate SECTION so a failure names which
+/// invariant broke.
 TEST_CASE("the scatter knob is a similarity transform: pure-axis motion exists",
           "[synthetic][scatter][critical]")
 {
@@ -104,27 +124,37 @@ TEST_CASE("the scatter knob is a similarity transform: pure-axis motion exists",
         REQUIRE_THAT(kb, WithinRel(ks, 1e-8));
     }
 
-    SECTION("but the modelled gather traffic does move") {
+    SECTION("but the modeled gather traffic does move") {
         const Machine& mc = lookup_machine("amd-3960x");
         // A window that fits in cache is reused; a global shuffle over a large N is not.
-        REQUIRE(modelled_x_reuse(mc, 24, 1, 1L << 30) == 1.0);
-        REQUIRE(modelled_x_reuse(mc, 24, 1L << 30, 1L << 30) < 1.0);
+        REQUIRE(modeled_x_reuse(mc, 24, 1, 1L << 30) == 1.0);
+        REQUIRE(modeled_x_reuse(mc, 24, 1L << 30, 1L << 30) < 1.0);
     }
 }
 
+/// The scatter knob has to be a dial, not a switch, or the axis cannot be
+/// swept.
+/// Expected: modeled reuse is non-increasing as the shuffle window grows, and
+/// strictly decreasing once the window outgrows the cache.
 TEST_CASE("scatter_block interpolates the gather window monotonically", "[synthetic][scatter]")
 {
     const Machine& mc = lookup_machine("amd-3960x");
     const int64_t n = 1L << 30;
-    const double r_small = modelled_x_reuse(mc, 24, 1L << 20, n);
-    const double r_mid   = modelled_x_reuse(mc, 24, 1L << 25, n);
-    const double r_big   = modelled_x_reuse(mc, 24, 1L << 30, n);
+    const double r_small = modeled_x_reuse(mc, 24, 1L << 20, n);
+    const double r_mid   = modeled_x_reuse(mc, 24, 1L << 25, n);
+    const double r_big   = modeled_x_reuse(mc, 24, 1L << 30, n);
     REQUIRE(r_small >= r_mid);
     REQUIRE(r_mid   >  r_big);
 }
 
 // Basis conditioning: predicted from the spectrum alone
 
+/// The a-priori basis-conditioning prediction is made from the spectrum and
+/// the start vector alone, with no basis formed. This checks it against the
+/// basis actually built.
+/// Expected: predicted and measured kappa agree within 0.05 decades for widths
+/// 1 to 5. Compared in log10 because kappa spans orders of magnitude by
+/// construction, so a relative tolerance would be meaningless.
 TEST_CASE("predicted basis condition matches the explicitly formed basis",
           "[regime][conditioning]")
 {
@@ -143,6 +173,10 @@ TEST_CASE("predicted basis condition matches the explicitly formed basis",
     }
 }
 
+/// The spectral decomposition used by the predictor is a DST-I, which is
+/// orthonormal; if it were not, the coefficients would not be a change of
+/// basis and the prediction would be measuring something else.
+/// Expected: the coefficient vector has the same 2-norm as the input, to 1e-12.
 TEST_CASE("spectral coefficients reproduce the vector: Q is orthogonal", "[synthetic][dst]")
 {
     SyntheticSpec sp;

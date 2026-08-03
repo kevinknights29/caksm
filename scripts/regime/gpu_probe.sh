@@ -1,25 +1,27 @@
 #!/bin/bash
-# Phase 0 fact collection: the machine questions that must be answered before any kernel.
+# Record what the machine actually is, before any kernel runs on it.
 #
-# Establishes exactly what hardware synge is, and whether the CPU study's topology objection
-# applies here. Neither needs the project built and neither needs a GPU kernel: this is
-# nvidia-smi, the fabric and the scheduler, recorded so the constants in
-# include/gpu_machine.hpp have a provenance rather than a datasheet.
+# Nothing here needs the project built or a GPU kernel launched: it reads
+# nvidia-smi, the fabric and the scheduler. That bounds what it can answer.
+# Identity, capacity and topology come from here. Device geometry does not,
+# because nvidia-smi does not report it, and no roof or reduction cost does,
+# because those are measured. The closing message says which field comes from
+# where. Two of the checks decide whether the study can proceed at all.
+# A MIG slice partitions the L2 that the vertical coordinate is measured
+# against, so 6 MiB is then the wrong number, and a co-tenant process shares
+# that L2 with no way to account for it. The inter-node fabric, Ethernet or
+# InfiniBand, moves the node reduction rung by an order of magnitude, and that
+# rung is the right-hand end of the swept horizontal axis.
 #
-# Two of these checks are not formalities:
+# Run it once per node. The script probes the node it runs on, and names its
+# output after that host, so a two-node allocation needs one task per node:
 #
-#   MIG / MPS / co-tenancy.  A MIG slice reports a partitioned L2, real unlike a VM's invented one,
-#   but it must then be modeled as the partition rather than the full 6 MiB. A co-tenant process on
-#   the same device is worse: it shares the L2 the vertical coordinate is measured against,
-#   with no way to account for it.
+#   salloc -N 2 -n 20 -p compute -t 01:00:00 --nodelist=synge-n01,synge-n02
+#   srun --nodes=2 --ntasks-per-node=1 --gpus-per-node=2 \
+#       scripts/regime/gpu_probe.sh
 #
-#   The inter-node fabric.  Ethernet or InfiniBand changes the NODE rung's latency by an order
-#   of magnitude, and that rung is the right-hand end of the swept horizontal axis.
-#
-# Run this under the batch scheduler.
-#
-# Usage:
-#   sbatch --nodes=2 --gpus-per-node=2 scripts/regime/gpu_probe.sh
+# A plain `bash scripts/regime/gpu_probe.sh` inside the same allocation runs on
+# the first node only, which is the failure mode this note exists to prevent.
 set -uo pipefail
 
 WORK_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -45,7 +47,7 @@ if command -v lscpu >/dev/null 2>&1; then
 fi
 echo
 
-echo "### Devices: confirm sm_count, l2_bytes, memory and FP64 class"
+echo "### Devices: name, compute capability, memory and link width"
 if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not found. Nothing below can be trusted; load the CUDA module first."
 else
@@ -104,11 +106,12 @@ lsmod 2>/dev/null | grep -E 'nvidia_peermem|nv_peer_mem' | sed 's/^/    /' || ec
 echo
 
 echo "### Toolchain"
-for t in nvcc mpicxx nvidia-smi cmake; do
+for t in nvcc mpicc mpicxx mpirun nvidia-smi cmake; do
     if command -v "$t" >/dev/null 2>&1; then
         echo "  $t: $(command -v "$t")"
         case "$t" in
             nvcc)   nvcc --version | tail -2 | sed 's/^/      /' ;;
+            mpicc)  mpicc --version 2>/dev/null | head -1 | sed 's/^/      /' ;;
             mpicxx) mpicxx --version 2>/dev/null | head -1 | sed 's/^/      /' ;;
         esac
     else
@@ -122,13 +125,23 @@ echo
 echo "==============================================================================="
 echo "Wrote $OUT"
 echo
-echo "What to do with it:"
-echo "  1. Transcribe sm_count, l2_bytes and memory into the preset in"
-echo "     include/gpu_machine.hpp and confirm they match the datasheet priors."
-echo "  2. If MIG is enabled or a co-tenant process appears, stop. Both coordinates are"
-echo "     functions of real cache geometry, so a partitioned or shared L2 must be modeled"
-echo "     as such rather than assumed away. This is the same objection the README raises"
-echo "     against cloud VMs, and it does not stop applying because the partition is real."
-echo "  3. Record the fabric identity. It sets the NODE rung, which is the right-hand end of"
-echo "     the swept horizontal axis."
+echo "include/gpu_machine.hpp fields this probe gives you:"
+echo "    name, device_match       nvidia-smi -L"
+echo "    device_memory_bytes      memory.total"
+echo "    gpu_count                GPU lines listed for this host"
+echo "    node_count               the nodes: line above"
+echo "    interconnect             topo matrix cell (SYS, NV#, PIX, ...)"
+echo
+echo "nvidia-smi does not report device geometry. gpu-stream"
+echo "prints SMs and L2 in its header. All four are cudaGetDeviceProperties:"
+echo "    sm_count                 multiProcessorCount"
+echo "    l2_bytes                 l2CacheSize"
+echo "    shared_mem_bytes_per_sm  sharedMemPerMultiprocessor"
+echo "    warps_per_sm             maxThreadsPerMultiProcessor / 32"
+echo
+echo "Every roof and every t_reduce entry is measured, never transcribed:"
+echo "    scripts/regime/calibrate_gpu.sh, then calibrate_gpu_p2p.sh"
+echo
+echo "Stop if MIG mode is not [N/A], MPS is running, or a listed process is not"
+echo "yours: the L2 that R_v divides by is then partitioned or shared."
 echo "==============================================================================="

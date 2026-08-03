@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
 project(caksm LANGUAGES CXX C)
 
+option(CAKSM_REQUIRE_MPI
+       "Fail configuration when the multi-node GPU executables cannot use MPI"
+       OFF)
+
 # C++ Standard
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,10 +21,16 @@ add_compile_options(
 include(FetchContent)
 
 # Eigen (header-only)
+#
+# SYSTEM makes Eigen's headers arrive as -isystem, so the -W flags above apply to
+# this project's code and not to a dependency nobody here is going to fix. A
+# find_package import would get this for free; a FetchContent build tree does not,
+# because its targets are ordinary targets in this project. Needs CMake 3.25.
 FetchContent_Declare(
         Eigen3
         GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
         GIT_TAG        5.0.0
+        SYSTEM
 )
 set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING   OFF CACHE BOOL "" FORCE)
@@ -30,6 +40,24 @@ FetchContent_MakeAvailable(Eigen3)
 add_library(caksm INTERFACE)
 target_include_directories(caksm INTERFACE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(caksm INTERFACE Eigen3::Eigen)
+
+# Source revision stamped into every referee sidecar, so a stored checksum can
+# be traced back to the build that produced it.
+set(CAKSM_GIT_REVISION "unknown")
+find_package(Git QUIET)
+if(Git_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE CAKSM_GIT_REVISION
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE CAKSM_GIT_REVISION_RESULT)
+    if(NOT CAKSM_GIT_REVISION_RESULT STREQUAL "0"
+       OR CAKSM_GIT_REVISION STREQUAL "")
+        set(CAKSM_GIT_REVISION "unknown")
+    endif()
+endif()
 
 # Main Executable
 add_executable(pricer src/main.cpp)
@@ -77,7 +105,7 @@ target_compile_definitions(regime-control PRIVATE EIGEN_ENABLE_AVX512)
 # an R_v sweep. The claim under test is a speedup that switches on above R_v = 1, the
 # vertical mechanism paying once the working set spills aggregate cache. Single core,
 # single cache level. Includes the arithmetic-intensity gate, so a kernel that misses its
-# modelled reuse is flagged as a bug, not a finding.
+# modeled reuse is flagged as a bug, not a finding.
 add_executable(regime-sweep src/regime_sweep.cpp)
 target_link_libraries(regime-sweep PRIVATE caksm)
 target_compile_options(regime-sweep PRIVATE -march=native -O3)
@@ -237,6 +265,81 @@ if(CMAKE_CUDA_COMPILER)
     target_link_libraries(trsm-test PRIVATE CUDA::nvml CUDA::cublas)
     target_compile_options(trsm-test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
 
+    # The first solver component: a matrix-free pricing stencil that builds a block of
+    # powers in one shared-memory tile. The harness validates every vector against the
+    # assembled CPU operator before reporting traffic.
+    add_executable(ca-matrix-powers src/ca_matrix_powers.cu)
+    target_include_directories(ca-matrix-powers PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(ca-matrix-powers PRIVATE caksm CUDA::nvml)
+    target_compile_options(ca-matrix-powers PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # The tile geometry sets the ghost redundancy of a launch, so sweeping it needs
+    # separate binaries rather than a run-time flag: the tile extents are template
+    # and shared-memory sizes. Same source, same numerics gate, one geometry each.
+    foreach(tile "16x8x8" "8x8x8" "16x8x4")
+        string(REPLACE "x" ";" tile_extents "${tile}")
+        list(GET tile_extents 0 tile_x)
+        list(GET tile_extents 1 tile_y)
+        list(GET tile_extents 2 tile_z)
+        add_executable(ca-matrix-powers-${tile} src/ca_matrix_powers.cu)
+        target_include_directories(ca-matrix-powers-${tile}
+                PRIVATE ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(ca-matrix-powers-${tile} PRIVATE caksm CUDA::nvml)
+        target_compile_definitions(ca-matrix-powers-${tile} PRIVATE
+                CAKSM_MPK_BLOCK_X=${tile_x}
+                CAKSM_MPK_BLOCK_Y=${tile_y}
+                CAKSM_MPK_BLOCK_Z=${tile_z})
+        target_compile_options(ca-matrix-powers-${tile}
+                PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+        # The tile sweep found a geometry worth 1.28x to 1.39x over the
+        # production 8x4x4 at both production points, so the single-GPU result
+        # has to be re-reported at the better geometry rather than left as a
+        # kernel-level observation. That needs the solver itself rebuilt on each
+        # tile, which is a compile-time extent, so it is one binary per geometry
+        # exactly as the kernel harness is. The production default is unchanged
+        # and these are additional targets.
+        add_executable(ca-integrator-${tile} src/ca_arnoldi_gpu.cu)
+        target_include_directories(ca-integrator-${tile}
+                PRIVATE ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(ca-integrator-${tile}
+                PRIVATE caksm CUDA::nvml CUDA::cublas CUDA::cusolver)
+        target_compile_definitions(ca-integrator-${tile} PRIVATE
+                CAKSM_MPK_BLOCK_X=${tile_x}
+                CAKSM_MPK_BLOCK_Y=${tile_y}
+                CAKSM_MPK_BLOCK_Z=${tile_z})
+        target_compile_options(ca-integrator-${tile}
+                PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+    endforeach()
+
+    # One-GPU CA-Arnoldi: the numerical gate at --steps 0, where block Gram-Schmidt
+    # and CholQR2 use the measured kernels, H is assembled from the block factors,
+    # and exp(H)e1 stays on-device; the single-device integrator at --steps K. One
+    # program, one name, so the manifest carries one content hash for it.
+    add_executable(ca-integrator src/ca_arnoldi_gpu.cu)
+    target_include_directories(ca-integrator PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(ca-integrator
+            PRIVATE caksm CUDA::nvml CUDA::cublas CUDA::cusolver)
+    target_compile_options(ca-integrator PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Independent full-accuracy referee: the assembled pricing operator is uploaded as CSR
+    # and applied with cuSPARSE, keeping this path separate from the production stencil.
+    add_executable(ca-referee-gpu src/ca_referee_gpu.cu)
+    target_include_directories(ca-referee-gpu PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(ca-referee-gpu
+            PRIVATE caksm CUDA::nvml CUDA::cusparse)
+    # Synge's nvcc host toolchain is GCC 8-era: std::filesystem is implemented
+    # in the separate libstdc++fs compatibility archive there.  Newer GNU
+    # toolchains still provide the archive, so linking it explicitly on Linux
+    # keeps the CUDA target portable without changing the C++ ABI or numerics.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(ca-referee-gpu PRIVATE stdc++fs)
+    endif()
+    target_compile_options(ca-referee-gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    target_compile_definitions(ca-referee-gpu PRIVATE
+            CAKSM_GIT_REVISION="${CAKSM_GIT_REVISION}")
+
     # The interconnect rungs need a real collectives library: the reduction timed must be the
     # one an implementation would actually call, or R_h's calibrated constant is the slope of
     # code nobody runs.
@@ -249,7 +352,17 @@ if(CMAKE_CUDA_COMPILER)
     #
     # NAMES carries libnccl.so.2 explicitly: a pip-installed NCCL (nvidia-nccl-cu12) ships the
     # versioned soname with no unversioned symlink, and plain `nccl` would miss it.
-    find_package(MPI COMPONENTS CXX)
+    # The CUDA sources use MPI's C API only.  Asking FindMPI for the C++ component needlessly
+    # depends on the deprecated MPI C++ bindings and can miss an otherwise usable installation.
+    # CAKSM_REQUIRE_MPI is intended for multi-node experiment builds: it turns the otherwise
+    # useful single-node/NCCL-only fallback into an early, unambiguous configure error.
+    find_package(MPI COMPONENTS C)
+    if(CAKSM_REQUIRE_MPI AND NOT MPI_C_FOUND)
+        message(FATAL_ERROR
+            "CAKSM_REQUIRE_MPI=ON, but no MPI C compiler/runtime was found. "
+            "Load the site's MPI module, verify `mpicc` and `mpirun` are on PATH, "
+            "then configure a fresh build directory or pass -DMPI_C_COMPILER=/path/to/mpicc.")
+    endif()
     find_library(NCCL_LIBRARY NAMES nccl libnccl.so.2
             HINTS ENV NCCL_HOME ENV NCCL_ROOT ENV CUDA_HOME
             PATH_SUFFIXES lib lib64 nvidia/nccl/lib)
@@ -273,8 +386,32 @@ if(CMAKE_CUDA_COMPILER)
                 PRIVATE ${NCCL_LIBRARY} CUDA::nvml CUDA::cublas CUDA::cusolver)
         target_compile_options(regime-gpu-sstep-2gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
 
-        if(MPI_CXX_FOUND)
-            target_link_libraries(calibrate-gpu-p2p PRIVATE MPI::MPI_CXX)
+        add_executable(ca-matrix-powers-2gpu src/ca_matrix_powers_2gpu.cu)
+        target_include_directories(ca-matrix-powers-2gpu
+                PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(ca-matrix-powers-2gpu
+                PRIVATE caksm ${NCCL_LIBRARY} CUDA::nvml)
+        target_compile_options(ca-matrix-powers-2gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+        add_executable(ca-integrator-2gpu src/ca_integrator_2gpu.cu)
+        target_include_directories(ca-integrator-2gpu
+                PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(ca-integrator-2gpu
+                PRIVATE caksm ${NCCL_LIBRARY} CUDA::nvml CUDA::cublas
+                        CUDA::cusolver CUDA::nvToolsExt)
+        target_compile_options(ca-integrator-2gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+        if(MPI_C_FOUND)
+            target_link_libraries(ca-integrator-2gpu PRIVATE MPI::MPI_C)
+            target_compile_definitions(ca-integrator-2gpu PRIVATE CAKSM_HAVE_MPI)
+            message(STATUS
+                "ca-integrator-2gpu: MPI bootstrap enabled for the multi-node NCCL path")
+        else()
+            message(STATUS
+                "ca-integrator-2gpu: NCCL only, no MPI; the multi-node path is disabled")
+        endif()
+
+        if(MPI_C_FOUND)
+            target_link_libraries(calibrate-gpu-p2p PRIVATE MPI::MPI_C)
             target_compile_definitions(calibrate-gpu-p2p PRIVATE CAKSM_HAVE_MPI)
             message(STATUS "calibrate-gpu-p2p: NCCL + MPI, both DEVICE_P2P and NODE rungs")
         else()
@@ -331,10 +468,13 @@ else()
 endif()
 
 # Catch2
+# SYSTEM for the same reason as Eigen above: Catch2's headers are not this
+# project's warnings to answer for.
 FetchContent_Declare(
         Catch2
         GIT_REPOSITORY https://github.com/catchorg/Catch2.git
         GIT_TAG        v3.5.2
+        SYSTEM
 )
 FetchContent_MakeAvailable(Catch2)
 
@@ -348,6 +488,10 @@ target_link_libraries(arnoldi_tests
         Catch2::Catch2WithMain  # Catch2 provides its own main(), you don't write one
 )
 
+add_executable(ca_referee_tests tests/test_ca_referee_scaled.cpp)
+target_link_libraries(
+        ca_referee_tests PRIVATE caksm Catch2::Catch2WithMain)
+
 # Regime-instrument tests: the invariants the map rests on (permutation similarity,
 # R_v's aggregate accounting frame, MGS/s-step reduction counts, CholQR breakdown).
 #
@@ -359,6 +503,7 @@ add_executable(regime_tests
         tests/test_regime_nonnormal.cpp
         tests/test_regime_kernels.cpp
         tests/test_gpu_regime.cpp
+        tests/test_ca_integrator_memory.cpp
 )
 target_link_libraries(regime_tests PRIVATE caksm Catch2::Catch2WithMain)
 target_compile_options(regime_tests PRIVATE -O2)
@@ -367,6 +512,7 @@ target_compile_options(regime_tests PRIVATE -O2)
 include(CTest)
 include(Catch)
 catch_discover_tests(arnoldi_tests)
+catch_discover_tests(ca_referee_tests TEST_PREFIX "ca-referee.")
 # Prefix the regime-instrument tests so `ctest -R regime` selects them: ctest filters on
 # test name, and Catch2 registers each test case under its description, not its [regime]
 # tag or target name.

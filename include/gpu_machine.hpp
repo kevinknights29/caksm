@@ -14,15 +14,16 @@
  *   1. L2 is one device-wide block. aggregate_l2_bytes() ignores P by design, so R_v stops
  *      being a function of how much of the GPU is engaged.
  *   2. A reduction crosses up to five tiers, not two, and the grid tier carries a
- *      kernel-launch cost with no CPU analogue. Hence a tier vector and a separate launch term.
+ *      kernel-launch cost with no CPU analogue. Hence, a tier vector and a separate launch term.
  *   3. The compute roof is a device figure that must be gated. Both map coordinates measure
  *      communication, so a compute-bound kernel is off-map rather than lower-left.
  *      roofline_gate() is that gate and runs before any point is placed.
  *
- * Provenance rule, inherited from the CPU side: hardware fields are datasheet transcription,
- * but every t_reduce tier and every achieved roof comes from an offline measurement on the
- * host itself (scripts/regime/calibrate_gpu.sh). `reduction_calibrated` and `roofline_gated`
- * keep an untested preset from emitting a confident magnitude.
+ * Where each number comes from, the same rule as the CPU side: geometry and the roofs a vendor
+ * publishes are transcribed from the datasheet, but every t_reduce tier and every achieved roof
+ * is measured offline on the host itself (scripts/regime/calibrate_gpu.sh). `reduction_calibrated`
+ * and `roofline_gated` record which of the two a field is, so an untested preset cannot emit a
+ * confident magnitude.
  *
  * @author Kevin Knights
  * @date 2026-07-21
@@ -31,13 +32,19 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
 /**
- * @brief The rungs of a GPU reduction, cheapest first.
+ * @brief How far a GPU reduction has to reach to combine its partial results, cheapest first.
+ *
+ * A reduction combines partials over a widening scope: threads within a warp, then warps within
+ * a block, then blocks within a grid, then devices, then nodes. Each scope is one rung of that
+ * ladder, and reaching rung i means having already paid for every rung below it, which is why
+ * t_reduce_s stores increments rather than totals.
  *
  * The CPU's two tiers and one saturation constant cannot express this ladder: the steps span
  * four orders of magnitude, and three of them are different mechanisms rather than the same
@@ -86,13 +93,23 @@ enum class Precision { FP64, FP32 };
 /**
  * @brief A-priori hardware parameters for one GPU environment.
  *
- * @note The fields marked measured are not datasheet values and must not be guessed. A preset
- *       whose tiers are unmeasured carries reduction_calibrated = false, which every consumer
- *       of R_h checks before printing a magnitude.
+ * @note The fields marked measured are not datasheet values and must not be guessed. Each comes
+ *       from an offline binary run on an idle device over seven repeats, reported as a median:
+ *       `gpu-fma-loop` for the FP64 and FP32 roofs, `gpu-stream` for the achieved HBM and L2
+ *       bandwidths, `calibrate-gpu-reduction` for the warp, block and grid increments and the
+ *       launch term, and `calibrate-gpu-p2p` for the interconnect bandwidth and the device and
+ *       node increments. scripts/regime/calibrate_gpu.sh and calibrate_gpu_p2p.sh drive them,
+ *       and gpu_contention.cuh makes them refuse to emit a constant from a contended device.
+ *       A preset whose tiers are unmeasured carries reduction_calibrated = false, which every
+ *       consumer of R_h checks before printing a magnitude.
  */
 struct GpuMachine {
     std::string_view key;
     std::string_view name;
+    /// Distinguishing token of cudaGetDeviceProperties::name, lower case. An instrument that
+    /// predicts before measuring selects its preset from the device it is about to run on,
+    /// so the match has to come from the driver rather than from a hardcoded key.
+    std::string_view device_match;
 
     // Device geometry
     int     sm_count;                 ///< SMs on one device; this is P
@@ -142,13 +159,14 @@ struct GpuMachine {
  * cudaGetDeviceProperties; every t_reduce entry and every achieved roof is a measurement.
  *
  * The cards are a near-controlled pair: same 6 MiB L2, same ~900 GB/s bandwidth class, FP64
- * differing by 12.6x. They hold the vertical axis fixed and vary only the compute roof, which
+ * differing by 12x. They hold the vertical axis fixed and vary only the compute roof, which
  * is the lever that tests the roofline precondition.
  */
 inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
     {
         "v100-pcie-16gb",
         "NVIDIA Tesla V100-PCIE-16GB (synge)",
+        "v100-pcie-16gb",
         80,             // SMs (GV100)
         64,             // 2048 resident threads / SM
         6L << 20,       // 6 MiB device-wide L2
@@ -207,6 +225,7 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         // has to hold first.
         "rtx-3090",
         "NVIDIA GeForce RTX 3090 (puffin)",
+        "rtx 3090",
         82,             // SMs (GA102)
         48,             // CC 8.6: 1536 resident threads / SM, not 2048
         6L << 20,       // 6 MiB L2, same as the V100: what makes the pair controlled
@@ -249,6 +268,29 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         + ".  Valid keys: v100-pcie-16gb, rtx-3090");
 }
 
+/**
+ * @brief The calibrated preset for a device, matched on its driver-reported name.
+ *
+ * A hardcoded key is correct on the host it was written for and silently wrong everywhere
+ * else, which is the one failure mode a predict-then-measure printout cannot tolerate. An
+ * uncalibrated device names itself in the error rather than borrowing another card's
+ * constants.
+ */
+[[nodiscard]] inline const GpuMachine& lookup_gpu_machine_for_device(
+    std::string_view device_name)
+{
+    std::string lowered(device_name);
+    std::transform(
+        lowered.begin(), lowered.end(), lowered.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const auto& g : kGpuMachines)
+        if (lowered.find(g.device_match) != std::string::npos) return g;
+    throw std::invalid_argument(
+        "No calibrated GPU machine for device: " + std::string(device_name)
+        + ".  Calibrated devices: v100-pcie-16gb, rtx-3090.  Calibrate this "
+          "device with scripts/regime/calibrate_gpu.sh before predicting on it.");
+}
+
 // Tier reachability
 /**
  * @brief Whether this machine can exercise a rung at all.
@@ -266,6 +308,33 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         case ReductionTier::NODE:       return gm.node_count > 1;
     }
     return false;
+}
+
+/**
+ * @brief The reduction rung exercised by an observed solver topology.
+ *
+ * A single GPU still performs a device-wide reduction, so its highest mechanism is
+ * GRID. Multiple GPUs on one host cross DEVICE_P2P, more than one host crosses NODE.
+ * Keeping this decision independent of the MPI process count matters because one
+ * process may own two GPUs, while a one-GPU process is not a P2P topology.
+ */
+[[nodiscard]] inline ReductionTier collective_tier_for_topology(
+    int world_gpus, int node_count)
+{
+    if (world_gpus < 1 || node_count < 1 || node_count > world_gpus)
+        throw std::invalid_argument(
+            "collective topology requires 1 <= nodes <= GPUs");
+    if (node_count > 1) return ReductionTier::NODE;
+    if (world_gpus > 1) return ReductionTier::DEVICE_P2P;
+    return ReductionTier::GRID;
+}
+
+/// A cost may be published only when the requested mechanism exists and was measured.
+[[nodiscard]] inline constexpr bool tier_cost_available(
+    const GpuMachine& gm, ReductionTier tier) noexcept
+{
+    return tier_reachable(gm, tier)
+        && gm.tier_calibrated[tier_index(tier)];
 }
 
 /// The most expensive rung this machine can place a point on: the right-hand end of the
@@ -418,7 +487,7 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
  * ridge below about 2 SMs and MGS's 0.375 below about 4: engage less of the device than that
  * and the Arnoldi cycle really is compute-bound, and really is off-map.
  *
- * The gate uses this rather than the whole-device ridge. Otherwise it certifies a point as
+ * The gate uses this rather than the whole-device ridge. Otherwise, it certifies a point as
  * memory-bound while attainable_flops() prices it on the compute branch, where the cycle time
  * carries a 1/P that breaks the P-independence the Phase 0 derivation rests on.
  */

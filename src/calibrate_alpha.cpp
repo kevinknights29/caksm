@@ -123,7 +123,7 @@ struct Stat {
     return v[lo] + (pos - static_cast<double>(lo)) * (v[hi] - v[lo]);
 }
 
-[[nodiscard]] Stat summarise(const std::vector<double>& v)
+[[nodiscard]] Stat summarize(const std::vector<double>& v)
 {
     return { quantile(v, 0.5), quantile(v, 0.25), quantile(v, 0.75) };
 }
@@ -448,7 +448,7 @@ int main(int argc, char* argv[])
 
             Point pt;
             pt.P        = P;
-            pt.t_reduce = summarise(samples);
+            pt.t_reduce = summarize(samples);
             pt.alpha_implied = (P > 1)
                 ? pt.t_reduce.median / std::log2(static_cast<double>(P))
                 : std::numeric_limits<double>::quiet_NaN();

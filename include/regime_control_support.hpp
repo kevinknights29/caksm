@@ -39,7 +39,7 @@
 namespace regime_control {
 
 /**
- * @brief The real discretised Black-Scholes basket operator, wrapped as a SyntheticOperator
+ * @brief The real discretized Black-Scholes basket operator, wrapped as a SyntheticOperator
  *        so it runs through the identical control machinery.
  *
  * Closes the transfer argument by measurement rather than category membership. Assembled
@@ -259,10 +259,10 @@ struct EigenData {
 /// decomposition. `v_unperm`/`v_perm` mirror decompose()'s two conventions.
 struct Coeffs { Eigen::VectorXd r; Eigen::VectorXcd c; };
 
-/// The standard eigenvector conditioning: kappa_2 of the eigenvectors normalised to unit
+/// The standard eigenvector conditioning: kappa_2 of the eigenvectors normalized to unit
 /// 2-norm (Eigen's convention). Used for every non-normal operator so the gap-vs-kappa(X)
 /// law compares like with like (the analytic r^(d(n1-1)) formula is a different,
-/// un-normalised scaling). Returns NaN if the eigensolver fails.
+/// un-normalized scaling). Returns NaN if the eigensolver fails.
 inline double unit_norm_kappa_X(const SyntheticOperator& op)
 {
     if (op.is_normal) return 1.0;
@@ -271,7 +271,7 @@ inline double unit_norm_kappa_X(const SyntheticOperator& op)
     return condition_number(es.eigenvectors());
 }
 
-/// kappa_2 of the unit-2-norm eigenvectors of a small dense block. Eigen normalises
+/// kappa_2 of the unit-2-norm eigenvectors of a small dense block. Eigen normalizes
 /// EigenSolver's columns to unit length, so this matches unit_norm_kappa_X's convention
 /// exactly and the two are directly comparable.
 inline double unit_norm_kappa_block(const Eigen::MatrixXd& M)
@@ -345,7 +345,7 @@ inline EigenData decompose(const SyntheticOperator& op, const SyntheticSpec& spe
     EigenData e;
     if (op.has_analytic_spectrum) {
         // Closed-form spectrum: analytic lambda and c, but kappa(X) is the unit-2-norm
-        // value (consistent with the dense paths), not the un-normalised eigvec_condition.
+        // value (consistent with the dense paths), not the un-normalized eigvec_condition.
         e.normal  = true;
         e.lam_r   = op.lambda;
         e.c_r     = spectral_coefficients(spec, v_unperm);
@@ -516,7 +516,7 @@ inline VectorCert certify_vector(const SyntheticOperator& op, const Args& a,
 }
 
 /// Departure from symmetry of D^{-1} A D, after the known advection diagonal. Near zero
-/// means the non-normality was diagonally removable (an artefact of a fixed diagonal).
+/// means the non-normality was diagonally removable (an artifact of a fixed diagonal).
 inline double departure_after_symmetrizer(const SyntheticOperator& op, const Eigen::VectorXd& d)
 {
     if (d.size() != op.n) return std::numeric_limits<double>::quiet_NaN();
@@ -550,7 +550,7 @@ inline int conservative_s_max(const EigenData& eig, int ceiling)
  * single crossing and is read as the prediction genuinely disagreeing.
  *
  * This is not a measured platform noise floor. The spread of raw s_max across compilers,
- * optimisation levels and repeats has not been characterised; the only evidence behind the
+ * optimization levels and repeats has not been characterized; the only evidence behind the
  * value is the qualitative observation that s_max moves by 1 at threshold crossings. Measure
  * that spread before quoting this as an empirical property of the platform.
  */

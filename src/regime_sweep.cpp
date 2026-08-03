@@ -69,7 +69,7 @@ double quantile(std::vector<double> v, double q)
     return v[lo] + (pos - static_cast<double>(lo)) * (v[hi] - v[lo]);
 }
 
-Stat summarise(const std::vector<double>& v)
+Stat summarize(const std::vector<double>& v)
 {
     return { quantile(v, 0.5), quantile(v, 0.25), quantile(v, 0.75) };
 }
@@ -122,7 +122,7 @@ double time_build(auto&& build, int repeats, double& checksum)
         t.push_back(Sec(Clock::now() - t0).count());
         checksum += B(B.rows() / 2, B.cols() - 1);
     }
-    return summarise(t).median;
+    return summarize(t).median;
 }
 
 /// One row of the s-width sweep.
@@ -372,7 +372,7 @@ int main(int argc, char* argv[])
                 if (r > 0) t.push_back(Sec(Clock::now() - t0).count());
                 checksum += B(N / 2, a.m);
             }
-            return summarise(t);
+            return summarize(t);
         }();
         // Allocated once, before the timed repeats, and reused by every call: a real
         // solver preallocates its workspace once and reuses it across time-steps, and a
@@ -390,7 +390,7 @@ int main(int argc, char* argv[])
                 if (r > 0) t.push_back(Sec(Clock::now() - t0).count());
                 checksum += B(N / 2, a.m);
             }
-            return summarise(t);
+            return summarize(t);
         }();
 
         // Traffic model. Baseline reads the operator m times, tiled reads it once per block.
@@ -424,7 +424,7 @@ int main(int argc, char* argv[])
         std::println("  speedup = {:.2f}x   (traffic ratio m/blocks = {:.2f}x, blocks={})",
                      speedup, traffic_ratio, blocks);
         if (plan.form == MpkForm::TILED && !resident)
-            std::println("  AI gate: {} (tiled realised {:.0f}% of the modelled traffic cut)",
+            std::println("  AI gate: {} (tiled realized {:.0f}% of the modeled traffic cut)",
                          ai_gate ? "PASS" : "FAIL -- KERNEL BUG, not a finding",
                          100.0 * speedup / traffic_ratio);
         else
@@ -445,7 +445,7 @@ int main(int argc, char* argv[])
                     if (r > 0) t.push_back(Sec(Clock::now() - t0).count());
                     checksum += B(N / 2, a.m);
                 }
-                return summarise(t);
+                return summarize(t);
             }();
             const double gf_nohalo = flops / t_nohalo.median / 1e9;
             std::println("");

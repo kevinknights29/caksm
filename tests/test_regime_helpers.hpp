@@ -48,6 +48,10 @@ using Catch::Matchers::WithinRel;
 
 namespace regime_test {
 
+/// A reproducible unit vector, so a failing case can be re-run exactly.
+/// Deliberately not random: a conditioning result that only holds for some
+/// draws is not a result, and a flaky test here would be indistinguishable
+/// from a real regression.
 inline Eigen::VectorXd deterministic_unit_vector(Eigen::Index n)
 {
     Eigen::VectorXd v(n);
@@ -57,6 +61,10 @@ inline Eigen::VectorXd deterministic_unit_vector(Eigen::Index n)
     return v;
 }
 
+/// Move a vector into the scattered operator's ordering.
+/// The scatter knob is a symmetric permutation P A P^T, so a comparison
+/// against the banded arm must permute the start vector too; skipping this
+/// would compare the two operators on different vectors.
 inline Eigen::VectorXd apply_perm(const std::vector<int64_t>& perm, const Eigen::VectorXd& v)
 {
     Eigen::VectorXd out(v.size());
@@ -65,6 +73,8 @@ inline Eigen::VectorXd apply_perm(const std::vector<int64_t>& perm, const Eigen:
     return out;
 }
 
+/// Ascending eigenvalues from a dense symmetric solver, for checking the
+/// analytic spectrum against something that shares no code with it.
 inline Eigen::VectorXd sorted_spectrum(const SpMatS& A)
 {
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Eigen::MatrixXd(A),

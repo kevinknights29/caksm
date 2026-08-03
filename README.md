@@ -16,14 +16,16 @@ Whether that trade pays is not a property of the algorithm. It depends on the op
 grid, and the machine. This repository answers *when* it pays, and does so in coordinates
 that transfer.
 
-Two artifacts support that answer. A **benchmark pricer** in C++23 implements five methods
+Three artifacts support that answer. A **benchmark pricer** in C++23 implements five methods
 (Crank-Nicolson, two ADI variants, a one-shot matrix exponential, and a Krylov exponential
 integrator) on two 3-asset European options, and establishes the uncompromised baseline the
 CA work must beat. A **regime study** builds a dimensionless map of the CA design space:
 because both of its axes are ratios rather than absolute times, the map is independent of
 the machine and of the problem, so a reader can place their own operator and hardware on it
-and read off which mechanism, if either, can pay for them. The CA Krylov exponential
-integrator itself is not yet implemented; the map exists to decide what to build.
+and read off which mechanism, if either, can pay for them. A **distributed CA Krylov
+exponential integrator** then instantiates that placement on up to four Synge V100s. Its
+as-measured record is frozen; the latest exact-depth correction source and replacement
+measurements remain behind the cluster gates stated below.
 
 ## Contents
 
@@ -53,12 +55,20 @@ integrator itself is not yet implemented; the map exists to decide what to build
     - [The computability gap, and why Fourier does not close it](#the-computability-gap-and-why-fourier-does-not-close-it)
   - [The horizontal mechanism: a measured null result](#the-horizontal-mechanism-a-measured-null-result)
   - [The vertical mechanism: a measured shortfall](#the-vertical-mechanism-a-measured-shortfall)
-  - [Block width: two roofs, and which one binds](#block-width-two-roofs-and-which-one-binds)
+  - [Block degree: two roofs, and which one binds](#block-degree-two-roofs-and-which-one-binds)
   - [The map, and where the real operator travels](#the-map-and-where-the-real-operator-travels)
   - [Running the regime study](#running-the-regime-study)
   - [Standing caveats](#standing-caveats)
 - [Porting the map to GPUs](#porting-the-map-to-gpus-branch-regime-analysis-gpu)
   - [The pair, measured: the negative arm fires](#the-pair-measured-the-negative-arm-fires)
+- [The distributed CA exponential integrator](#the-distributed-ca-exponential-integrator-branch-ca-integrator)
+  - [Results](#results)
+  - [Figures](#figures)
+  - [The solver](#the-solver)
+  - [The two arms](#the-two-arms)
+  - [What the solver reports](#what-the-solver-reports)
+  - [Running it](#running-it)
+  - [Standing caveats](#standing-caveats-1)
 - [Repository layout](#repository-layout)
 
 ## Platform
@@ -138,6 +148,10 @@ Targets: `pricer` (the option pricer), `profiler`, `scaling` (the OpenMP scaling
 instrument), `regime-control` (the numerics gate), `regime-sweep` (the timed regime
 sweeps), `calibrate-alpha` (the reduction-cost calibration), and `stream`.
 
+Those are the portable CPU targets. The CA GPU targets later in this README are built only on
+Synge or Puffin, where CUDA and NVML are available; distributed builds also need NCCL and
+multi-node MPI. Their acceptance build uses `CAKSM_REQUIRE_MPI=ON`.
+
 An optional compile-commands symlink improves IDE integration:
 
 ```bash
@@ -165,12 +179,17 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### Dependencies
 
-| Library  | Source                           | Purpose                                         |
-|----------|----------------------------------|-------------------------------------------------|
-| `Eigen`  | fetched via CMake `FetchContent` | Sparse linear algebra, dense matrix exponential |
-| `Catch2` | fetched via CMake `FetchContent` | Unit testing framework                          |
+| Library     | Source                           | Purpose                                         |
+|-------------|----------------------------------|-------------------------------------------------|
+| `Eigen`     | fetched via CMake `FetchContent` | Sparse linear algebra, dense matrix exponential |
+| `Catch2`    | fetched via CMake `FetchContent` | Unit testing framework                          |
+| CUDA + NVML | Synge/Puffin environment         | CA GPU kernels, device query, contention gate   |
+| NCCL        | Synge environment                | Distributed reductions and halo transport       |
+| MPI         | Synge environment                | Multi-node process launch and acceptance        |
 
-No system-level installs are required beyond GCC 16. CMake downloads Eigen and Catch2 automatically on first configure.
+The portable CPU targets require no additional system libraries beyond the compiler; CMake
+downloads Eigen and Catch2 on first configure. The CUDA workstream uses the cluster-provided
+libraries above and is not compiled on the local development host.
 
 ### Run tests
 
@@ -560,8 +579,13 @@ $(R_v, R_h)$ plane as the synthetic instrument.
 
 #### Basis conditioning and the confound control
 
-The certified s-step block width $s_{\max}$ is predicted from the spectrum alone (a
-row-scaled Vandermonde), then measured. Where a closed-form spectrum exists the prediction
+This regime-control section uses the legacy power-degree convention: $s_{\max}$ is the
+highest appended power and $[v,Av,\ldots,A^{s_{\max}}v]$ has $s_{\max}+1$ columns. The CA
+integrator section below instead uses CLI `--s W` for `W` consumed block columns; P7 converts
+between them explicitly.
+
+The certified s-step degree $s_{\max}$ is predicted from the spectrum alone (a row-scaled
+Vandermonde), then measured. Where a closed-form spectrum exists the prediction
 is **integer-exact on 20 of 21 runs**; the single exception is the most violently
 non-normal point in the sweep ($\gamma = 0.4$, $\kappa(X) = 7.7 \times 10^8$) and is off by
 one step. Every deviation larger than that lives in the variable-advection arm - the family
@@ -640,7 +664,7 @@ converts directly into block width. Each extra power appended to
 $[v, Av, \ldots, A^s v]$ multiplies its condition number by a roughly constant factor,
 measured at a median of 1.05 decades per power over the swept family (inter-quartile range
 0.95 to 1.12), so the figure marks one $s$-step at 1.2 decades. An error below that line
-cannot move the certified block width by a full step.
+cannot move the certified highest power, and therefore the basis width, by a full step.
 
 The real Black-Scholes operator is placed on this figure as a test point, excluded from
 every fit. Its prediction error runs 0.19 to 0.85 decades at $\kappa(X)$ up to $2.3 \times
@@ -740,9 +764,9 @@ Dimension still dominates, though not because correlation is harmless: $\rho$ ac
 entire admissible range buys about 1.7 assets' worth of conditioning ($4.95\times$, against
 $2.54\times$ per asset), and $\rho \le 1$ while $d$ is unbounded. Correlation never helps.
 
-The practical consequence is unchanged by the correction: **measure the block width at high
-$d$ rather than trusting a conservative a-priori bound**, because $\kappa(X)$ grows
-geometrically in $d$ while staying flat under grid refinement.
+The practical consequence is unchanged by the correction: **measure the certified degree, and
+hence the basis width, at high $d$ rather than trusting a conservative a-priori bound**, because
+$\kappa(X)$ grows geometrically in $d$ while staying flat under grid refinement.
 
 The law's scope is the synthetic instrument. The real basket operator couples all three
 asset pairs ([`rho_off = {0.50, 0.50, 0.50}`](include/regime_control_support.hpp:74)), so
@@ -836,7 +860,11 @@ uncore counters need root, so modeled bytes are reconciled against the roofline 
 weaker evidence, labeled as such on every figure. And the projected curve on
 `regime_sweep.png` is an explicit model claim, drawn dashed, never presented as data.
 
-### Block width: two roofs, and which one binds
+### Block degree: two roofs, and which one binds
+
+This section retains the same legacy convention: `s` is recurrence depth/highest power and
+the basis has `s+1` columns. It is not the consumed-column convention of the CA integrator's
+`--s` flag.
 
 Everywhere else the block width $s$ is pinned at the certified value, which hides a
 question. $s$ is pushed *up* by both mechanisms - a wider block means fewer reductions and
@@ -1082,18 +1110,351 @@ fewer reductions), and the two-GPU crossover is the reduction saving paying at a
 rung. Both rest on measured hardware limits rather than library artifacts, which is the whole point
 of chasing the kernels to the roofline.
 
+## The distributed CA exponential integrator (branch `ca-integrator`)
+
+The map places an operator; this builds one and runs it where the map says the crossover should
+be. The production method is the monomial matrix-powers recurrence with certified CholQR2, on
+real spatial slabs across up to four V100s and two Synge nodes, reduced with NCCL and validated
+against an independent cuSPARSE referee that never touches the production stencil.
+
+The measured record is `docs/ca_integrator_final_report.md`. Read its addendum first. A
+line-by-line review against the closed specifications found a defect that changed measured
+quantities, and correcting it moved several of the report's conclusions: one grew, one reversed,
+and one did not survive.
+
+### Results
+
+Every number below is a seven-repeat median on idle, NVML-gated Synge V100s, and every figure is
+reproducible from its own script under `scripts/plots/`, with a CSV of the plotted values beside
+it.
+
+**The correction.** A block of width `s` consumes basis columns `0` to `s-1`, so the recurrence
+needs `s-1` steps and a halo `s-1` planes deep. The delivered implementation requested `s` of each
+and discarded the extra column, which charged the `s=1` control for work it never used. The
+`exact-depth` arm removes that; the `as-measured` arm is retained unchanged as the frozen control.
+
+Halo planes per basis vector, measured, against the value predicted before the run:
+
+| Arm         | `s=1` | `s=4` |
+|-------------|------:|------:|
+| as-measured | 2.000 | 1.250 |
+| exact-depth | 1.000 | 0.997 |
+
+Under the correction both widths move the same halo volume per basis vector, so **s-step buys
+message count and not message volume** — the textbook result, now measured. At `n=97` the
+corrected `s=4` arm moves *more* halo bytes per step than `s=1` (5,628 against 5,041 KiB),
+because its fixed depth-1 transition exchange is amortized over four vectors while its deep
+exchange only shrank from four planes to three.
+
+**Strong scaling** at `n=61`, 100 steps, `m_max=24` (`data/ca-integrator-strong`, figure P1).
+CA speedup is `s=1` over `s=4`:
+
+| Topology              | as-measured, Basket | Rainbow | exact-depth, Basket |    Rainbow |
+|-----------------------|--------------------:|--------:|--------------------:|-----------:|
+| One V100              |              1.043x |  1.048x |          **0.889x** | **0.897x** |
+| Two V100s, one node   |              1.249x |  1.244x |              1.362x |     1.365x |
+| Two V100s, two nodes  |              1.312x |  1.355x |              1.350x |     1.368x |
+| Four V100s, two nodes |              1.806x |  1.753x |          **1.927x** | **1.843x** |
+
+![CA strong scaling, both arms](scripts/plots/ca_strong_scaling.png)
+
+The as-measured column reproduces the frozen record. The corrected column is the finding: **the
+single-GPU crossover disappears** (0.89x, `s=4` slower) while the four-GPU crossover *grows*.
+That is exactly what theory demands — with no communication to avoid, s-step should buy nothing,
+and it now measurably buys nothing. The inter-node claim survives: four V100s beat one at the
+same block width by 1.108x, about 28% parallel efficiency. Against the *best* single-GPU
+configuration, which is now `s=1`, four GPUs are within 1.5%.
+
+![Correction impact, arm against arm](scripts/plots/ca_correction_impact.png)
+
+**Weak scaling** at fixed local volume (`data/ca-integrator-weak`, figure P2): 43.4% and 43.0%
+efficiency at two GPUs, 33.4% at four. The `n=97` Basket arm is a predeclared convergence stop at
+`max residual = 1.118031e-08`, drawn as stopped and never as a performance result.
+
+**The vertical coordinate** (`data/ca-integrator-mpk-vertical`, figure P6). 44 points, every one
+an idle-device `ncu` DRAM sector capture:
+
+| `s` | Ghost redundancy | DRAM roof reached | L2 roof reached | Verdict       |
+|----:|-----------------:|------------------:|----------------:|---------------|
+|   1 |            2.81x |             54.0% |            3.9% | latency-bound |
+|   2 |            6.00x |             20.9% |            2.6% | latency-bound |
+|   3 |           10.94x |              7.9% |            1.8% | latency-bound |
+|   4 |           18.00x |              2.1% |            1.3% | latency-bound |
+
+![Matrix-powers rate against the DRAM and L2 roofs](scripts/plots/ca_matrix_powers_roofline.png)
+
+Nothing in the sweep comes within reach of any roof, so the verdict carries the nearest roof and
+its distance beside the label. **The tile geometry, not the mechanism, caps the vertical payoff:**
+a better geometry is worth 1.331x to 1.386x at `n=61, s=3` and 1.277x to 1.356x at `n=97, s=4`,
+and 1.075x to 1.131x inside the whole solver. The best geometry is configuration-dependent
+(`16x8x8` at `s=1`, `8x8x8` at `s=4`), so the production default is unchanged and the variants
+build as separate targets.
+
+**Basis conditioning and orthogonalization** (`data/ca-integrator-certificate`, figures P7, P8).
+The monomial basis certifies to width 4 at both `n=31` and `n=61`; Newton falls back to 3 and
+Chebyshev to 3 at `n=61`, which is why monomial stays the production basis. On identical blocks
+at `n=61`, all three orthogonalizations pass their stability gate and CholQR2 is the cheapest:
+
+| Method  | Orthogonality loss | Basis and H assembly |
+|---------|-------------------:|---------------------:|
+| CholQR2 |         `3.70e-14` |             2.254 ms |
+| TSQR    |         `3.52e-14` |             6.877 ms |
+| BGS2    |         `6.47e-14` |             2.771 ms |
+
+The report's rejection of TSQR and BGS2 on cost rather than correctness is now backed by a stored
+measurement rather than by prose.
+
+**Predict-then-measure** (figure P4). The communication floor is priced from the immutable
+participant calibration, never from a fit. It is not additive: at `n=61` on four GPUs the solver
+saves more than the floors predict (+0.90 to +1.23 ms/step of residual), and at `n=77` on two it
+saves far less (-1.38). Summing round-trips and deep exchanges over-counts, because they overlap
+device work.
+
+![Predicted against measured communication saving](scripts/plots/ca_predicted_measured.png)
+
+### Figures
+
+| Id  | Figure                                      | Carries                                                                               |
+|-----|---------------------------------------------|---------------------------------------------------------------------------------------|
+| P1  | Strong scaling, both arms                   | where CA overtakes, and that the single-GPU crossover was an artifact                 |
+| P2  | Weak scaling and efficiency                 | the 43.4% and 33.4% efficiencies                                                      |
+| P3  | Cycle-time decomposition                    | that participant count and payload explain the crossover without a fitted coefficient |
+| P4  | Predicted against measured                  | the predict-then-measure claim and which term carries the residual                    |
+| P5  | Collective and halo latency against payload | the participant-count term the node-tier model omitted                                |
+| P6  | Matrix-powers rate against the roofs        | the vertical verdict and the tile sweep                                               |
+| P7  | Basis conditioning against the certificate  | why monomial stays production                                                         |
+| P8  | Orthogonality loss against cost             | why the stable arms are rejected on cost                                              |
+| P9  | Correction impact                           | the C1 finding, arm against arm                                                       |
+| P10 | Referee cost                                | why the compatibility contract is not a large-grid generator                          |
+| P11 | Memory model                                | that the allocation model predicted the physical limit before allocating              |
+
+### The solver
+
+Five executables carry the workstream, all under the `CUDA` branch of the build:
+
+| Target                  | Role                                                                                                                           |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `ca-matrix-powers`      | the matrix-free 19-point stencil validated column by column against the assembled CPU operator, then timed against both roofs  |
+| `ca-matrix-powers-2gpu` | the slab decomposition and its deep halo, validated against a global reference                                                 |
+| `ca-integrator`         | one GPU. `--steps 0` is the CA-Arnoldi numerical gate against a CPU MGS-Arnoldi; `--steps K` is the integrator                 |
+| `ca-integrator-2gpu`    | slabs across one or two nodes, one or two GPUs per process, NCCL reductions and either peer-copy or NCCL send/receive halos    |
+| `ca-referee-gpu`        | the independent referee: the assembled operator as CSR, applied with cuSPARSE, with the fixed Al-Mohy and Higham Taylor action |
+
+The distributed solver owns real slabs, exchanges one deep halo per matrix-powers block, forms
+projections and Grams locally, and reduces them with NCCL. In the frozen as-measured record,
+communication avoiding first became useful at four participants. The corrected arm has not yet
+earned that conclusion: its latest source still needs the cluster gate and its four-participant
+measurement is pending.
+
+### The two arms
+
+The delivered implementation is frozen as the `as-measured` arm. A block of width `s` consumes
+basis columns `0` to `s-1`, so the recurrence needs `s-1` steps and a halo `s-1` planes deep;
+the as-measured arm requested `s` of each and discarded the extra column. That inflated the
+`s=1` control's communication far more than the `s=4` arm's, and the reported halo saving rested
+on the difference. The allocation deliberately retains the `s+1` basis buffer: both arms live
+in one binary, and shrinking it would silently move the frozen `n=381` allocation prediction.
+
+The correction is a separately named arm, not an overwrite:
+
+```bash
+build/ca-integrator-2gpu --n 97 --s 4 --arm exact-depth ...   # corrected
+build/ca-integrator-2gpu --n 97 --s 4 --arm as-measured ...   # the frozen record, still the default
+```
+
+Per Krylov vector the corrected `s=1` arm applies the operator once and exchanges one halo,
+which is exactly what a standard MGS-Arnoldi does; the as-measured `s=1` arm did both twice.
+That is what makes `s=1` an admissible non-CA control, and it is why the corrected CA speedup is
+expected to fall. The predictions were recorded before the runs, in
+sections 1 through 9 of `docs/ca_integrator_predictions.md`, and those forecast sections are not
+revised after a measurement lands. Its section 10 records later implementation supersessions
+without rewriting the forecast.
+
+Two further flags exist for the same reason. `--certificate deferred` decides the CholQR2
+certificate on the device and reads it once instead of three times per block, and
+`--mpk-chunk S` on the one-GPU solver selects a chunk width (`0` means one launch) instead of
+the arm default. Thus the chunked dispatch the as-measured arm used and the single launch the
+slab path always used can be compared at a given width.
+
+One diagnostic uses a deliberately different coordinate and names it explicitly.
+`ca-matrix-powers --s D` builds through polynomial degree `D`, hence `D+1` columns, while the
+integrator's `--s W` consumes `W` block columns. The certificate sweep supplies
+`--certificate-block-width W` and P7 reads only the `block_width` and `*_block_width_max`
+fields; the legacy `predicted_s_max` field remains a highest-power quantity.
+
+### What the solver reports
+
+`ca-matrix-powers` reports interior points, shared tile volume, effective redundancy,
+compulsory and tiled traffic, the queried device's DRAM and L2 roofs, and a named vertical
+verdict. With `--ncu-dram-bytes`, the DRAM rate comes from the measured counter value and the
+record labels that source; otherwise it is explicitly modeled. Its tile dimensions are
+compile-time overrides, and CMake builds the `16x8x8`, `8x8x8`, and `16x8x4` sweep variants
+beside the production target.
+
+Every solver run prints its device identity, contention state, and toolkit versions.
+Distributed runs also print topology and collective backend, followed by a communication
+account with four separate terms:
+
+```text
+  collectives: .../step | norm=... projection=... gram=... agreement=... | payload=... bytes/step
+  operator communication: ... halos/step | ... KiB/step | recurrence steps=...
+  operator communication detail: build_halos_per_step=... build_depth_avg=... transition_halos_per_step=... transition_depth=1
+  operator communication depth histogram: units=total_exchanges build_depth_hist=... transition_depth_hist=...
+  host synchronizations: .../step | probed round-trip=... us | floor=... ms/step | observed stall=...
+  calibrated floors: collectives=... ms/step halo-bandwidth=... ms/step
+```
+
+The host-synchronization term is instrument cost, not algorithm cost: the immediate certificate
+uses a serial Jacobi sweep and three blocking reads per accepted block, while agreement adds one
+pinned verdict read at each protected branch. Naming it
+keeps an implementation artifact from being read as a property of the method. Before every
+adaptive branch that can change the collective schedule, all ranks compare a checkpoint-specific
+four-integer tuple with one minimum and one maximum collective. Candidate checkpoints carry
+`(selected m, current accepted block width, candidate status, cumulative fallback blocks)`, where
+candidate status is `-1` for a non-finite candidate, `0` for finite but unconverged, and `1` for
+converged. Breakdown and each certificate stage have their own tuples, with certificate values
+seeded from each GPU's device result. The comparison is latched on the device and one pinned
+verdict is read before branching. Both the dynamic `agreement=` collective count and that
+immediate host synchronization are included in the account; the solve aborts on a named
+disagreement. Agreement is intentionally disabled when `world_gpus=1`, where it is vacuous. The
+two-GPU exact-depth harness exercises `--agreement-self-test`, which injects a rank-local
+certificate disagreement and requires a named abort before the protected branch.
+
+The a-priori placement is selected from the queried device rather than a fixed machine key.
+It derives the collective tier from the GPU and node counts and refuses to print a cost if that
+tier is unreachable or lacks calibration, so an unmeasured upper rung cannot inherit the price
+of the rung below it.
+
+A run on a contended device may continue through its correctness checks, but it **withholds its
+timing distribution**. A co-tenant moves every timing at once and plausibly, so a contended run is
+a correctness-only run and labels itself as one.
+
+### Running it
+
+Use a genuinely fresh build directory on Synge or Puffin. The CA targets additionally require
+CUDA and NVML; the distributed targets require NCCL, and the multi-node evidence requires MPI.
+`CAKSM_REQUIRE_MPI=ON` prevents a nominally successful configure from silently producing a build
+that cannot run the two-node gates.
+
+```bash
+cmake -S . -B build-corrections -DCMAKE_BUILD_TYPE=Release -DCAKSM_REQUIRE_MPI=ON
+cmake --build build-corrections --parallel
+cmake --build build-corrections --target regime_tests arnoldi_tests ca_referee_tests --parallel
+./build-corrections/regime_tests
+./build-corrections/arnoldi_tests
+./build-corrections/ca_referee_tests
+export BUILD_DIR="$PWD/build-corrections"
+```
+
+The supplied two-node smoke failed inside PMIx before application code reached
+`MPI_Init`. The multi-node harnesses export `PMIX_MCA_gds=hash`, which disables
+the failing `shmem2` datastore component. Use the same setting for any manual
+Synge `srun`; a stack ending in `pmix_gds_shmem2_fetch` is a launcher/runtime
+failure, not an integrator segmentation fault.
+
+```bash
+# Predict the largest odd grid common to every arm, before allocating anything.
+./scripts/regime/ca_largest_common.sh          # two-node allocation
+./scripts/regime/ca_largest_common_gate.sh     # the predeclared convergence gate
+
+# The immutable participant-count calibration the communication account is priced from.
+./scripts/regime/calibrate_ca_participants.sh  # two nodes, one process each
+
+# Direct correction gate: one GPU against one slab, non-unit expiry, immediate/deferred parity.
+./scripts/regime/ca_integrator_acceptance.sh   # one idle Synge V100
+
+# Both arms measured side by side at fixed local volume. This also exercises
+# C6's two-GPU injected-disagreement guard.
+./scripts/regime/ca_exact_depth_weak.sh        # two-node allocation
+
+# Strong scaling as a recorded artifact, under both arms.
+./scripts/regime/ca_strong_scaling.sh          # two-node allocation
+
+# First prove that the tile variants launch without paying for NCU replay.
+GRIDS=61 WIDTHS="3 4" OPTIONS=basket NCU=none \
+  ./scripts/regime/ca_mpk_vertical.sh          # one idle GPU; diagnostic only
+
+# Then run the declared canonical plan: 32 production-tile points and
+# 12 predeclared alternative-tile points, all with idle NCU captures.
+./scripts/regime/ca_mpk_vertical.sh
+
+# Where the certificate breaks, and what the stable orthogonalization arms cost.
+./scripts/regime/ca_certificate_sweep.sh       # one idle GPU
+
+# Per-phase attribution. Nsight inflates the cycle, so these are never timings.
+./scripts/regime/ca_nsight_profile.sh          # two-node, or SINGLE_NODE=1
+
+# One figure per script, from artifacts under data/ only. Run the one whose
+# experiment just finished, or all of them.
+uv run --script scripts/plots/ca_correction_impact.py
+
+# ca_figlib.py and ca_figstyle.py are the shared module and the palette
+# self-test, not figures, so the sweep skips them.
+for f in scripts/plots/ca_*.py; do
+    case "$f" in *ca_figlib.py|*ca_figstyle.py) continue;; esac
+    uv run --script "$f"
+done
+```
+
+Each figure script writes a 300 dpi PNG beside the existing figures and prints its headline
+numbers, so a number quoted in a caption can be checked by re-running that one script. A figure
+whose artifact is missing is recorded as blocked in a `.blocked.txt` sidecar naming what it
+waits on, rather than drawn from the report's prose. 
+scripts share `ca_figlib.py` for transcript parsing, the participant cost model and the drawing
+furniture, and `ca_figstyle.py` for the entity colors.
+
+### Standing caveats
+
+- **`n=381` is a predeclared stop, and it is a stiffness result.** `||A||_1` grows as `n^2`, so
+  at a fixed step the `n=381` problem is 39 times stiffer than `n=61` and needs a Krylov
+  dimension near 94 against `m_max = 24`. The residual diverges rather than missing. Changing
+  `m_max`, the step count, the tolerance or the adaptivity to make it converge is a new research
+  arm. The same law puts the implied `m` at exactly 24 for `n=97`, which is why the Basket arm
+  stops there.
+- **Two acceptance bounds in the correction specification cannot pass as written.** Both are
+  absolute infinity-norm differences. The one-slab bound of `1e-13` demands 3.7 machine epsilons
+  of relative accuracy on a state of magnitude 122; the measured differences are 11 to 80
+  epsilons, which is the floor for two distinct reduction orders. The distributed-versus-single
+  bound of `6.13e-11` was an observed maximum over a handful of arms, compares against a state
+  frozen from a different binary, and is now exceeded by the *unchanged* control arm. Both should
+  be restated as relative bounds against arm-matched references. See addendum A11 for the
+  arithmetic; the change has not been applied.
+- **The measured host-synchronization cost is an upper bound, not recoverable overhead.** It is
+  the host waiting for queued device work, so it overlaps local work, collectives and halos and
+  is never summed into the communication account. The probe-derived lower bound is reported
+  beside it and is roughly 24 times smaller. Only Nsight separates them; those traces live in
+  `data/ca-integrator-nsight` and are attribution evidence, never timings.
+- **The agreement check has two modes and only one is timed.** `--agreement-check step` is the
+  production form: one device-latched comparison per step, no host round-trip. `strict` checks
+  before every schedule-changing branch and reads each verdict immediately, which costs about a
+  quarter of the cycle and is a correctness pass, not a timed configuration. Step mode detects a
+  disagreement but cannot prevent the hang one would cause; run a configuration once under
+  `strict`, then time it under `step`.
+- **The production tile is not the best geometry at either production point.** Adopting a better
+  one is a change to the production method and therefore a new arm, not a correction. The
+  variants exist as separate binaries and the default is unchanged.
+- **Puffin timings are never acceptance measurements.** It is a smoke-test host; its devices are
+  contended and the solver withholds timings there.
+- **CUDA does not compile on the development host.** Build on Synge or Puffin before accepting
+  any newly generated artifact.
+- **C10 is closed in source but not in evidence.** The symmetric referee gate reached zero
+  unconverged substeps, but the checked-in `n=31` binaries lack sidecars and are recorded in the
+  manifest as unverified. Recover the authoritative parity-v2 `n=31` Rainbow
+  fixed-compatibility baseline and its sidecar before closing it. `414beaaa2a09444b` is the
+  historical scaled-augmentation Basket checksum and is not the right target.
+
 ## Repository layout
 
-| Path               | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-|--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/`             | executables: `main` (pricer), `profiler`, `scaling`, `regime_control`, `regime_sweep`, `calibrate_alpha`, `fma_loop`, `stream`; GPU (`.cu`, built only where CUDA is present): `regime_gpu_place` (host-only), `calibrate_gpu_reduction`, `gpu_stream`, `calibrate_gpu_p2p`, the timed instruments `regime_gpu_spmv` / `regime_gpu_mgs` / `regime_gpu_sstep`, the two-GPU crossover `regime_gpu_sstep_2gpu` (NCCL), and the kernel validators `gram_splitk_test` / `trsm_test` |
-| `include/`         | PDE assembly (`pde_operators`), solvers (`solvers`, `arnoldi`, `ca_arnoldi`), CA kernels (`mpk`, `akx`, `reduction`), regime machinery (`regime`, `regime_control_support`, `synthetic`, `machine`), GPU regime machinery (`gpu_machine`, `gpu_regime`), GPU kernels (`gpu_contention`, `gram_splitk`, `trsm_tallskinny`)                                                                                                                                                      |
-| `tests/`           | Catch2 suites, including the regime tests (coordinates, kernels, Krylov, non-normality, synthetic) and the GPU map's structural invariants (`test_gpu_regime`)                                                                                                                                                                                                                                                                                                                 |
-| `scripts/sweep/`   | benchmark sweeps for `n=31` / `n=61`                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `scripts/scaling/` | strong, weak, `m(n)`, and locality sweeps                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `scripts/regime/`  | $\alpha$ calibration, numerics gate, `d`-sweep, vertical sweep, block-width sweep; GPU: `gpu_probe`, `calibrate_gpu`, `calibrate_gpu_p2p`, `regime_gpu_place`, `regime_gpu_spmv`, `regime_gpu_mgs`, `regime_gpu_sstep`, `regime_gpu_sstep_2gpu`, `gram_splitk_test`, `trsm_test`                                                                                                                                                                                               |
-| `docs/`            | `thesis/` (the project write-up)                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `scripts/stream/`  | STREAM Triad bandwidth sweep                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `scripts/plots/`   | all figures (each is a `uv` script with inline dependencies)                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `data/`            | CSVs written by the sweeps. Generated locally and gitignored, so every number quoted here names the script that reproduces it                                                                                                                                                                                                                                                                                                                                                  |
-| `logs/`            | sweep logs from detached tmux runs                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Path               | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+|--------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `src/`             | executables: `main` (pricer), `profiler`, `scaling`, `regime_control`, `regime_sweep`, `calibrate_alpha`, `fma_loop`, `stream`; GPU (`.cu`, built only where CUDA is present): `regime_gpu_place` (host-only), `calibrate_gpu_reduction`, `gpu_stream`, `calibrate_gpu_p2p`, the timed instruments `regime_gpu_spmv` / `regime_gpu_mgs` / `regime_gpu_sstep`, the two-GPU crossover `regime_gpu_sstep_2gpu` (NCCL), the kernel validators `gram_splitk_test` / `trsm_test`, and the CA integrator workstream: `ca_matrix_powers`, `ca_matrix_powers_2gpu`, `ca_arnoldi_gpu` (built as `ca-integrator`), `ca_integrator_2gpu`, `ca_referee_gpu` |
+| `include/`         | PDE assembly (`pde_operators`), solvers (`solvers`, `arnoldi`, `ca_arnoldi`), CA kernels (`mpk`, `akx`, `reduction`), regime machinery (`regime`, `regime_control_support`, `synthetic`, `machine`), GPU regime machinery (`gpu_machine`, `gpu_regime`), GPU kernels (`gpu_contention`, `gram_splitk`, `trsm_tallskinny`), CA integrator machinery (`ca_pricing_gpu`, `ca_integrator_memory`, `gpu_ca_arnoldi`, `gpu_pde_matrix_powers`, `gpu_pde_slab`, `ca_referee_scaled`)                                                                                                                                                                  |
+| `tests/`           | Catch2 suites, including the regime tests (coordinates, kernels, Krylov, non-normality, synthetic), the GPU map's structural invariants (`test_gpu_regime`), and the CA integrator's allocation model and scaled referee (`test_ca_integrator_memory`, `test_ca_referee_scaled`)                                                                                                                                                                                                                                                                                                                                                               |
+| `scripts/sweep/`   | benchmark sweeps for `n=31` / `n=61`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `scripts/scaling/` | strong, weak, `m(n)`, and locality sweeps                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `scripts/regime/`  | $\alpha$ calibration, numerics gate, `d`-sweep, vertical sweep, block-width sweep; GPU: `gpu_probe`, `calibrate_gpu`, `calibrate_gpu_p2p`, `regime_gpu_place`, `regime_gpu_spmv`, `regime_gpu_mgs`, `regime_gpu_sstep`, `regime_gpu_sstep_2gpu`, `gram_splitk_test`, `trsm_test`; CA integrator: `ca_largest_common`, `ca_largest_common_gate`, `calibrate_ca_participants`, `ca_integrator_acceptance`, `ca_exact_depth_weak`, `ca_strong_scaling`, `ca_mpk_vertical`, `ca_certificate_sweep`, `ca_nsight_profile`                                                                                                                            |
+| `docs/`            | `thesis/` (the project write-up)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `scripts/stream/`  | STREAM Triad bandwidth sweep                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `scripts/plots/`   | all figures (each is a `uv` script with inline dependencies)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `data/`            | CSVs and transcripts written by the sweeps. CUDA evidence is generated on Synge or Puffin and copied into the workspace; every quoted number names the script that reproduces it                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `logs/`            | sweep logs from detached tmux runs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
