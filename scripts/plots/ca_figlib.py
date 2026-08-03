@@ -29,7 +29,6 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 DATA = ROOT / "data"
 DOCS = ROOT / "docs"
-PDF_DIR = DOCS / "thesis" / "figures"
 
 WEAK = DATA / "ca-integrator-weak"
 EXACT = DATA / "ca-integrator-exact-depth"
@@ -743,17 +742,12 @@ class Figure:
         return HERE / f"{self.stem}.png"
 
     @property
-    def pdf(self) -> Path:
-        """The vector copy this figure writes for the thesis."""
-        return PDF_DIR / f"{self.stem}.pdf"
-
-    @property
     def sidecar(self) -> Path:
         """The marker written in place of an image when blocked."""
         return HERE / f"{self.stem}.blocked.txt"
 
     def write(self, fig, rows: list[dict]) -> None:
-        """Write a 300 dpi PNG and a vector PDF for the thesis.
+        """Write the figure as a 300 dpi PNG.
 
         Args:
             fig: The finished figure.
@@ -763,17 +757,14 @@ class Figure:
         """
         self.sidecar.unlink(missing_ok=True)
         fig.savefig(self.png, dpi=DPI, bbox_inches="tight")
-        PDF_DIR.mkdir(parents=True, exist_ok=True)
-        fig.savefig(self.pdf, bbox_inches="tight")
         plt.close(fig)
         print(f"  wrote {self.png.relative_to(ROOT)}")
 
     def blocked(self, reason: str) -> str:
         """Record the figure as blocked, naming the artifact it waits on."""
-        # A newly blocked figure must not leave a stale accepted image for the
-        # packaging script to pick up beside its blocked sidecar.
-        for stale in (self.png, self.pdf, HERE / f"{self.stem}.pdf"):
-            stale.unlink(missing_ok=True)
+        # A newly blocked figure must not leave a stale accepted image beside
+        # its blocked sidecar.
+        self.png.unlink(missing_ok=True)
         with self.sidecar.open("w") as handle:
             handle.write(f"figure={self.name}\n")
             handle.write("status=blocked\n")
