@@ -159,8 +159,8 @@ struct SyntheticOperator {
  * Analytic, no eigensolver. For the monomial basis B = X M, kappa(B) can exceed kappa(M)
  * by up to this factor: 1 for a normal operator, orders of magnitude for a non-normal one.
  *
- * NOT the quantity in the CSV's kappa_X column. This is the UN-NORMALISED scaling; the
- * reported kappa(X) normalises the eigenvectors to unit 2-norm (Eigen's convention, see
+ * NOT the quantity in the CSV's kappa_X column. This is the UN-NORMALIZED scaling; the
+ * reported kappa(X) normalizes the eigenvectors to unit 2-norm (Eigen's convention, see
  * unit_norm_kappa_X). The two differ by a wide margin -- 665 against 11350 at n1=8, dim=3,
  * gamma=0.3 -- so they must never be compared or fitted against one another.
  */
@@ -440,7 +440,7 @@ struct SyntheticOperator {
  * team commands, x is reused (reuse near 1), and once it spills reuse decays toward 0. A
  * model, feeding only the arithmetic intensity.
  */
-[[nodiscard]] inline double modelled_x_reuse(const Machine& mc, int P, int64_t b, int64_t n)
+[[nodiscard]] inline double modeled_x_reuse(const Machine& mc, int P, int64_t b, int64_t n)
 {
     const double window_bytes = static_cast<double>(std::min(std::max(b, int64_t{1}), n)) * 8.0;
     const double cache_bytes  = static_cast<double>(aggregate_llc_bytes(mc, P));

@@ -660,7 +660,7 @@ int main(int argc, char* argv[])
         const int blocks  = (m_measured + s_block - 1) / s_block;
 
         const RegimePoint pt = place(mc, a.P, op.nnz, op.n, m_measured,
-                                     modelled_x_reuse(mc, a.P, banded_spec.scatter_block, op.n));
+                                     modeled_x_reuse(mc, a.P, banded_spec.scatter_block, op.n));
         constexpr double MiB = 1024.0 * 1024.0;
         std::println("Regime coordinates of this control point (predictors, not outcomes)");
         std::println("{}", std::string(78, '-'));

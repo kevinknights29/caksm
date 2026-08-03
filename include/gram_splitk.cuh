@@ -30,13 +30,15 @@
 /**
  * @brief One split-K Gram, templated on s so the packed-triangle accumulator is register-held.
  *
- * B is column-major with leading dimension n, so consecutive threads read consecutive rows and
+ * B is column-major with leading dimension ld, so consecutive threads read consecutive rows and
  * each per-column load coalesces. G (s x s, column-major) must be zeroed before launch; the
- * kernel accumulates the full symmetric matrix.
+ * kernel accumulates the full symmetric matrix over the first n rows.
  */
 template <int S>
 __global__ void __launch_bounds__(128)
-gram_splitk_kernel(const double* __restrict__ B, int64_t n, double* __restrict__ G)
+gram_splitk_kernel(
+    const double* __restrict__ B, int64_t n, int64_t ld,
+    double* __restrict__ G)
 {
     constexpr int T = S * (S + 1) / 2;   // upper-triangle packed length
     double acc[T];
@@ -50,7 +52,7 @@ gram_splitk_kernel(const double* __restrict__ B, int64_t n, double* __restrict__
          row < n; row += stride) {
         double b[S];
         #pragma unroll
-        for (int c = 0; c < S; ++c) b[c] = B[row + static_cast<int64_t>(c) * n];
+        for (int c = 0; c < S; ++c) b[c] = B[row + static_cast<int64_t>(c) * ld];
         int t = 0;
         #pragma unroll
         for (int j = 0; j < S; ++j)
@@ -96,10 +98,11 @@ gram_splitk_kernel(const double* __restrict__ B, int64_t n, double* __restrict__
  * @param blocks_per_sm resident blocks to aim for per SM (tuning knob).
  * @return cudaErrorInvalidValue for an unsupported s, else the launch status.
  */
-[[nodiscard]] inline cudaError_t gram_splitk(const double* d_B, int64_t n, int s, double* d_G,
-                                             int sm_count, int blocks_per_sm = 4,
-                                             cudaStream_t stream = nullptr)
+[[nodiscard]] inline cudaError_t gram_splitk_ld(
+    const double* d_B, int64_t n, int64_t ld, int s, double* d_G,
+    int sm_count, int blocks_per_sm = 4, cudaStream_t stream = nullptr)
 {
+    if (n < 0 || ld < n) return cudaErrorInvalidValue;
     const cudaError_t z = cudaMemsetAsync(
         d_G, 0, static_cast<std::size_t>(s) * static_cast<std::size_t>(s) * sizeof(double), stream);
     if (z != cudaSuccess) return z;
@@ -113,16 +116,30 @@ gram_splitk_kernel(const double* __restrict__ B, int64_t n, double* __restrict__
     const int grid = static_cast<int>(want);
 
     switch (s) {
-        case 1: gram_splitk_kernel<1><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
-        case 2: gram_splitk_kernel<2><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
-        case 3: gram_splitk_kernel<3><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
-        case 4: gram_splitk_kernel<4><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
-        case 5: gram_splitk_kernel<5><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
-        case 6: gram_splitk_kernel<6><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
-        case 7: gram_splitk_kernel<7><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
-        case 8: gram_splitk_kernel<8><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
-        case 9: gram_splitk_kernel<9><<<grid, block, 0, stream>>>(d_B, n, d_G); break;
+        case 1: gram_splitk_kernel<1><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
+        case 2: gram_splitk_kernel<2><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
+        case 3: gram_splitk_kernel<3><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
+        case 4: gram_splitk_kernel<4><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
+        case 5: gram_splitk_kernel<5><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
+        case 6: gram_splitk_kernel<6><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
+        case 7: gram_splitk_kernel<7><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
+        case 8: gram_splitk_kernel<8><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
+        case 9: gram_splitk_kernel<9><<<grid, block, 0, stream>>>(d_B, n, ld, d_G); break;
         default: return cudaErrorInvalidValue;
     }
     return cudaGetLastError();
+}
+
+/**
+ * @brief The same Gram for a block whose columns are contiguous, that is ld == n.
+ *
+ * The one-GPU basis is packed that way. The slab path keeps a separate leading dimension so it
+ * can reduce over the rows it owns rather than the whole column, and calls gram_splitk_ld.
+ */
+[[nodiscard]] inline cudaError_t gram_splitk(
+    const double* d_B, int64_t n, int s, double* d_G,
+    int sm_count, int blocks_per_sm = 4, cudaStream_t stream = nullptr)
+{
+    return gram_splitk_ld(
+        d_B, n, n, s, d_G, sm_count, blocks_per_sm, stream);
 }

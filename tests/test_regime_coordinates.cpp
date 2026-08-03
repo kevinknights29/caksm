@@ -16,6 +16,9 @@ using namespace regime_test;
 
 // Reduction counts: must mirror the loop in src/scaling.cpp
 
+/// The reduction counter must mirror the loop it models, or R_h is calibrated
+/// against code nobody runs.
+/// Expected: 1 + sum over j of (j+2) for every m from 1 to 16, and 45 at m=8.
 TEST_CASE("MGS reduction count matches the scaling.cpp Arnoldi loop", "[regime][reductions]")
 {
     // One norm for V.col(0); then per j in [0,m): (j+1) dots + 1 norm.
@@ -27,6 +30,12 @@ TEST_CASE("MGS reduction count matches the scaling.cpp Arnoldi loop", "[regime][
     REQUIRE(mgs_reductions(8) == 45);
 }
 
+/// The horizontal mechanism, stated as arithmetic: one reduction per block
+/// instead of one per column.
+/// Expected: a single width-m block costs 2 reductions (3 with the second
+/// CholQR pass), four width-2 blocks cost 5, and a partial trailing block
+/// still costs a full one. At m=8 MGS costs more than 20x the s-step count,
+/// which is the ratio that motivates the method.
 TEST_CASE("s-step reduction count collapses the quadratic term", "[regime][reductions]")
 {
     // One block of size m => 1 normalization + 1 Gram reduction.
@@ -43,6 +52,10 @@ TEST_CASE("s-step reduction count collapses the quadratic term", "[regime][reduc
 
 // R_v accounting frame
 
+/// R_v must count cache and working set in the same frame. Counting cache per
+/// slice against a per-process working set would give a 1/P^2 law.
+/// Expected: doubling P exactly halves R_v, and a 256 MiB working set still
+/// sits at R_v = 2 against 128 MiB of aggregate L3 at full P.
 TEST_CASE("R_v uses an aggregate frame on both sides, so R_v ~ 1/P", "[regime][rv]")
 {
     const Machine& mc = lookup_machine("amd-3960x");
@@ -62,6 +75,10 @@ TEST_CASE("R_v uses an aggregate frame on both sides, so R_v ~ 1/P", "[regime][r
     REQUIRE_THAT(rv24, WithinRel(2.0, 1e-12));
 }
 
+/// A thread spilling onto a second CCX commands that whole cache slice, not a
+/// fraction of it.
+/// Expected: P=3 engages one slice, P=4 engages two, P=24 engages eight, and
+/// the aggregate is the full 128 MiB.
 TEST_CASE("close binding engages whole slices, not fractional ones", "[regime][rv]")
 {
     const Machine& mc = lookup_machine("amd-3960x");
@@ -75,6 +92,11 @@ TEST_CASE("close binding engages whole slices, not fractional ones", "[regime][r
 
 // R_h discipline
 
+/// The horizontal mechanism itself: adding cores raises R_h, because the
+/// reduction outgrows the compute thinning beneath it.
+/// Expected: R_h at P=16 exceeds R_h at P=2, and below saturation it grows
+/// faster than 1/P alone, since the numerator climbs as the tree starts
+/// crossing cache domains.
 TEST_CASE("R_h grows with P while compute-bound", "[regime][rh]")
 {
     // Calibration retired the old R_h ~ P log2(P) law: the reduction's cost is set by
@@ -99,6 +121,10 @@ TEST_CASE("R_h grows with P while compute-bound", "[regime][rh]")
     REQUIRE(rh_at(12) / rh_at(3) > 12.0 / 3.0);
 }
 
+/// R_h must be linear in the reduction count, which is the only lever s-step
+/// pulls.
+/// Expected: with the cycle held fixed, the MGS/CA ratio of R_h equals the
+/// MGS/CA ratio of reduction counts exactly.
 TEST_CASE("cutting reductions cuts R_h proportionally", "[regime][rh]")
 {
     const Machine& mc = lookup_machine("amd-3960x");
@@ -119,6 +145,12 @@ TEST_CASE("cutting reductions cuts R_h proportionally", "[regime][rh]")
 // n=61/P=21 (R_h 0.010 against 0.060). The two intensities differ ~2x while their roofs
 // differ over 10x at full P, so residency (which is R_v) picks the roof. These pin that.
 
+/// Which roof applies is decided by residency, not by intensity, and only the
+/// cache roof grows with core count.
+/// Expected: a resident working set is priced at the L3 slice bandwidth times
+/// the engaged slices and improves with P; a spilled one is priced at the
+/// socket DRAM figure and does not. At full P the two differ by more than 4x,
+/// which is the gap a single-roof model discards.
 TEST_CASE("residency picks the roof, and only the cache roof scales with P",
           "[regime][rh][roofline][critical]")
 {
@@ -140,6 +172,12 @@ TEST_CASE("residency picks the roof, and only the cache roof scales with P",
     REQUIRE(memory_bw_gbs(mc, 24, small) / memory_bw_gbs(mc, 24, huge) > 4.0);
 }
 
+/// The case that refutes a single roof for the whole cycle: MGS resident while
+/// SpMV spills, so any one roof misprices at least one of them.
+/// Expected: at a 19-point stencil the two working sets straddle the aggregate
+/// L3, each kernel is priced at its own roof, and the cycle is exactly their
+/// sum. The wide stencil is required: at 5 nonzeros per row and m=8 the two
+/// working sets are algebraically equal and no (n, P) separates them.
 TEST_CASE("the two kernels are priced on their own working sets, not the cycle's",
           "[regime][rh][roofline][critical]")
 {
@@ -172,6 +210,11 @@ TEST_CASE("the two kernels are priced on their own working sets, not the cycle's
     REQUIRE_THAT(ct.total_s, WithinRel(ct.spmv_s + ct.mgs_s, 1e-12));
 }
 
+/// Locates the 6x mispricing in the roofs rather than in the intensities.
+/// Expected: MGS is more intense than SpMV but by under 5x, so intensity alone
+/// cannot explain a 6x error; and the quadratic basis re-read is more than
+/// half of MGS traffic, confirming it is a bandwidth problem and not only a
+/// synchronization one.
 TEST_CASE("MGS's intensity is its own, and the roofs matter more than it does",
           "[regime][rh][roofline]")
 {
@@ -192,6 +235,9 @@ TEST_CASE("MGS's intensity is its own, and the roofs matter more than it does",
     REQUIRE(col_reads / mgs_dram_bytes(n, m) > 0.5);
 }
 
+/// The flop model must account for the whole cycle and nothing more.
+/// Expected: cycle flops equal SpMV plus MGS exactly, and SpMV is exactly m
+/// applications of the operator at 2*nnz each.
 TEST_CASE("the cycle splits into exactly the two kernels", "[regime][rh][roofline]")
 {
     const int64_t n = 226984, nnz = 4234686;
@@ -205,6 +251,11 @@ TEST_CASE("the cycle splits into exactly the two kernels", "[regime][rh][rooflin
 
 // Reachability: the quantitative claim behind the contested corner
 
+/// The reachability claim: on the physical operator, core count moves the two
+/// coordinates in opposite directions, so no P reaches the upper-right corner.
+/// Expected: raising P from 3 to 24 lifts R_h and drops R_v, carrying the point
+/// from above the vertical threshold to below it as aggregate L3 swallows the
+/// operator.
 TEST_CASE("P traverses the map along an anti-diagonal for the real operator",
           "[regime][corners][critical]")
 {
@@ -226,6 +277,10 @@ TEST_CASE("P traverses the map along an anti-diagonal for the real operator",
     REQUIRE(hi.rv < kThetaV);    // the 24 cores' aggregate L3 has swallowed the operator
 }
 
+/// The scaffold must reach where the physical operator cannot, or the contested
+/// corner stays unmeasurable.
+/// Expected: the physical operator falls below the vertical threshold at full
+/// P, while a synthetic operator sized to overflow all 128 MiB stays above it.
 TEST_CASE("the synthetic operator holds R_v above 1 at full P, which n cannot",
           "[regime][corners][critical]")
 {
@@ -246,6 +301,10 @@ TEST_CASE("the synthetic operator holds R_v above 1 at full P, which n cannot",
     REQUIRE(syn.rv > kThetaV);   // vertical mechanism survives full core count
 }
 
+/// A finding, not a mechanism check: scatter cannot be used to reach the
+/// upper-right corner, because it moves the two coordinates against each other.
+/// Expected: a symmetric permutation leaves working set, flops and R_v exactly
+/// unchanged, while lowering arithmetic intensity and with it R_h.
 TEST_CASE("scattering trades the horizontal mechanism away for the vertical one",
           "[regime][corners][tension]")
 {
@@ -280,6 +339,12 @@ TEST_CASE("scattering trades the horizontal mechanism away for the vertical one"
 // pin the replacement, and the two claims whose breakage would be silent: the level split
 // must match the tree the reducer actually walks, and P=1 must stay free.
 
+/// The level counters must describe the tree reduction.hpp actually walks;
+/// a mismatch calibrates the cost against a shape nobody runs.
+/// Expected: at 3 cores per slice, P=3 gives 2 intra-domain levels and no
+/// crossing, P=6 adds the first crossing, P=24 gives 2 intra and 3 cross. For
+/// every P up to 24 the two counts sum to the tree depth, so no level is
+/// uncounted or double-counted.
 TEST_CASE("the level split matches the tree the reducer walks", "[regime][rh][critical]")
 {
     // include/reduction.hpp combines thread 0 with partners at d = 1, 2, 4, ... < P, and
@@ -310,6 +375,10 @@ TEST_CASE("the level split matches the tree the reducer walks", "[regime][rh][cr
     }
 }
 
+/// A serial run walks no tree levels, which is what places it at the bottom of
+/// the map by construction rather than by convention.
+/// Expected: both level counts are zero at P=1, the reduction costs exactly
+/// nothing, and R_h is exactly zero.
 TEST_CASE("a serial run has no reduction, and that is measured not asserted",
           "[regime][rh]")
 {
@@ -323,6 +392,10 @@ TEST_CASE("a serial run has no reduction, and that is measured not asserted",
     REQUIRE(R_h(mc, 1, 1e-3, 45) == 0.0);
 }
 
+/// The crossing model needs a real mechanism: if a crossing cost the same as
+/// an intra-domain level, R_h's numerator would be uniform in depth again.
+/// Expected: the crossing multiplier stays above 3, and the first crossing
+/// costs more than the entire intra-CCX tree beneath it.
 TEST_CASE("a cache-domain crossing costs multiples of an intra-domain level",
           "[regime][rh][critical]")
 {
@@ -340,6 +413,12 @@ TEST_CASE("a cache-domain crossing costs multiples of an intra-domain level",
     REQUIRE(one_cross - intra_only > intra_only);
 }
 
+/// Past the measured crossing limit, extra tree depth is free, which drops
+/// R_h's exponent from P log P to P on this core count.
+/// Expected: P=18 and P=24 walk the same three crossings and are charged
+/// identically; below saturation the cost still climbs crossing by crossing;
+/// and with both kernels held resident, R_h scales exactly as P, which is
+/// strictly below what the P log P law it replaced would predict.
 TEST_CASE("the numerator saturates, so R_h ~ P and not P log P on this machine",
           "[regime][rh][critical]")
 {
@@ -383,6 +462,10 @@ TEST_CASE("the numerator saturates, so R_h ~ P and not P log P on this machine",
     REQUIRE(rh24 / rh18 < p_log_p);
 }
 
+/// A preset for hardware nobody ran on would place points from numbers no one
+/// measured.
+/// Expected: exactly one machine exists, it is marked calibrated, an unknown
+/// key throws, and every preset carries positive measured level costs.
 TEST_CASE("the only preset is the machine that was measured", "[regime][rh]")
 {
     // One compute environment, with its reduction parameters measured on it. A preset for

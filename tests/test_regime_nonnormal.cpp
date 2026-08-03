@@ -32,6 +32,11 @@ Eigen::VectorXd sorted_general_spectrum(const SpMatS& A, double& max_imag_out)
 
 }  // namespace
 
+/// Advection is the first step of the bridge from the symmetric scaffold to the
+/// real operator: it must break symmetry without costing the closed-form
+/// spectrum every prediction is built on.
+/// Expected: A is no longer symmetric, yet its eigenvalues stay real and match
+/// the analytic formula.
 TEST_CASE("advection keeps the spectrum real and analytic but breaks symmetry",
           "[synthetic][nonnormal][critical]")
 {
@@ -53,6 +58,9 @@ TEST_CASE("advection keeps the spectrum real and analytic but breaks symmetry",
     REQUIRE((analytic - numeric).cwiseAbs().maxCoeff() < 1e-9);
 }
 
+/// The advection knob has a known effect on the spread, which is what lets a
+/// swept point stay where the map places it.
+/// Expected: the spread contracts by exactly sqrt(1-gamma^2).
 TEST_CASE("advection compresses the spectral spread by sqrt(1-gamma^2)",
           "[synthetic][nonnormal]")
 {
@@ -67,6 +75,9 @@ TEST_CASE("advection compresses the spectral spread by sqrt(1-gamma^2)",
     REQUIRE_THAT(spread_a / spread_b, WithinRel(std::sqrt(1.0 - 0.6 * 0.6), 1e-9));
 }
 
+/// kappa(X) is what bounds how far a spectrum-alone prediction can drift, so
+/// the analytic value must equal the one a dense eigensolver computes.
+/// Expected: the two agree; the analytic form is not merely an approximation.
 TEST_CASE("eigenvector_condition matches the dense eigenvector matrix condition",
           "[synthetic][nonnormal][critical]")
 {
@@ -89,6 +100,11 @@ TEST_CASE("eigenvector_condition matches the dense eigenvector matrix condition"
     REQUIRE(op.eigvec_condition > 5.0);   // genuinely non-normal
 }
 
+/// For a non-normal operator the eigenbasis is not orthogonal, so coefficients
+/// must be obtained by solving rather than by projecting.
+/// Expected: the returned coefficients reconstruct the vector exactly through
+/// the eigenvector matrix. A transpose used in place of an inverse would pass
+/// on the symmetric scaffold and fail here.
 TEST_CASE("spectral_coefficients gives exact eigenbasis coordinates for non-normal A",
           "[synthetic][nonnormal][critical]")
 {
@@ -120,6 +136,9 @@ TEST_CASE("spectral_coefficients gives exact eigenbasis coordinates for non-norm
     REQUIRE((via_X - sparse).norm() / sparse.norm() < 1e-10);
 }
 
+/// The scatter control must keep working once the operator stops being
+/// symmetric, or the two map axes recouple exactly where the bridge starts.
+/// Expected: spectrum and conditioning survive a shuffle under advection.
 TEST_CASE("the scatter knob stays a similarity transform under advection",
           "[synthetic][nonnormal][scatter]")
 {
@@ -140,6 +159,12 @@ TEST_CASE("the scatter knob stays a similarity transform under advection",
     REQUIRE((lb - ls).cwiseAbs().maxCoeff() < 1e-9);
 }
 
+/// Why the spectrum-alone prediction survives non-normality at all.
+/// Expected: on a normal operator the prediction is exact to 0.02 decades; with
+/// advection the gap stays under 0.2*log10(kappa(X)). The rigorous bound is
+/// log10(kappa(X)) with decades of slack, so it would never trip on a
+/// regression; the tight empirical form is asserted instead precisely so this
+/// test can detect a real change in the instrument.
 TEST_CASE("the conditioning gap grows LOGARITHMICALLY in kappa(X), far under the bound",
           "[regime][nonnormal][critical]")
 {
@@ -167,6 +192,9 @@ TEST_CASE("the conditioning gap grows LOGARITHMICALLY in kappa(X), far under the
     }
 }
 
+/// Outside |gamma| < 1 the construction no longer has a real spectrum.
+/// Expected: the builder throws rather than returning an operator whose
+/// advertised properties do not hold.
 TEST_CASE("advection is rejected outside |gamma| < 1", "[synthetic][nonnormal]")
 {
     SyntheticSpec sp; sp.n1 = 8; sp.dim = 1; sp.advection = 1.0;
@@ -177,6 +205,9 @@ TEST_CASE("advection is rejected outside |gamma| < 1", "[synthetic][nonnormal]")
 
 // The honest distinction: advection is diagonally removable, correlation is not.
 
+/// The non-normality measure must be exactly zero on a normal operator and
+/// positive otherwise, or it cannot classify the arms.
+/// Expected: zero without advection, positive with it.
 TEST_CASE("Henrici departure is zero iff the operator is normal", "[synthetic][nonnormal][henrici]")
 {
     SyntheticSpec lap; lap.n1 = 10; lap.dim = 2;                       // symmetric
@@ -190,6 +221,10 @@ TEST_CASE("Henrici departure is zero iff the operator is normal", "[synthetic][n
     REQUIRE(henrici_departure(build_synthetic(cor).A) < 1e-12);
 }
 
+/// The honest scoping of the advection arm: its non-normality is removable by a
+/// diagonal similarity, so it is a weaker test of transferability than
+/// correlation. Recording that is what keeps the bridge claim accurate.
+/// Expected: an explicit diagonal similarity symmetrizes the operator.
 TEST_CASE("advection non-normality is diagonally removable", "[synthetic][nonnormal][critical]")
 {
     // The reviewer's required verification: A = D Atilde D^{-1}, so D^{-1} A D is
@@ -205,6 +240,11 @@ TEST_CASE("advection non-normality is diagonally removable", "[synthetic][nonnor
     REQUIRE((B - B.transpose()).norm() < 1e-10);   // symmetric after D: REMOVABLE
 }
 
+/// Correlation is the strong arm of the bridge, and the one the real operator
+/// actually has: it is not diagonally removable and leaves no closed-form
+/// spectrum.
+/// Expected: the operator reports no analytic spectrum, and no diagonal
+/// similarity symmetrizes it.
 TEST_CASE("correlation destroys separability: no analytic spectrum, not removable",
           "[synthetic][nonnormal][correlation][critical]")
 {
@@ -229,6 +269,9 @@ TEST_CASE("correlation destroys separability: no analytic spectrum, not removabl
     REQUIRE((B - B.transpose()).norm() > 0.1);   // NOT removable
 }
 
+/// Separates the two properties that are easy to conflate.
+/// Expected: correlation without advection is still normal, yet already has no
+/// analytic spectrum. Non-separability and non-normality are independent.
 TEST_CASE("correlation alone is normal but non-separable", "[synthetic][nonnormal][correlation]")
 {
     // A symmetric cross term: normal (measured departure ~0) yet no analytic spectrum.
@@ -239,6 +282,11 @@ TEST_CASE("correlation alone is normal but non-separable", "[synthetic][nonnorma
     REQUIRE_FALSE(op.has_analytic_spectrum);
 }
 
+/// With no closed-form spectrum but normality intact, a dense symmetric
+/// eigensolver supplies lambda and Q, and the prediction should be exact.
+/// Expected: predicted and measured conditioning agree to 0.02 decades for
+/// widths 1 to 5. This isolates the loss of separability from the loss of
+/// normality.
 TEST_CASE("normal non-separable: the DENSE-eigensolver Vandermonde prediction is exact",
           "[regime][nonnormal][correlation][critical]")
 {
@@ -262,6 +310,11 @@ TEST_CASE("normal non-separable: the DENSE-eigensolver Vandermonde prediction is
     }
 }
 
+/// The hardest arm: correlation and advection together are genuinely
+/// non-normal and non-separable, which is the real operator's situation.
+/// Expected: kappa(X) exceeds 10, confirming genuine non-normality, and the
+/// prediction gap stays under 0.2*log10(kappa(X)) rather than merely under the
+/// nearly vacuous rigorous bound.
 TEST_CASE("genuinely non-normal: the prediction gap is far under the kappa(X) bound",
           "[regime][nonnormal][correlation][critical]")
 {
@@ -300,12 +353,18 @@ TEST_CASE("genuinely non-normal: the prediction gap is far under the kappa(X) bo
     REQUIRE(gap <= 0.20 * std::log10(kappa_X));
 }
 
+/// Correlation is a coupling between axes, so it is undefined in one dimension.
+/// Expected: the builder throws rather than silently ignoring the request.
 TEST_CASE("correlation needs dim >= 2", "[synthetic][correlation]")
 {
     SyntheticSpec sp; sp.n1 = 8; sp.dim = 1; sp.correlation = 0.2;
     REQUIRE_THROWS_AS(build_synthetic(sp), std::invalid_argument);
 }
 
+/// The important negative result: kappa(X) alone does not determine the
+/// prediction error, so it cannot be used as a single dial for transferability.
+/// Expected: two arms matched in kappa(X) but differing in mechanism show
+/// materially different gaps.
 TEST_CASE("the prediction error is MECHANISM-dependent, not a function of kappa(X)",
           "[regime][nonnormal][mechanism][critical]")
 {
@@ -355,6 +414,9 @@ TEST_CASE("the prediction error is MECHANISM-dependent, not a function of kappa(
     REQUIRE(gap_v > 3.0 * gap_c);
 }
 
+/// A second route to genuine non-normality, independent of correlation, so the
+/// mechanism claim rests on more than one construction.
+/// Expected: no analytic spectrum and a positive Henrici departure.
 TEST_CASE("variable-coefficient advection has no analytic spectrum and is non-normal",
           "[synthetic][nonnormal][var]")
 {
@@ -371,6 +433,10 @@ TEST_CASE("variable-coefficient advection has no analytic spectrum and is non-no
 // right wherever it can be checked, and the dense value it replaces is checkable nowhere
 // else, because the leftover axes are interchangeable and the spectrum repeats.
 
+/// The canonical kappa(X) is built from the Kronecker factors rather than from
+/// the assembled matrix. Where the dense value is well defined, the two must
+/// agree, or the canonical form is measuring something else.
+/// Expected: agreement wherever the spectrum is simple.
 TEST_CASE("structured_kappa_X matches the dense value wherever the spectrum is simple",
           "[synthetic][nonnormal][correlation][critical]")
 {
@@ -392,6 +458,10 @@ TEST_CASE("structured_kappa_X matches the dense value wherever the spectrum is s
     }
 }
 
+/// Each extra axis is one more Kronecker factor, so it multiplies kappa(X) by
+/// the same one-dimensional factor every time.
+/// Expected: the ratio between consecutive dimensions equals kappa(X1) to 1e-9,
+/// at every dimension from 2 to 6, with no pairwise C(dim,2) term appearing.
 TEST_CASE("the tensor law makes log kappa(X) exactly linear in the asset dimension",
           "[synthetic][nonnormal][correlation]")
 {
@@ -416,6 +486,12 @@ TEST_CASE("the tensor law makes log kappa(X) exactly linear in the asset dimensi
     }
 }
 
+/// Why the canonical value is needed at all. When two axes carry nothing that
+/// distinguishes them, swapping them is an exact symmetry of A, so eigenvalues
+/// repeat and any basis of a repeated eigenspace is admissible. The dense
+/// eigensolver then returns an arbitrary choice that is not a function of A.
+/// Expected: the spectrum is measurably degenerate, while the structured value
+/// is invariant under a similarity permutation to 1e-12.
 TEST_CASE("interchangeable axes make the spectrum degenerate, so dense kappa(X) is "
           "basis-dependent", "[synthetic][nonnormal][correlation][critical]")
 {
@@ -445,6 +521,11 @@ TEST_CASE("interchangeable axes make the spectrum degenerate, so dense kappa(X) 
                  WithinRel(regime_control::structured_kappa_X(sp), 1e-12));
 }
 
+/// The quantitative half of the claim above. P A P^T is an exact similarity, so
+/// any function of the operator must be invariant under it; sweeping the scatter
+/// seed sweeps P.
+/// Expected: the structured value is pinned across permutations, while the dense
+/// value holds only while the spectrum is simple and comes apart once it repeats.
 TEST_CASE("a symmetric permutation moves dense kappa(X) but not the canonical value",
           "[synthetic][nonnormal][correlation][critical]")
 {

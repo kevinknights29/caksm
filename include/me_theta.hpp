@@ -88,7 +88,7 @@ inline double onenorm_est(
     const std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& rmatvec,
     int n, int t = 2, int itmax = 5)
 {
-    // Initialise X: first column = uniform 1/n, remaining columns alternate ±1/n
+    // Initialize X: first column = uniform 1/n, remaining columns alternate +/-1/n
     Eigen::MatrixXd X = Eigen::MatrixXd::Zero(n, t);
     X.col(0).setConstant(1.0 / n);
     for (int j = 1; j < t; ++j)

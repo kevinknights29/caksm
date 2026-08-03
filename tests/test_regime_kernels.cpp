@@ -21,6 +21,9 @@ using namespace regime_test;
 // switch tiles a pattern it cannot tile and the matrix-powers arm silently degenerates
 // while still being reported as blocked. These tests pin the bound and the switch.
 
+/// On an unpermuted operator the predicted halo width must be exact, not merely
+/// an upper bound, or the panel is sized against slack that is not there.
+/// Expected: stencil, predicted and measured bandwidth all equal n1^(dim-1).
 TEST_CASE("predicted bandwidth is exact on the banded arm", "[mpk][bandwidth]")
 {
     // b = 1 is the identity permutation, so the operator keeps its stencil bandwidth:
@@ -34,6 +37,10 @@ TEST_CASE("predicted bandwidth is exact on the banded arm", "[mpk][bandwidth]")
     REQUIRE(measured_bandwidth(op.A) == 16);
 }
 
+/// The tiling switch is only safe if the prediction is never an under-estimate:
+/// too small a bound tiles an operator whose halo is wider than the panel
+/// assumed, and the kernel reads rows it never fetched.
+/// Expected: measured <= predicted at every scatter block from 1 to N.
 TEST_CASE("predicted bandwidth bounds the measured one at every scatter setting",
           "[mpk][bandwidth][critical]")
 {
@@ -50,6 +57,9 @@ TEST_CASE("predicted bandwidth bounds the measured one at every scatter setting"
     }
 }
 
+/// At full scatter there is no locality left to exploit.
+/// Expected: predicted bandwidth reaches n-1, so a panel halo spans the entire
+/// vector and tiling can buy nothing.
 TEST_CASE("full scatter saturates the bandwidth: the halo becomes the whole vector",
           "[mpk][bandwidth]")
 {
@@ -58,6 +68,10 @@ TEST_CASE("full scatter saturates the bandwidth: the halo becomes the whole vect
     REQUIRE(predicted_bandwidth(sp) == 255);          // n - 1
 }
 
+/// Levels shrink as the recurrence climbs, so the footprint is a trapezoid.
+/// Charging the full expanded panel at every level would over-count the halo
+/// and retire a panel before it actually stops fitting.
+/// Expected: the trapezoid estimate is strictly below the box estimate.
 TEST_CASE("the level footprint is a trapezoid, not a box", "[mpk][footprint]")
 {
     // Levels shrink as the recurrence climbs, so charging (s+1) * expanded would
@@ -74,6 +88,10 @@ TEST_CASE("the level footprint is a trapezoid, not a box", "[mpk][footprint]")
     REQUIRE(trapezoid < box);
 }
 
+/// mpk_panel_rows inverts mpk_panel_bytes, so the two must agree or the panel
+/// chooser returns a size that does not fit.
+/// Expected: at both tiling levels and every width, the returned panel is
+/// positive and its residency ratio is at most 1.
 TEST_CASE("the auto-sized panel fits the level it was sized against", "[mpk][footprint]")
 {
     // mpk_panel_rows inverts mpk_panel_bytes, so the two must agree: the panel it
@@ -92,6 +110,9 @@ TEST_CASE("the auto-sized panel fits the level it was sized against", "[mpk][foo
     }
 }
 
+/// The halo is a fixed 2*s*w rows, so it amortizes over the interior.
+/// Expected: the halo ratio falls as the panel grows, which is why the tallest
+/// panel that fits is the one to pick.
 TEST_CASE("a taller panel carries a thinner halo", "[mpk][halo]")
 {
     // The halo is a fixed 2*s*w rows, so it amortizes over the interior. This is why
@@ -99,11 +120,17 @@ TEST_CASE("a taller panel carries a thinner halo", "[mpk][halo]")
     REQUIRE(mpk_halo_ratio(1000, 4, 16) > mpk_halo_ratio(8000, 4, 16));
 }
 
+/// The halo grows with the recurrence depth, and that growth is what eventually
+/// makes a panel stop fitting.
+/// Expected: at a fixed panel, the halo ratio at s=8 exceeds that at s=2.
 TEST_CASE("the halo fattens with s, which is the capacity roof's mechanism", "[mpk][halo]")
 {
     REQUIRE(mpk_halo_ratio(4096, 2, 16) < mpk_halo_ratio(4096, 8, 16));
 }
 
+/// L2 is private but small, L3 shared but large, so the two levels bracket the
+/// crossover instead of asserting one.
+/// Expected: the L2 capacity roof is positive and never exceeds the L3 one.
 TEST_CASE("the finer tiling level imposes the tighter capacity roof on s",
           "[mpk][sroof]")
 {
@@ -122,6 +149,12 @@ TEST_CASE("the finer tiling level imposes the tighter capacity roof on s",
     REQUIRE(s_l2 <= s_l3);
 }
 
+/// The thesis claim in miniature: on a thin-banded operator, block width is set
+/// by basis conditioning rather than by cache capacity.
+/// Expected: the capacity roof sits above the certified width, and the operative
+/// width is the certificate. An inversion here would mean s has become a
+/// capacity constraint and a better-conditioned basis stops being worth reaching
+/// for, which is a different question entirely.
 TEST_CASE("on the banded arm the CERTIFICATE binds, not the halo", "[mpk][sroof][critical]")
 {
     // The thesis claim in miniature. A thin-banded operator leaves the capacity roof far
@@ -140,6 +173,11 @@ TEST_CASE("on the banded arm the CERTIFICATE binds, not the halo", "[mpk][sroof]
     REQUIRE(operative_s(s_capacity, s_certified) == s_certified);
 }
 
+/// The load-bearing asymmetry: scatter is a permutation, so it leaves the
+/// dependency graph identical while destroying the locality tiling needs. The
+/// switch has to see that coming from the scatter block alone.
+/// Expected: the banded arm plans a tiled form with a thin halo; the scattered
+/// arm is refused and plans the naive form with no panel.
 TEST_CASE("the pattern switch tiles the banded arm and refuses the scattered one",
           "[mpk][switch][critical]")
 {
@@ -166,6 +204,10 @@ TEST_CASE("the pattern switch tiles the banded arm and refuses the scattered one
     REQUIRE(ps.panel_rows == 0);
 }
 
+/// Paired with the similarity-transform control: scatter moves bytes, so it must
+/// move the capacity roof and nothing numerical.
+/// Expected: the certified and operative widths are both unchanged at 8, and
+/// capacity does not bind.
 TEST_CASE("the scatter knob leaves the operative block width alone on the banded arm",
           "[mpk][switch]")
 {
@@ -204,6 +246,13 @@ SpMatRow row_major(const SpMatS& A)
 
 }  // namespace
 
+/// The gate the whole vertical experiment rests on. The kernel reorders memory
+/// access, not arithmetic, so it must reproduce the plain chain's basis; a
+/// fast-looking kernel computing a different subspace would make every measured
+/// crossover meaningless.
+/// Expected: agreement to rounding across widths 1 to 8 and a spread of tile
+/// sizes covering no tiling, several panels, and panels far smaller than the
+/// halo, which is the maximal-recompute case.
 TEST_CASE("tiled matrix-powers equals the plain SpMV chain, bit-for-bit", "[akx][critical]")
 {
     SyntheticSpec sp;
@@ -229,6 +278,9 @@ TEST_CASE("tiled matrix-powers equals the plain SpMV chain, bit-for-bit", "[akx]
     }
 }
 
+/// Correctness must not depend on locality, only performance does.
+/// Expected: on a fully scattered operator, where every panel halo is the whole
+/// vector, the tiled kernel still matches the plain chain to rounding.
 TEST_CASE("tiled matrix-powers is correct on the scattered arm too (wide halo)",
           "[akx]")
 {
@@ -247,6 +299,10 @@ TEST_CASE("tiled matrix-powers is correct on the scattered arm too (wide halo)",
     REQUIRE((got - ref).cwiseAbs().maxCoeff() <= 1e-10 * (1.0 + ref.cwiseAbs().maxCoeff()));
 }
 
+/// The kernel is only ever asked for the certified width, so that is the width
+/// the equivalence has to hold at.
+/// Expected: at the measured certified width, the tiled block matches the plain
+/// one to rounding, so swapping the kernel in cannot change the answer.
 TEST_CASE("tiled matrix-powers spans the same subspace the certified block uses",
           "[akx][critical]")
 {
@@ -269,6 +325,10 @@ TEST_CASE("tiled matrix-powers spans the same subspace the certified block uses"
             <= 1e-10 * (1.0 + plain.cwiseAbs().maxCoeff()));
 }
 
+/// The degenerate request, where the recurrence body never runs.
+/// Expected: exactly one column, exactly equal to the input, with no rounding at
+/// all. This is the boundary an off-by-one in the column bookkeeping breaks
+/// first.
 TEST_CASE("s = 0 returns just the start vector", "[akx]")
 {
     SyntheticSpec sp; sp.n1 = 10; sp.dim = 1;
@@ -280,6 +340,13 @@ TEST_CASE("s = 0 returns just the start vector", "[akx]")
     REQUIRE((B.col(0) - v).cwiseAbs().maxCoeff() == 0.0);
 }
 
+/// The pattern the timed sweep actually runs, which the single-call tests above
+/// do not reach: several calls writing into one output at different column
+/// offsets, reusing a single scratch buffer.
+/// Expected: the assembled basis matches the plain chain to rounding, at every
+/// width, with m deliberately not a multiple of s so the last block is partial
+/// and with a tile smaller than a block halo so each block spans several panels.
+/// A column-offset or scratch-reuse mistake shows up here and nowhere else.
 TEST_CASE("tiled_matrix_powers_into chains blocks into one basis, sharing one scratch",
           "[akx][critical]")
 {

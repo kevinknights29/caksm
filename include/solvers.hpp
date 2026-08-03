@@ -45,7 +45,7 @@
     Eigen::SparseLU<SpMat> lu;
     lu.compute(LHS_mat);
     if (lu.info() != Eigen::Success)
-        throw std::runtime_error("CN: sparse LU factorisation failed");
+        throw std::runtime_error("CN: sparse LU factorization failed");
 
     VecXd u = sys.u0;
     double t_curr = 0.0;
@@ -81,7 +81,7 @@
     for (int d = 0; d < 3; ++d) {
         lu[d].compute(IN - theta * dt * sys.A_adi[d + 1]);
         if (lu[d].info() != Eigen::Success)
-            throw std::runtime_error("ADI-DR: sparse LU factorisation failed");
+            throw std::runtime_error("ADI-DR: sparse LU factorization failed");
     }
 
     SpMat A_full = sys.A_adi[0] + sys.A_adi[1] + sys.A_adi[2] + sys.A_adi[3];
@@ -126,7 +126,7 @@
     for (int d = 0; d < 3; ++d) {
         lu[d].compute(IN - theta * dt * sys.A_adi[d + 1]);
         if (lu[d].info() != Eigen::Success)
-            throw std::runtime_error("ADI-HV: sparse LU factorisation failed");
+            throw std::runtime_error("ADI-HV: sparse LU factorization failed");
     }
 
     SpMat A_full = sys.A_adi[0] + sys.A_adi[1] + sys.A_adi[2] + sys.A_adi[3];
