@@ -935,15 +935,23 @@ int main(int argc, char** argv)
             measured_over_modeled < 1.0
                 ? "redundant reads absorbed before DRAM"
                 : "model under-counts; narrow tile rows span partial sectors");
-        std::printf(
-            "  vertical verdict: %s | nearest roof %s at %.1f%% (%s)\n",
-            verdict_name(verdict), nearest_roof,
-            100.0 * nearest_roof_fraction,
-            recordable_dram
-                ? "supported by idle-device ncu DRAM traffic"
-                : (measured_dram
-                       ? "diagnostic only; the device is contended"
-                       : "diagnostic only; ncu DRAM measurement required"));
+        // A verdict is only ever assigned from an idle-device ncu byte count, so
+        // saying so on every supported row is noise. The parenthetical is
+        // reserved for the two ways a row falls short of carrying one.
+        if (recordable_dram) {
+            std::printf(
+                "  vertical verdict: %s | nearest roof %s at %.1f%%\n",
+                verdict_name(verdict), nearest_roof,
+                100.0 * nearest_roof_fraction);
+        } else {
+            std::printf(
+                "  vertical verdict: %s | nearest roof %s at %.1f%% (%s)\n",
+                verdict_name(verdict), nearest_roof,
+                100.0 * nearest_roof_fraction,
+                measured_dram
+                    ? "diagnostic only; the device is contended"
+                    : "diagnostic only; ncu DRAM measurement required");
+        }
         std::printf(
             "MPK_VERTICAL machine=%s option=%s basis=%s n=%d N=%d s=%d "
             "tile=%dx%dx%d interior=%d tile_doubles=%lld redundancy=%.6f "
