@@ -82,7 +82,7 @@ def plot_crossover(rows):
             ("banded", "L2", C_L2, "s", "banded, tiled to L2"),
             ("scattered", "L3", C_SCAT, "^", "scattered (no tiling)")]
 
-    labelled_fail = labelled_proj = False
+    labeled_fail = labeled_proj = False
     for pattern, level, col, mk, lab in arms:
         s = subset(rows, pattern, level)
         if not s:
@@ -99,15 +99,15 @@ def plot_crossover(rows):
             proj = np.array([1.0 if float(r["rv_1core"]) < 1.0 else float(r["traffic_ratio"])
                              for r in s])
             ax.plot(rv, proj, "--", color=col, lw=1.1, alpha=0.55, zorder=2,
-                    label="roofline-projected (model, not measured)" if not labelled_proj else None)
-            labelled_proj = True
+                    label="roofline-projected (model, not measured)" if not labeled_proj else None)
+            labeled_proj = True
 
         fail = [i for i, r in enumerate(s) if r["ai_gate_pass"] == "0"]
         if fail:
             ax.scatter(rv[fail], sp[fail], s=130, facecolor="none",
                        edgecolor=C_FAIL, linewidth=1.7, zorder=5,
-                       label="AI-gate fail (see mechanism figure)" if not labelled_fail else None)
-            labelled_fail = True
+                       label="AI-gate fail (see mechanism figure)" if not labeled_fail else None)
+            labeled_fail = True
 
     ax.axvline(1.0, color=C_LIM, ls="--", lw=1.3, zorder=1,
                label=r"$\theta_v = 1$ (working set fills the cache)")
@@ -132,7 +132,7 @@ def plot_crossover(rows):
         worst = min(s, key=lambda r: abs(float(r["speedup"]) - 1.0))
         best_sp = max(float(r["speedup"]) for r in s)
         print(f"  measured: banded L3 speedup stays in [{min(float(r['speedup']) for r in s):.2f}, "
-              f"{best_sp:.2f}]x across the whole R_v sweep -- never approaches the modelled "
+              f"{best_sp:.2f}]x across the whole R_v sweep -- never approaches the modeled "
               f"traffic ratio.")
 
 
