@@ -2,7 +2,7 @@
 # The vertical crossover sweep: does cache-blocked matrix-powers pay above R_v=1?
 #
 # Result up front: measured tiled/baseline speedup stayed near 1x (0.8-1.4x) on every
-# grid, never nearing the modelled traffic-ratio ceiling (4-8x). The kernel never reached
+# grid, never nearing the modeled traffic-ratio ceiling (4-8x). The kernel never reached
 # a bandwidth-bound regime, so this is a ceiling, not a refuted boundary.
 # The no-halo diagnostic splits by tile level:
 #

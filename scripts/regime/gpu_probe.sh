@@ -3,7 +3,7 @@
 #
 # Nothing here needs the project built or a GPU kernel launched: it reads
 # nvidia-smi, the fabric and the scheduler. That bounds what it can answer.
-# Identity, capacity and topology come from here; device geometry does not,
+# Identity, capacity and topology come from here. Device geometry does not,
 # because nvidia-smi does not report it, and no roof or reduction cost does,
 # because those are measured. The closing message says which field comes from
 # where. Two of the checks decide whether the study can proceed at all.
