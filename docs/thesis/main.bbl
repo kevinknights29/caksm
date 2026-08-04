@@ -1,0 +1,176 @@
+\begin{thebibliography}{10}
+
+\bibitem{abdelfattah-2021}
+Ahmad Abdelfattah, Hartwig Anzt, Erik~G. Boman, Erin Carson, Terry Cojean, Jack
+  Dongarra, Alyson Fox, Mark Gates, Nicholas~J. Higham, Xiaoye~S. Li, Jennifer
+  Loe, Piotr Luszczek, Srikara Pranesh, Siva Rajamanickam, Tobias Ribizel,
+  Barry~F. Smith, Kasia Swirydowicz, Stephen Thomas, Stanimire Tomov,
+  Yaohung~M. Tsai, and Ulrike~M. Yang.
+\newblock A survey of numerical linear algebra methods utilizing
+  mixed-precision arithmetic.
+\newblock {\em International Journal of High Performance Computing
+  Applications}, 35(4):344--369, 2021.
+
+\bibitem{almohy-higham-2011}
+Awad~H. Al-Mohy and Nicholas~J. Higham.
+\newblock Computing the action of the matrix exponential, with an application
+  to exponential integrators.
+\newblock {\em SIAM Journal on Scientific Computing}, 33(2):488--511, 2011.
+
+\bibitem{bai-hu-reichel-1994}
+Zhaojun Bai, Dan Hu, and Lothar Reichel.
+\newblock A {N}ewton basis {GMRES} implementation.
+\newblock {\em IMA Journal of Numerical Analysis}, 14(4):563--581, 1994.
+
+\bibitem{ballard-2011}
+Grey Ballard, James Demmel, Olga Holtz, and Oded Schwartz.
+\newblock Minimizing communication in numerical linear algebra.
+\newblock {\em SIAM Journal on Matrix Analysis and Applications},
+  32(3):866--901, 2011.
+
+\bibitem{berljafa-guttel-2017}
+Mario Berljafa and Stefan G{\"u}ttel.
+\newblock Parallelization of the rational {A}rnoldi algorithm.
+\newblock {\em SIAM Journal on Scientific Computing}, 39(5):S197--S221, 2017.
+
+\bibitem{black-scholes-1973}
+Fischer Black and Myron Scholes.
+\newblock The pricing of options and corporate liabilities.
+\newblock {\em Journal of Political Economy}, 81(3):637--654, 1973.
+
+\bibitem{carson-2015}
+Erin Carson.
+\newblock {\em Communication-Avoiding {K}rylov Subspace Methods in Theory and
+  Practice}.
+\newblock PhD thesis, University of California, Berkeley, 2015.
+
+\bibitem{chronopoulos-gear-1989}
+Anthony~T. Chronopoulos and C.~William Gear.
+\newblock $s$-step iterative methods for symmetric linear systems.
+\newblock {\em Journal of Computational and Applied Mathematics},
+  25(2):153--168, 1989.
+
+\bibitem{demmel-2012}
+James Demmel, Laura Grigori, Mark Hoemmen, and Julien Langou.
+\newblock Communication-optimal parallel and sequential {QR} and {LU}
+  factorizations.
+\newblock {\em SIAM Journal on Scientific Computing}, 34(1):A206--A239, 2012.
+
+\bibitem{demmel-2008}
+James Demmel, Mark Hoemmen, Marghoob Mohiyuddin, and Katherine Yelick.
+\newblock Avoiding communication in sparse matrix computations.
+\newblock Technical report, University of California, Berkeley, 2008.
+\newblock IEEE International Symposium on Parallel and Distributed Processing.
+
+\bibitem{douglas-rachford-1956}
+Jim Douglas and Henry~H. Rachford.
+\newblock On the numerical solution of heat conduction problems in two and
+  three space variables.
+\newblock {\em Transactions of the American Mathematical Society}, 82:421--439,
+  1956.
+
+\bibitem{ernst-2021}
+Dominik Ernst, Georg Hager, Jonas Thies, and Gerhard Wellein.
+\newblock Performance engineering for real and complex tall \& skinny matrix
+  multiplication kernels on {GPU}s.
+\newblock {\em International Journal of High Performance Computing
+  Applications}, 35(1):5--19, 2021.
+
+\bibitem{fukaya-2014}
+Takeshi Fukaya, Yuji Nakatsukasa, Yuka Yanagisawa, and Yusaku Yamamoto.
+\newblock {CholeskyQR2}: A simple and communication-avoiding algorithm for
+  computing a tall-skinny {QR} factorization on a large-scale parallel system.
+\newblock In {\em Proceedings of the 5th Workshop on Latest Advances in
+  Scalable Algorithms for Large-Scale Systems (ScalA '14)}, pages 31--38, 2014.
+
+\bibitem{ghysels-vanroose-2014}
+Pieter Ghysels and Wim Vanroose.
+\newblock Hiding global synchronization latency in the preconditioned conjugate
+  gradient algorithm.
+\newblock {\em Parallel Computing}, 40(7):224--238, 2014.
+
+\bibitem{golub-vanloan-2013}
+Gene~H. Golub and Charles~F. Van~Loan.
+\newblock {\em Matrix Computations}.
+\newblock Johns Hopkins University Press, 4th edition, 2013.
+
+\bibitem{higham-2005}
+Nicholas~J. Higham.
+\newblock The scaling and squaring method for the matrix exponential revisited.
+\newblock {\em SIAM Journal on Matrix Analysis and Applications},
+  26(4):1179--1193, 2005.
+
+\bibitem{higham-mary-2022}
+Nicholas~J. Higham and Theo Mary.
+\newblock Mixed precision algorithms in numerical linear algebra.
+\newblock {\em Acta Numerica}, 31:347--414, 2022.
+
+\bibitem{hochbruck-lubich-1997}
+Marlis Hochbruck and Christian Lubich.
+\newblock On {K}rylov subspace approximations to the matrix exponential
+  operator.
+\newblock {\em SIAM Journal on Numerical Analysis}, 34(5):1911--1925, 1997.
+
+\bibitem{hoemmen-2010}
+Mark Hoemmen.
+\newblock {\em Communication-Avoiding {K}rylov Subspace Methods}.
+\newblock PhD thesis, University of California, Berkeley, 2010.
+
+\bibitem{hundsdorfer-verwer-2003}
+Willem Hundsdorfer and Jan~G. Verwer.
+\newblock {\em Numerical Solution of Time-Dependent
+  Advection-Diffusion-Reaction Equations}, volume~33 of {\em Springer Series in
+  Computational Mathematics}.
+\newblock Springer, 2003.
+
+\bibitem{inthout-foulon-2010}
+Karel~J. in~'t Hout and Sven Foulon.
+\newblock {ADI} finite difference schemes for option pricing in the {H}eston
+  model with correlation.
+\newblock {\em International Journal of Numerical Analysis and Modeling},
+  7(2):303--320, 2010.
+
+\bibitem{mohiyuddin-2009}
+Marghoob Mohiyuddin, Mark Hoemmen, James Demmel, and Katherine Yelick.
+\newblock Minimizing communication in sparse matrix solvers.
+\newblock In {\em Proceedings of the Conference on High Performance Computing
+  Networking, Storage and Analysis (SC '09)}, 2009.
+
+\bibitem{parks-2006}
+Michael~L. Parks, Eric de~Sturler, Greg Mackey, Duane~D. Johnson, and Spandan
+  Maiti.
+\newblock Recycling {K}rylov subspaces for sequences of linear systems.
+\newblock {\em SIAM Journal on Scientific Computing}, 28(5):1651--1674, 2006.
+
+\bibitem{saad-1992}
+Yousef Saad.
+\newblock Analysis of some {K}rylov subspace approximations to the matrix
+  exponential operator.
+\newblock {\em SIAM Journal on Numerical Analysis}, 29(1):209--228, 1992.
+
+\bibitem{trefethen-1997}
+Lloyd~N. Trefethen and David Bau, III.
+\newblock {\em {Numerical linear algebra}}.
+\newblock SIAM, 6 1997.
+
+\bibitem{williams-2009}
+Samuel Williams, Andrew Waterman, and David Patterson.
+\newblock Roofline: An insightful visual performance model for multicore
+  architectures.
+\newblock {\em Communications of the ACM}, 52(4):65--76, 2009.
+
+\bibitem{yamamoto-2015}
+Yusaku Yamamoto, Yuji Nakatsukasa, Yuka Yanagisawa, and Takeshi Fukaya.
+\newblock Roundoff error analysis of the {C}holesky{QR}2 algorithm.
+\newblock {\em Electronic Transactions on Numerical Analysis}, 44:306--326,
+  2015.
+
+\bibitem{yamazaki-2014}
+Ichitaro Yamazaki, Hartwig Anzt, Stanimire Tomov, Mark Hoemmen, and Jack
+  Dongarra.
+\newblock Improving the performance of {CA-GMRES} on multicores with multiple
+  {GPUs}.
+\newblock In {\em Proceedings of the IEEE 28th International Parallel and
+  Distributed Processing Symposium (IPDPS)}, pages 382--391, 2014.
+
+\end{thebibliography}

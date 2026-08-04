@@ -1,0 +1,17 @@
+\contentsline {table}{\numberline {1}{\ignorespaces Default model parameters.}}{9}{table.caption.8}%
+\contentsline {table}{\numberline {2}{\ignorespaces The two kernels, their bounds, and the CA mechanism each motivates.}}{11}{table.caption.11}%
+\contentsline {table}{\numberline {3}{\ignorespaces Kernel shares of KSM-EI solve time (basket, tolerance $10^{-8}$). $\bar m$ is the mean Krylov dimension.}}{15}{table.caption.24}%
+\contentsline {table}{\numberline {4}{\ignorespaces Measured kernel positions on the roofline. AI is arithmetic intensity.}}{15}{table.caption.26}%
+\contentsline {table}{\numberline {5}{\ignorespaces The locality control at $n=61$: three compute schedules, their predictions, and the measurements (SpMV speedup at $P=24$; implied aggregate bandwidth at $P=12$).}}{18}{table.caption.30}%
+\contentsline {table}{\numberline {6}{\ignorespaces The two dimensionless coordinates.}}{19}{table.caption.32}%
+\contentsline {table}{\numberline {7}{\ignorespaces The controls. A gate failure is fatal to everything downstream; a finding is a result in its own right.}}{20}{table.caption.33}%
+\contentsline {table}{\numberline {8}{\ignorespaces The reduction ledger at $s_{\max } = 7$.}}{22}{table.caption.36}%
+\contentsline {table}{\numberline {9}{\ignorespaces Which structural properties the spectral prediction of $s_{\max }$ actually needs.}}{23}{table.caption.41}%
+\contentsline {table}{\numberline {10}{\ignorespaces Canonical vs.\ dense $\kappa (X)$ along the asset dimension.}}{25}{table.caption.42}%
+\contentsline {table}{\numberline {11}{\ignorespaces The correlation arm ($n_1 = 8$, $d = 3$). At $\rho > 0$ the dense value matches the canonical one exactly; at $\rho = 0$ the operator is a pure Kronecker sum and the dense value is degenerate.}}{25}{table.caption.44}%
+\contentsline {table}{\numberline {12}{\ignorespaces The vertical sweep: measured speedup of the tiled matrix-powers kernel against the modeled traffic ratio.}}{27}{table.caption.46}%
+\contentsline {table}{\numberline {13}{\ignorespaces The two roofs on the block width. The L3 ghost roof is quoted as $\ge $ because a panel still fit at every swept $s$ up to the sweep ceiling of 24; the certificate roof is measured directly ($\kappa (\mathbf {B}_s)$ crosses $u^{-1/2}$ between $s=8$ and $s=9$ at $n_1 = 420$).}}{29}{table.caption.49}%
+\contentsline {table}{\numberline {14}{\ignorespaces The real operator's trajectory under grid refinement. Bisecting on $n$ puts the $\theta _v$ crossing at $n \approx 73$.}}{30}{table.caption.51}%
+\contentsline {table}{\numberline {15}{\ignorespaces The two-GPU controlled pair.}}{32}{table.caption.53}%
+\contentsline {table}{\numberline {16}{\ignorespaces The reduction-tier ladder on the target cluster (two nodes, one Tesla V100 per node, PCIe interconnect without NVLink). Every tier cost must be measured, never assumed.}}{33}{table.caption.54}%
+\providecommand \tocbasic@end@toc@file {}\tocbasic@end@toc@file 
