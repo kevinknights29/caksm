@@ -1,5 +1,16 @@
 \begin{thebibliography}{10}
 
+\bibitem{abdelfattah-2021}
+Ahmad Abdelfattah, Hartwig Anzt, Erik~G. Boman, Erin Carson, Terry Cojean, Jack
+  Dongarra, Alyson Fox, Mark Gates, Nicholas~J. Higham, Xiaoye~S. Li, Jennifer
+  Loe, Piotr Luszczek, Srikara Pranesh, Siva Rajamanickam, Tobias Ribizel,
+  Barry~F. Smith, Kasia Swirydowicz, Stephen Thomas, Stanimire Tomov,
+  Yaohung~M. Tsai, and Ulrike~M. Yang.
+\newblock A survey of numerical linear algebra methods utilizing
+  mixed-precision arithmetic.
+\newblock {\em International Journal of High Performance Computing
+  Applications}, 35(4):344--369, 2021.
+
 \bibitem{almohy-higham-2011}
 Awad~H. Al-Mohy and Nicholas~J. Higham.
 \newblock Computing the action of the matrix exponential, with an application
@@ -39,6 +50,12 @@ Anthony~T. Chronopoulos and C.~William Gear.
 \newblock {\em Journal of Computational and Applied Mathematics},
   25(2):153--168, 1989.
 
+\bibitem{demmel-2012}
+James Demmel, Laura Grigori, Mark Hoemmen, and Julien Langou.
+\newblock Communication-optimal parallel and sequential {QR} and {LU}
+  factorizations.
+\newblock {\em SIAM Journal on Scientific Computing}, 34(1):A206--A239, 2012.
+
 \bibitem{demmel-2008}
 James Demmel, Mark Hoemmen, Marghoob Mohiyuddin, and Katherine Yelick.
 \newblock Avoiding communication in sparse matrix computations.
@@ -59,6 +76,13 @@ Dominik Ernst, Georg Hager, Jonas Thies, and Gerhard Wellein.
 \newblock {\em International Journal of High Performance Computing
   Applications}, 35(1):5--19, 2021.
 
+\bibitem{fukaya-2014}
+Takeshi Fukaya, Yuji Nakatsukasa, Yuka Yanagisawa, and Yusaku Yamamoto.
+\newblock {CholeskyQR2}: A simple and communication-avoiding algorithm for
+  computing a tall-skinny {QR} factorization on a large-scale parallel system.
+\newblock In {\em Proceedings of the 5th Workshop on Latest Advances in
+  Scalable Algorithms for Large-Scale Systems (ScalA '14)}, pages 31--38, 2014.
+
 \bibitem{ghysels-vanroose-2014}
 Pieter Ghysels and Wim Vanroose.
 \newblock Hiding global synchronization latency in the preconditioned conjugate
@@ -75,6 +99,11 @@ Nicholas~J. Higham.
 \newblock The scaling and squaring method for the matrix exponential revisited.
 \newblock {\em SIAM Journal on Matrix Analysis and Applications},
   26(4):1179--1193, 2005.
+
+\bibitem{higham-mary-2022}
+Nicholas~J. Higham and Theo Mary.
+\newblock Mixed precision algorithms in numerical linear algebra.
+\newblock {\em Acta Numerica}, 31:347--414, 2022.
 
 \bibitem{hochbruck-lubich-1997}
 Marlis Hochbruck and Christian Lubich.
@@ -107,12 +136,11 @@ Marghoob Mohiyuddin, Mark Hoemmen, James Demmel, and Katherine Yelick.
 \newblock In {\em Proceedings of the Conference on High Performance Computing
   Networking, Storage and Analysis (SC '09)}, 2009.
 
-\bibitem{niesen-wright-2012}
-Jitse Niesen and Will~M. Wright.
-\newblock Algorithm 919: A {K}rylov subspace algorithm for evaluating the
-  $\varphi$-functions appearing in exponential integrators.
-\newblock {\em ACM Transactions on Mathematical Software}, 38(3):22:1--22:19,
-  2012.
+\bibitem{parks-2006}
+Michael~L. Parks, Eric de~Sturler, Greg Mackey, Duane~D. Johnson, and Spandan
+  Maiti.
+\newblock Recycling {K}rylov subspaces for sequences of linear systems.
+\newblock {\em SIAM Journal on Scientific Computing}, 28(5):1651--1674, 2006.
 
 \bibitem{saad-1992}
 Yousef Saad.
@@ -136,5 +164,13 @@ Yusaku Yamamoto, Yuji Nakatsukasa, Yuka Yanagisawa, and Takeshi Fukaya.
 \newblock Roundoff error analysis of the {C}holesky{QR}2 algorithm.
 \newblock {\em Electronic Transactions on Numerical Analysis}, 44:306--326,
   2015.
+
+\bibitem{yamazaki-2014}
+Ichitaro Yamazaki, Hartwig Anzt, Stanimire Tomov, Mark Hoemmen, and Jack
+  Dongarra.
+\newblock Improving the performance of {CA-GMRES} on multicores with multiple
+  {GPUs}.
+\newblock In {\em Proceedings of the IEEE 28th International Parallel and
+  Distributed Processing Symposium (IPDPS)}, pages 382--391, 2014.
 
 \end{thebibliography}

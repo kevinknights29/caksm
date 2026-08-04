@@ -1,38 +1,56 @@
 \contentsline {section}{\numberline {1}Introduction}{6}{section.0.1}%
-\contentsline {section}{\numberline {2}The pricing problem and its discretization}{6}{section.0.2}%
+\contentsline {section}{\numberline {2}The pricing problem and its discretization}{7}{section.0.2}%
 \contentsline {section}{\numberline {3}The Krylov exponential integrator}{8}{section.0.3}%
-\contentsline {subsection}{\numberline {3.1}Cost structure and the sequential dependency}{8}{subsection.0.3.1}%
-\contentsline {subsection}{\numberline {3.2}Communication-avoiding reformulations}{8}{subsection.0.3.2}%
-\contentsline {section}{\numberline {4}Experimental platform and methodology}{10}{section.0.4}%
-\contentsline {paragraph}{\nonumberline The GPU platform.}{10}{paragraph*.11}%
-\contentsline {paragraph}{\nonumberline Workstation selection.}{10}{paragraph*.13}%
-\contentsline {paragraph}{\nonumberline Reproducibility.}{11}{paragraph*.15}%
-\contentsline {section}{\numberline {5}Benchmark: reproducing Niesen--Wright}{11}{section.0.5}%
-\contentsline {paragraph}{\nonumberline The referee.}{12}{paragraph*.18}%
-\contentsline {paragraph}{\nonumberline Role of the benchmark.}{12}{paragraph*.20}%
-\contentsline {section}{\numberline {6}Profile and roofline}{12}{section.0.6}%
-\contentsline {section}{\numberline {7}The OpenMP scaling study}{13}{section.0.7}%
-\contentsline {subsection}{\numberline {7.1}Instrument design}{13}{subsection.0.7.1}%
-\contentsline {subsection}{\numberline {7.2}The quarantined $m(n)$ growth}{15}{subsection.0.7.2}%
-\contentsline {subsection}{\numberline {7.3}The locality control}{15}{subsection.0.7.3}%
-\contentsline {section}{\numberline {8}Regime analysis}{16}{section.0.8}%
-\contentsline {subsection}{\numberline {8.1}The coordinates}{17}{subsection.0.8.1}%
-\contentsline {subsection}{\numberline {8.2}The instrument and its gates}{18}{subsection.0.8.2}%
-\contentsline {subsection}{\numberline {8.3}Basis conditioning and the confound control}{18}{subsection.0.8.3}%
-\contentsline {subsection}{\numberline {8.4}The reduction ledger and small-$m$ safety}{19}{subsection.0.8.4}%
-\contentsline {subsection}{\numberline {8.5}Non-normality: the log-robustness relation}{20}{subsection.0.8.5}%
-\contentsline {subsection}{\numberline {8.6}Conditioning growth with asset dimension}{22}{subsection.0.8.6}%
-\contentsline {subsection}{\numberline {8.7}The computability gap}{23}{subsection.0.8.7}%
-\contentsline {subsection}{\numberline {8.8}The horizontal mechanism}{24}{subsection.0.8.8}%
-\contentsline {subsection}{\numberline {8.9}The vertical mechanism}{25}{subsection.0.8.9}%
-\contentsline {subsection}{\numberline {8.10}Block width}{26}{subsection.0.8.10}%
-\contentsline {subsection}{\numberline {8.11}Placing the real operator on the map}{27}{subsection.0.8.11}%
+\contentsline {subsection}{\numberline {3.1}Cost structure and the sequential dependency}{10}{subsection.0.3.1}%
+\contentsline {subsection}{\numberline {3.2}Communication-avoiding reformulations}{10}{subsection.0.3.2}%
+\contentsline {section}{\numberline {4}Experimental platform and methodology}{11}{section.0.4}%
+\contentsline {paragraph}{\nonumberline The GPU platform.}{11}{paragraph*.11}%
+\contentsline {paragraph}{\nonumberline Workstation selection.}{11}{paragraph*.13}%
+\contentsline {paragraph}{\nonumberline Reproducibility.}{12}{paragraph*.15}%
+\contentsline {section}{\numberline {5}Historical Niesen--Wright time-integrator comparison}{12}{section.0.5}%
+\contentsline {paragraph}{\nonumberline The referee.}{13}{paragraph*.18}%
+\contentsline {paragraph}{\nonumberline Role of the benchmark.}{13}{paragraph*.20}%
+\contentsline {section}{\numberline {6}Profile and roofline}{13}{section.0.6}%
+\contentsline {section}{\numberline {7}The OpenMP scaling study}{15}{section.0.7}%
+\contentsline {subsection}{\numberline {7.1}Instrument design}{15}{subsection.0.7.1}%
+\contentsline {subsection}{\numberline {7.2}The quarantined $m(n)$ growth}{16}{subsection.0.7.2}%
+\contentsline {subsection}{\numberline {7.3}The locality control}{17}{subsection.0.7.3}%
+\contentsline {section}{\numberline {8}Regime analysis}{18}{section.0.8}%
+\contentsline {subsection}{\numberline {8.1}The coordinates}{18}{subsection.0.8.1}%
+\contentsline {subsection}{\numberline {8.2}The instrument and its gates}{19}{subsection.0.8.2}%
+\contentsline {subsection}{\numberline {8.3}Basis conditioning and the confound control}{20}{subsection.0.8.3}%
+\contentsline {subsection}{\numberline {8.4}The reduction ledger and small-$m$ safety}{20}{subsection.0.8.4}%
+\contentsline {subsection}{\numberline {8.5}Empirical log-sensitivity to non-normality}{21}{subsection.0.8.5}%
+\contentsline {subsection}{\numberline {8.6}Conditioning growth with asset dimension}{23}{subsection.0.8.6}%
+\contentsline {subsection}{\numberline {8.7}The computability gap}{24}{subsection.0.8.7}%
+\contentsline {subsection}{\numberline {8.8}The horizontal mechanism}{25}{subsection.0.8.8}%
+\contentsline {subsection}{\numberline {8.9}The vertical mechanism}{26}{subsection.0.8.9}%
+\contentsline {subsection}{\numberline {8.10}Block width}{27}{subsection.0.8.10}%
+\contentsline {subsection}{\numberline {8.11}Placing the real operator on the map}{28}{subsection.0.8.11}%
 \contentsline {section}{\numberline {9}Recomputing the map for a GPU}{29}{section.0.9}%
-\contentsline {subsection}{\numberline {9.1}The portability claim under test}{29}{subsection.0.9.1}%
-\contentsline {subsection}{\numberline {9.2}What transfers, and what breaks}{30}{subsection.0.9.2}%
+\contentsline {subsection}{\numberline {9.1}A cross-architecture transfer test}{29}{subsection.0.9.1}%
+\contentsline {subsection}{\numberline {9.2}What transfers, and what breaks}{29}{subsection.0.9.2}%
 \contentsline {subsection}{\numberline {9.3}The decoupled invariant}{30}{subsection.0.9.3}%
 \contentsline {subsection}{\numberline {9.4}Reaching the corner, and the gate that discriminates}{31}{subsection.0.9.4}%
 \contentsline {subsection}{\numberline {9.5}Roofline-bound kernels and the $s$-step crossover}{32}{subsection.0.9.5}%
-\contentsline {section}{\numberline {10}Conclusion}{33}{section.0.10}%
-\contentsline {section}{References}{35}{section.0.10}%
+\contentsline {section}{\numberline {10}The distributed CA exponential integrator}{33}{section.0.10}%
+\contentsline {subsection}{\numberline {10.1}The solver}{33}{subsection.0.10.1}%
+\contentsline {subsection}{\numberline {10.2}Recurrence depth, and what a fair control costs}{34}{subsection.0.10.2}%
+\contentsline {subsection}{\numberline {10.3}Strong scaling}{34}{subsection.0.10.3}%
+\contentsline {subsection}{\numberline {10.4}The communication account}{36}{subsection.0.10.4}%
+\contentsline {subsection}{\numberline {10.5}The vertical coordinate, measured}{37}{subsection.0.10.5}%
+\contentsline {subsection}{\numberline {10.6}The conditioning guard on an evolving solver basis}{39}{subsection.0.10.6}%
+\contentsline {subsection}{\numberline {10.7}Weak scaling and the convergence stop}{40}{subsection.0.10.7}%
+\contentsline {subsection}{\numberline {10.8}What the integrator adds to the map}{41}{subsection.0.10.8}%
+\contentsline {section}{\numberline {11}Future work}{41}{section.0.11}%
+\contentsline {paragraph}{\nonumberline Mixed precision.}{41}{paragraph*.60}%
+\contentsline {paragraph}{\nonumberline A tile-aware vertical coordinate.}{42}{paragraph*.62}%
+\contentsline {paragraph}{\nonumberline More participants, and a shorter path for the halo.}{42}{paragraph*.64}%
+\contentsline {paragraph}{\nonumberline Numerical directions.}{42}{paragraph*.66}%
+\contentsline {paragraph}{\nonumberline Financial validation and competitive baselines.}{42}{paragraph*.68}%
+\contentsline {paragraph}{\nonumberline Scope left open by the instrument.}{42}{paragraph*.70}%
+\contentsline {section}{\numberline {12}Conclusion}{42}{section.0.12}%
+\contentsline {section}{References}{44}{section.0.12}%
+\contentsline {section}{\numberline {A}Supplementary figures}{47}{section.Alph0.1}%
+\contentsline {section}{\numberline {B}Supplementary tables}{51}{section.Alph0.2}%
 \providecommand \tocbasic@end@toc@file {}\tocbasic@end@toc@file 
