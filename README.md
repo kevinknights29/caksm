@@ -1,4 +1,4 @@
-# caksm - Communication-Avoiding Krylov Subspace Methods for Option Pricing
+# Communication-Avoiding Krylov Exponential Integration for Multi-GPU Option Pricing
 
 A trading desk repricing a multi-asset book revalues the same PDE thousands of times a day,
 so the wall-clock cost of one solve sets what can be quoted, hedged, and risk-managed
