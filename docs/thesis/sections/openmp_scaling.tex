@@ -1,0 +1,71 @@
+\section{The OpenMP scaling study}\label{sec:scaling}
+
+The scaling study measures how the two hot kernels in one Arnoldi cycle respond to additional cores. Solution accuracy is not part of this experiment. The important distinction is that the kernels fail to scale for two \emph{different} reasons, each motivating a different CA mechanism (\Cref{tab:two-mechanisms}). \Cref{sec:regime} later turns this split into two independent dimensionless axes.
+
+\subsection{Instrument design}
+
+The harness freezes the Krylov dimension at $m=8$ and disables the convergence check so that both ceilings are visible. This value is the rounded mean dimension measured for the $n=31$ solve ($\bar m=7.60$ in \Cref{tab:profile}) and lies inside the measured $m=8$--11 range used by the reduction ledger. A fixed $m$ keeps the Gram--Schmidt/SpMV work ratio unchanged. Runtime variation across the core count $P$ can then be attributed to hardware rather than a changing algorithm, while genuine $m(n)$ growth is measured separately.
+
+The hand-written SpMV stores the matrix in compressed sparse row (CSR) format, with each row's nonzeros held contiguously. Writing the kernel for this study keeps the row partition and reduction strategy under the experiment's control. Each thread is the only writer of a contiguous, disjoint output slice, and partition seams are cache-line aligned. The harness runs MGS with parallel global reductions and reports per-kernel timings, so one sweep shows both SpMV's plateau and Gram--Schmidt's roll-off. Threads are pinned with \texttt{OMP\_PLACES=cores} and \texttt{OMP\_PROC\_BIND=close}. Each CCX (\Cref{sec:platform}) fills before the next one is used, exposing per-CCX L3 bandwidth as discrete steps. Core counts align with CCX boundaries, and SMT lanes are excluded so that no timed core shares its pipelines with a second thread. Each point is the median of five to seven timed repeats after one warm-up, with the interquartile range as the error bar.
+
+Two initialization arms form a controlled A/B experiment on memory placement. Arm A fills the matrix from thread 0. In arm B, each thread first-touches the row partition it will later compute. The arms are indistinguishable for the reason examined in \Cref{sec:locality}. \Cref{fig:strong,fig:weak} show the strong- and weak-scaling results.
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.9\textwidth]{scaling_strong.png}
+\caption{Per-kernel strong scaling at $n=31$ and $n=61$, both initialization arms. SpMV shows a plateau at $n=31$ and a superlinear transition at $n=61$; Gram--Schmidt shows the
+synchronization staircase.}
+\label{fig:strong}
+\end{figure}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.7\textwidth]{scaling_weak.png}
+\caption{Per-kernel weak-scaling efficiency $T(1)/T(P)$ with $n(P) = n_1 P^{1/3}$ rounded
+odd, cache-tier crossings annotated.}
+\label{fig:weak}
+\end{figure}
+
+\subsection{The quarantined $m(n)$ growth}
+
+The harness freezes $m$ so that the scaling curves measure hardware. The genuine growth of the Krylov dimension is measured separately (\Cref{fig:mn}). Its mean per time step rises from 7.6 at $n=31$ to 11.3 at $n=89$. This growth is slow, but it is enough to increase Gram--Schmidt's quadratic share (\Cref{tab:profile}) and supplies the measured range used by the small-$m$ discussion in \Cref{sec:ledger}.
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.7\textwidth]{scaling_mn.png}
+\caption{The $m(n)$ Krylov-growth curve, measured with the convergence check enabled and quarantined from the scaling instrument, which pins $m=8$.}
+\label{fig:mn}
+\end{figure}
+
+\subsection{The locality control}\label{sec:locality}
+
+In this subsection, the monospace words \texttt{block}, \texttt{cyclic}, and \texttt{rotate} are names of CPU row schedules, not Krylov blocks or CUDA thread blocks.
+
+At $n = 61$ the SpMV runtime drops \emph{superlinearly} (36.7$\times$ on 24 cores) with a knee at $P = 12$ (\Cref{fig:strong}). Cache residency provides the candidate explanation. Once each CCX's share of the matrix ($3 \times 52.8/P$\,MiB) fits in its own 16\,MiB L3 slice and stays resident across repeated SpMVs, reads come from L3 instead of DRAM. The implied aggregate bandwidth crosses the independently measured socket DRAM ceiling (${\sim}95$\,GB/s) at $P=12$, ruling out DRAM alone and supporting service from the cache hierarchy.
+
+The initialization arms cannot test this explanation because puffin exposes the 3960X as one NUMA domain and Zen~2 uses a per-CCX victim L3 cache. AMD calls the firmware-controlled subdivision of a socket into software-visible NUMA domains \emph{NUMA Per Socket} (NPS) \cite{amd-aocl-nps}. NPS is selected in BIOS/UEFI, and firmware access was unavailable on puffin, so it could not be added as an experimental arm. In the available topology, the core that \emph{accesses} a row determines L3 residency, not the thread that first touched its page. Both initialization arms use the same row partition and therefore produce identical curves. The controlled experiment changes only the compute schedule, and with it the rows read by each core (\Cref{tab:locality}, \Cref{fig:locality}).
+
+\begin{table}[htbp!]
+\centering
+\caption{Observed SpMV behavior per compute schedule in the locality control at $n=61$
+(speedup at $P=24$; implied aggregate bandwidth at $P=12$).}
+\label{tab:locality}
+\begin{tabular}{@{}lp{5.6cm}p{5.6cm}@{}}
+\toprule
+\textbf{Schedule} & \textbf{What it does} & \textbf{Observed behavior} \\
+\midrule
+\texttt{block} & contiguous band per core, fixed across SpMVs & 36.7$\times$, knee at $P=12$, 176\,GB/s \\
+\texttt{cyclic} & cache-line-sized row chunks dealt round-robin, fixed & 7.0$\times$, no knee, 36\,GB/s \\
+\texttt{rotate} & contiguous bands, rotating by one each SpMV & 6.6$\times$, no knee, 66\,GB/s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.95\textwidth]{scaling_locality.png}
+\caption{The locality control. Only the \texttt{block} row schedule carries an aggregate bandwidth DRAM cannot supply; the implied traffic above the measured DRAM roof must therefore be served from L3 or a nearer cache tier.}
+\label{fig:locality}
+\end{figure}
+
+The \texttt{cyclic} schedule was expected to keep the transition because it leaves the per-CCX byte \emph{volume} unchanged. Instead, it collapses to the \texttt{rotate} curve: 7.0$\times$ versus 6.6$\times$, compared with 36.7$\times$ for \texttt{block}. \textbf{Contiguity, not volume alone, keeps a slice resident.} This is the locality property that a matrix-powers tile attempts to reuse.

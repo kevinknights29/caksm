@@ -1,0 +1,459 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%                                                                  %
+%  This is TCD-Maths-MSc-HPC.sty, to be used with                  %
+%  \documentclass{article}                                         %
+%  of Latex2e. It is to be included with the command               %
+%                                                                  %
+%         \usepackage[<OPTIONS>]{TCD-Maths-MSc-HPC}                %
+%                                                                  %
+%  It modifies the size of the section, subsection and appendix    %
+%  titles and of figure and table captions. We include some        %
+%  packages such as cite, graphicx, booktabs and hyperref.         %
+%                                                                  %
+% --------------------------------- School of Mathematics, 2026 -- %
+%  v0.1, 08 Aug 2026, Patrick Fritzsch                             %
+%                                                                  %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\NeedsTeXFormat{LaTeX2e}[1994/06/01]
+\ProvidesPackage{TCD-Maths-MSc-HPC}
+[2026/08/08 v0.5 M.Sc. in HPC thesis style, School of Mathematics, TCD]
+%---------------------------------------------------
+% necessary macro definition for M.Sc.style
+%
+\newcommand{\degree}{M.Sc. in High-Performance Computing} % Degree name
+\newcommand{\typeofthesis}{summer project thesis}         % dissertation, Final Year Project, report, etc.
+\newcommand{\keywords}{M.Sc. in HPC summer project thesis, School of Mathematics, TCD} % Keywords for your thesis
+\newcommand{\school}{\textbf{\href{https://www.maths.tcd.ie/}{\textcolor{tcd-dark-teal}{School of Mathematics}}}} % Your school's name and URL, this is used in the title page
+%% Comment out the next line if you don't want a department to appear
+%\newcommand{\department}{\href{http://researchgroup.university.com}{Prof. Peter Dunne}} % Your research group's name and URL, this is used in the title page
+
+%---------------------------------------------------
+% package option handling 
+%
+%\newif\iflabelshow\labelshowfalse
+%\DeclareOption{draft}{%
+%  \typeout{[draft] mode set in alpha.sty}%
+%  \newif\iflabelshow\labelshowtrue
+%}
+%\newif\ifXbibkeys\Xbibkeysfalse
+%\DeclareOption{bibkeys}{%
+%  \typeout{[bibkeys] mode set in alpha.sty}%
+%  \newif\iflabelshow\labelshowfalse
+%  \newif\ifXbibkeys\Xbibkeystrue
+%}
+%\newif\ifnohyper\nohyperfalse
+%\DeclareOption{nohyper}{%
+%  \typeout{[nohyper] mode set in alpha.sty}%
+%  \newif\ifnohyperhow\nohypertrue
+%}
+%\ProcessOptions\relax
+%---------------------------------------------------
+% page layout
+%
+\RequirePackage[a4paper,top=2.5cm,bottom=2.5cm,left=2.5cm,right=2.5cm, head = 25pt]{geometry}
+%% Language and font encodings
+\RequirePackage[T1]{fontenc} 
+\RequirePackage[utf8]{inputenc}
+\RequirePackage[english]{babel}
+\RequirePackage{lipsum}
+\RequirePackage{times}
+\RequirePackage{inconsolata}
+%% Bibliographical stuff
+\RequirePackage[sort,comma,numbers]{natbib}
+
+\setlength{\marginparwidth}{2cm}
+%\renewcommand{\baselinestretch}{1.05}
+%\parindent=2em
+
+%---------------------------------------------------
+% minimal package list (to be loaded before hyperref)
+%
+%\RequirePackage{cite}
+\RequirePackage{amsmath,amsfonts,amssymb,amsbsy}
+\RequirePackage{mathrsfs,latexsym}
+\RequirePackage[rgb]{xcolor}
+%----------------------------------------------------------------------------------------
+%   TCD colors 
+%----------------------------------------------------------------------------------------
+%
+% Trinity blue (main)
+%
+\definecolor{tcd-main}{HTML}{0569b9}        % 100%
+\definecolor{tcd-main-i}{HTML}{448fcb}      %  75%
+\definecolor{tcd-main-ii}{HTML}{82b4dc}     %  50%
+\definecolor{tcd-main-iii}{HTML}{c1daee}    %  25%
+\definecolor{tcd-main-iv}{HTML}{e6f0f8}     %  10%
+%
+% Trinity grey
+%
+\definecolor{tcd-grey}{HTML}{50555a}        % 100%
+\definecolor{tcd-grey-i}{HTML}{7c8083}      %  75%
+\definecolor{tcd-grey-ii}{HTML}{a8aaad}     %  50%
+\definecolor{tcd-grey-iii}{HTML}{d3d5d6}    %  25%
+\definecolor{tcd-grey-iv}{HTML}{eeeeef}     %  10%
+%
+% Trinity cyan
+%
+\definecolor{tcd-cyan}{HTML}{00aacd}        % 100%
+\definecolor{tcd-cyan-i}{HTML}{40bfda}      %  75%
+\definecolor{tcd-cyan-ii}{HTML}{80d4e6}     %  50%
+\definecolor{tcd-cyan-iii}{HTML}{bfeaf3}    %  25%
+\definecolor{tcd-cyan-iv}{HTML}{e6f7fa}     %  10%
+%
+% Trinity green
+%
+\definecolor{tcd-green}{HTML}{32d732}        % 100%
+\definecolor{tcd-green-i}{HTML}{65e165}      %  75%
+\definecolor{tcd-green-ii}{HTML}{99eb99}     %  50%
+\definecolor{tcd-green-iii}{HTML}{ccf5cc}    %  25%
+\definecolor{tcd-green-iv}{HTML}{ebfbeb}     %  10%
+%
+% Trinity gold
+%
+\definecolor{tcd-gold}{HTML}{ffd200}        % 100%
+\definecolor{tcd-gold-i}{HTML}{ffdd40}      %  75%
+\definecolor{tcd-gold-ii}{HTML}{ffe980}     %  50%
+\definecolor{tcd-gold-iii}{HTML}{fff4bf}    %  25%
+\definecolor{tcd-gold-iv}{HTML}{fffbe6}     %  10%
+%
+% Trinity red
+%
+\definecolor{tcd-red}{HTML}{dc281e}        % 100%
+\definecolor{tcd-red-i}{HTML}{e55e56}      %  75%
+\definecolor{tcd-red-ii}{HTML}{ee938f}     %  50%
+\definecolor{tcd-red-iii}{HTML}{f6c9c7}    %  25%
+\definecolor{tcd-red-iv}{HTML}{fceae9}     %  10%
+%
+% Trinity blue 
+%
+\definecolor{tcd-blue}{HTML}{001e69}        % 100%
+\definecolor{tcd-blue-i}{HTML}{40568f}      %  75%
+\definecolor{tcd-blue-ii}{HTML}{808fb4}     %  50%
+\definecolor{tcd-blue-iii}{HTML}{bfc7da}    %  25%
+\definecolor{tcd-blue-iv}{HTML}{e6e9f0}     %  10%
+%
+% Trinity violet 
+%
+\definecolor{tcd-violet}{HTML}{823278}      % 100%
+\definecolor{tcd-violet-i}{HTML}{a1659a}    %  75%
+\definecolor{tcd-violet-ii}{HTML}{c199bc}   %  50%
+\definecolor{tcd-violet-iii}{HTML}{e0ccdd}  %  25%
+\definecolor{tcd-violet-iv}{HTML}{f3ebf2}   %  10%
+%
+% Trinity orange 
+%
+\definecolor{tcd-orange}{HTML}{ff641e}      % 100%
+\definecolor{tcd-orange-i}{HTML}{ff8b56}    %  75%
+\definecolor{tcd-orange-ii}{HTML}{ffb28f}   %  50%
+\definecolor{tcd-orange-iii}{HTML}{ffd8c7}  %  25%
+\definecolor{tcd-orange-iv}{HTML}{fff0e9}   %  10%
+%
+% Trinity lime
+%
+\definecolor{tcd-lime}{HTML}{96d700}        % 100%
+\definecolor{tcd-lime-i}{HTML}{b0e140}      %  75%
+\definecolor{tcd-lime-ii}{HTML}{cbeb80}     %  50%
+\definecolor{tcd-lime-iii}{HTML}{e5f5bf}    %  25%
+\definecolor{tcd-lime-iv}{HTML}{f5fbe6}     %  10%
+%
+% Trinity olive 
+%
+\definecolor{tcd-olive}{HTML}{d2e100}        % 100%
+\definecolor{tcd-olive-i}{HTML}{dde940}      %  75%
+\definecolor{tcd-olive-ii}{HTML}{e9f080}     %  50%
+\definecolor{tcd-olive-iii}{HTML}{f4f8bf}    %  25%
+\definecolor{tcd-olive-iv}{HTML}{fbfce6}     %  10%
+%
+% Trinity dark-teal
+%
+\definecolor{tcd-dark-teal}{HTML}{00857b}    % 100%
+%
+% Trinity teal
+%
+\definecolor{tcd-teal}{HTML}{00b4aa}        % 100%
+\definecolor{tcd-teal-i}{HTML}{40c7bf}      %  75%
+\definecolor{tcd-teal-ii}{HTML}{80dad4}     %  50%
+\definecolor{tcd-teal-iii}{HTML}{bfecea}    %  25%
+\definecolor{tcd-teal-iv}{HTML}{e6f8f7}     %  10%
+%
+% Trinity brown
+%
+\definecolor{tcd-brown}{HTML}{c8aa78}       % 100%
+\definecolor{tcd-brown-i}{HTML}{d6bf9a}     %  75%
+\definecolor{tcd-brown-ii}{HTML}{e3d4bc}    %  50%
+\definecolor{tcd-brown-iii}{HTML}{f1eadd}   %  25%
+\definecolor{tcd-brown-iv}{HTML}{faf7f2}    %  10%
+
+\RequirePackage[pdftex]{graphicx}
+\RequirePackage{booktabs}
+\RequirePackage[autostyle=true]{csquotes} % Required to generate language-dependent quotes in the bibliography
+%\usepackage[colorinlistoftodos]{todonotes}
+\RequirePackage[many]{tcolorbox}
+\RequirePackage[parfill]{parskip}   % Begin paragraphs with an empty line rather than an indent
+\RequirePackage{setspace}           % to permit one-and-a-half or double spacing
+\RequirePackage{enumerate}          % fancy enumerations like (i) (ii) or (a) (b) and suchlike
+\RequirePackage{booktabs}           % To thicken table lines
+
+%---------------------------------------------------
+% LISTINGS package
+%
+%\usepackage{listings}
+%\lstdefinestyle{mystyle}{
+%    backgroundcolor=\color{backcolour},   
+%    commentstyle=\color{codegreen},
+%    keywordstyle=\color{magenta},
+%    numberstyle=\tiny\color{codegray},
+%    stringstyle=\color{codepurple},
+%    basicstyle=\footnotesize,
+%    breakatwhitespace=false,         
+%    breaklines=true,                 
+%    captionpos=b,                    
+%    keepspaces=true,                 
+%    numbers=left,                    
+%    numbersep=5pt,                  
+%    showspaces=false,                
+%    showstringspaces=false,
+%    showtabs=false,                  
+%    tabsize=2
+%}
+% 
+%\lstset{style=mystyle}
+
+%---------------------------------------------------
+% define colors for hyperref
+%
+\definecolor{darkred}{rgb}{0.4,0.0,0.0}
+\definecolor{darkgreen}{rgb}{0.0,0.4,0.0}
+\definecolor{darkblue}{rgb}{0.0,0.0,0.4}
+
+%---------------------------------------------------
+% hyperref
+\RequirePackage[bookmarks,linktocpage,colorlinks,
+    linkcolor = tcd-red,
+    urlcolor  = tcd-blue,
+    citecolor = tcd-orange
+]{hyperref}
+\RequirePackage[export]{adjustbox}
+%---------------------------------------------------
+% packages to be loaded after hyperref call
+%
+% \iflabelshow
+%   \usepackage{showlabels}%
+%   \renewcommand{\showlabelfont}{\scriptsize\ttfamily}%
+% \fi
+% \ifXbibkeys
+%   \usepackage[notref]{showkeys}%
+%   \renewcommand{\showkeyslabelformat}[1]{{\normalfont\scriptsize\ttfamily\{#1\}}}%
+% \fi
+
+%---------------------------------------------------
+% modify figure and table captions
+\RequirePackage[font={small},
+            format=plain,
+            labelfont={bf,footnotesize},
+            textfont={rm},
+]{caption}
+%\captionsetup[SC-figure]{margin=10pt}
+%---------------------------------------------------
+% Use fancyhdr package to set the headings.
+\RequirePackage{fancyhdr}
+\newcommand{\setheaders}{
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[RE,LO]{\small \raisebox{-3pt}{{\includegraphics[height=1cm,trim=43pt 37pt -50pt 15pt,clip]{required/black-stacked-trinity.jpg}}}}
+\fancyhead[LE,RO]{\parbox{13cm}{\raggedleft\small\textbf{\thesistitle}}} 
+\fancyfoot[RE,LO]{\small \authorshort}
+\fancyfoot[LE,RO]{\small \textbf{\thepage} }
+%\fancyfoot[CE,CO]{\small \ifthenelse{\equal{\versiondata}{}}{}{ \ifx\nederlands\undefined (Version \else Versie \fi \versiondata)}}
+\renewcommand{\headrulewidth}{0.1mm}
+\renewcommand{\footrulewidth}{0.1mm}
+}
+\setheaders{}
+
+%---------------------------------------------------
+%% Format Chapter headings appropriately
+\RequirePackage{titlesec}
+\definecolor{tcdblue}{cmyk}{0.94, 0.38, 0, 0.27}
+\newcommand{\hsp}{\hspace{20pt}}
+\titleformat{\section}[hang]{\Huge\bfseries}{\thesection\hsp\textcolor{tcdblue}{|}\hsp}{0pt}{\Huge\bfseries}
+
+\RequirePackage{sectsty}
+\sectionfont{\color{tcd-main}}
+\subsectionfont{\color{tcd-main-i}}
+\subsubsectionfont{\color{tcd-main-ii}}
+
+\title{\thesistitle}
+%
+\author{\authorname}
+
+\renewcommand{\theequation}{\arabic{equation}} %% use continuous equation numbers
+%---------------------------------------------------
+% modification of section, subsection etc.
+% \renewcommand{\section}{\setcounter{equation}{0}
+%                                   \@startsection {section}{1}{\z@}%
+%                                    {-3.5ex \@plus -1ex \@minus -.2ex}%
+%                                    {2.3ex \@plus.2ex}%
+%                                    {\reset@font\large\bfseries}}
+% \renewcommand{\subsection}{\@startsection{subsection}{2}{\z@}%
+%                                      {-3.25ex\@plus -1ex \@minus -.2ex}%
+%                                      {1.5ex \@plus .2ex}%
+%                                      {\reset@font\normalsize\bfseries}}
+% \renewcommand{\subsubsection}{\@startsection{subsubsection}{3}{\z@}%
+%                                      {-3.25ex\@plus -1ex \@minus -.2ex}%
+%                                      {1.5ex \@plus .2ex}%
+%                                      {\reset@font\normalsize\itshape}}
+% \renewcommand{\paragraph}{\@startsection{paragraph}{4}{\z@}%
+%                                     {3.25ex \@plus1ex \@minus.2ex}%
+%                                     {-1em}%
+%                                     {\reset@font\normalsize\bfseries}}
+% \renewcommand{\subparagraph}{\@startsection{subparagraph}{5}{\parindent}%
+%                                        {3.25ex \@plus1ex \@minus .2ex}%
+%                                        {-1em}%
+%                                       {\reset@font\normalsize\bfseries}}
+% 
+
+%---------------------------------------------------
+% modify equation labelling
+
+% \renewcommand{\theequation}{\thesection.\arabic{equation}}
+%    
+%   \newcommand{\TABLE}[1]{\begin{table}
+%     \small
+%     \begin{center} {#1} \end{center}
+%     \end{table}}
+%   \newcommand{\FIGURE}[1]{\begin{figure}[tb]
+%     \begin{center} {#1} \end{center}
+%     \end{figure}}
+%   \newcommand{\FIGUREB}[1]{\begin{figure}[b]
+%     \begin{center} {#1} \end{center}
+%     \end{figure}}
+%   \newcommand{\FIGURET}[1]{\begin{figure}[t!]
+%     \begin{center} {#1} \end{center}
+%     \end{figure}}
+%   \newcommand{\FIGUREP}[1]{\begin{figure}[p!]
+%     \begin{center} {#1} \end{center}
+%     \end{figure}}
+%   \newcommand{\TABLEP}[1]{\begin{table}[p!]
+%     \footnotesize
+%     \begin{center} {#1} \end{center}
+%     \end{table}}
+%   \newcommand{\TABLET}[1]{\begin{table}[t!]
+%     \footnotesize
+%     \begin{center} {#1} \end{center}
+%     \end{table}}
+%   \newcommand{\TABLEH}[1]{\begin{table}[h!]
+%     \footnotesize
+%     \begin{center} {#1} \end{center}
+%     \end{table}}
+
+%---------------------------------------------------
+% new environment(s)
+%
+\newenvironment{acknowledgement}{%
+\vskip2em
+\noindent{\normalsize\bf Acknowledgements.}~\small
+}{%
+\par}
+
+%---------------------------------------------------
+% special command(s)
+%
+\newcommand{\usection}[1]{\section*{#1}
+\addcontentsline{toc}{section}{\protect\numberline{}#1}}
+
+\newcommand{\AIusage}[2]{%
+\begin{center}%
+\begin{tabular}{|p{0.24\textwidth}|p{0.70\textwidth}|}\hline%
+\textbf{Name and version} & \textbf{Purpose} \\\hline%
+{#1} & {#2} \\\hline%
+\end{tabular}%
+\end{center}%
+}
+
+\newcommand{\REMOVEBOX}[1]{%
+\begin{tcolorbox}[title={Guideline [to be removed]},%
+    fonttitle=\ttfamily\bfseries,enhanced,
+    colframe=white!75!black,colback=red!10,colbacktitle=red,
+%    sidebyside,%righthand width=0cm,
+    lowerbox=invisible,lower separated=false,
+    drop lifted shadow,
+    colback=white,
+%    watermark text={\raggedleft\rotatebox{30}{\textcolor{magenta!25!white}{\textbf{\texttt{Remove!}}}}}
+%only=<1>{colbacktitle=yellow,coltitle=red!50!black,colframe=red},
+%only=<3>{colback=yellow!50,watermark text={Attention!}},
+%only=<3->{lowerbox=visible} 
+]
+%
+\texttt{#1}
+\end{tcolorbox}
+}
+%---------------------------------------------------
+% last but not least
+%
+
+\AtBeginDocument{%
+\input{./required/form.tex}
+\hypersetup{pdftitle=\thesistitle} % Set the PDF's title 
+\hypersetup{pdfauthor=\authorname} % Set the PDF's author 
+\hypersetup{pdfkeywords=\keywords} % Set the PDF's keywords 
+\hypersetup{pdfsubject=\degree}    % Set the PDF's subjects 
+
+\pagenumbering{roman}
+\input{./required/title.tex}
+\setcounter{page}{2}
+\onehalfspacing
+
+\usection{Declaration}
+I hereby declare that this \typeofthesis\ is entirely my own work and that it
+has not been submitted as an exercise for a degree at this or any other
+university.
+
+I have read and I understand the plagiarism provisions in the General
+Regulations of the University Calendar for the current year, found at
+\url{http://www.tcd.ie/calendar}.
+
+I have also completed the Online Tutorial on avoiding plagiarism `Ready Steady
+Write', located at
+\url{https://libguides.tcd.ie/academic-integrity/ready-steady-write}.
+
+I hereby certify that all AI tools used during the summer project and thesis
+writing have been detailed in section~\ref{sec:AIusage}.
+\vspace{0.75cm}
+
+Signed:~{\underline{\maxsizebox{10cm}{2cm}{\includegraphics{{\signature}}}}}\hfill{Date:~\underline{\mbox{{~\today}}}}\newline
+%
+\vfill
+\section*{Accompanying Git Repository}
+%
+{
+In the table below, commit and date refer to the last commit-id and
+commit-date before submitting this thesis. I am aware that all commits
+beyond the one mentioned here cannot be taken into account when 
+evaluating the HPC summer project thesis at hand.\newline
+%
+\ttfamily
+\framebox{%
+\begin{tabular}{rp{0.825\textwidth}}
+   Owner:  & \authorname \\
+     URL:  & \url{\gitrepoURL} \\
+  Commit:  & \gitrepoCOMMIT \\
+    Date:  & \gitrepoDATE \\
+\end{tabular}
+}
+}
+}
+
+\AtEndDocument{%
+%
+% add bibliography
+%
+\singlespacing
+\bibliographystyle{unsrtnat}
+\bibliography{./references.bib}
+
+\input{./required/AI_usage.tex}
+}
+
+\endinput
+
+

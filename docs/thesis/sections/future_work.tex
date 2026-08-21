@@ -1,0 +1,18 @@
+\subsection{Future work}\label{sec:future}
+
+The next step is to test the regime framework on other operators and hardware.
+Mixed-precision recurrence with higher-precision Gram accumulation is
+promising, but it must be evaluated against the dimension-dependent
+CholeskyQR2 condition, measured orthogonality, and action error
+\cite{higham-mary-2022,abdelfattah-2021}. A tile-aware version of $\Rv$ could
+include read redundancy predicted from tile dimensions, stencil radius, and
+streamed height, using the existing geometry sweeps for validation
+\cite{alappat-2022}. H100-class devices, faster links, and more participants
+would test whether the observed crossover transfers beyond Synge. Recycling,
+rational Krylov, and randomized Krylov are relevant lower-communication
+alternatives \cite{parks-2006,de-damas-grigori-2025}. For the pricing
+application, the immediate numerical extension is a validated higher-order
+interpolant for off-node Gamma. Mixed Gammas, stress cases, and an optimized GPU
+ADI reference would follow \cite{raahauge-2004,dang-christara-jackson-2010}.
+Beyond three assets, simulation with dimension reduction becomes more suitable
+as the tensor grid grows exponentially \cite{wang-2009,weng-wang-he-2017}.

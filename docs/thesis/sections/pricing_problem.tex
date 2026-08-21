@@ -1,0 +1,55 @@
+\section{The pricing problem and its discretization}\label{sec:model}
+
+The performance study begins with the 3-asset Black--Scholes PDE \cite{black-scholes-1973} in log-price coordinates, solved backward in pseudo-time $\tau$ from 0 (payoff) to $T$ (price):
+\begin{equation}
+\frac{\partial u}{\partial \tau}
+= \frac{1}{2} \sum_{d,d'} \rho_{dd'} \sigma_d \sigma_{d'}
+  \frac{\partial^2 u}{\partial x_d \partial x_{d'}}
++ \sum_d \left(r - \tfrac{1}{2}\sigma_d^2\right) \frac{\partial u}{\partial x_d}
+- r\, u + b(\tau).
+\label{eq:bs-pde}
+\end{equation}
+The three groups of terms recur throughout the thesis under their standard PDE names. The second-derivative terms are \emph{diffusion} (volatility spreading value across the surface; the mixed $d \ne d'$ terms couple correlated assets). The first-derivative terms are \emph{convection}, also called \emph{advection} (the risk-neutral drift transporting value across the grid). The zeroth-order term $-ru$ is \emph{reaction} (here, discounting at the risk-free rate).
+
+Two payoffs are priced. The basket call,
+\[
+u_0(x) = \max\!\Big(\sum_d w_d e^{x_d} - K,\ 0\Big),
+\]
+and the rainbow min-call,
+\[
+u_0(x) = \max\!\Big(\min_d e^{x_d} - K,\ 0\Big).
+\]
+The log-price domain is unbounded, so the finite computational box needs an artificial boundary closure. The closure follows the known far-field financial behavior of each payoff to limit truncation artifacts. For the basket call, nodes beyond the upper boundary are deep in the money: the basket value is far above the strike and the terminal payoff is overwhelmingly likely to remain in the exercise region. The option value there is well approximated by the basket value minus the discounted strike. Expanding $e^{-r\tau}$ to second order in $\tau$ and substituting this form into the ghost-node stencil gives the polynomial forcing $b(\tau)=\mat{B}\vect{s}(\tau)$, where
+$\vect{s}(\tau)=[\tau^2/2,\ \tau,\ 1]^{\mathsf T}$. This form reflects the payoff asymptote and allows the exact autonomous $N+3$ augmentation used in \Cref{sec:ksm}. The rainbow case uses a zero-gamma closure, which locally continues the option value as a linear function. It is implemented through modified boundary stencils and requires no forcing augmentation.
+
+Second-order central differences discretize the PDE on a uniform Cartesian grid. The code uses $x_1$-fastest lexicographic ordering: grid points are numbered along $x_1$ first, then $x_2$, and finally $x_3$. Each one-dimensional operator then extends to the full grid as a three-fold Kronecker product with identity matrices in the undifferentiated directions. The assembled $\mat{A}$ has at most 19 nonzeros per row: a 7-point stencil and $3 \times 4$ mixed-derivative diagonals. The $x_3$ and mixed terms give it $O(N_1 N_2)$ bandwidth, which rules out banded direct solvers at scale.
+
+The matrix splits as $\mat{A}=\mat{A}_{\text{sym}}+\mat{A}_{\text{skew}}$. Diffusion, mixed, and reaction terms are symmetric, while convection is skew-symmetric, so $\mat{A}$ is not symmetric in general. Its measured eigenvalues have nonpositive real parts, consistent with asymptotic decay. However, the spectrum alone does not control transient amplification for a non-normal matrix. Stability and approximation quality are therefore checked with exponential-action and residual diagnostics instead of being inferred from eigenvalues alone \cite{hundsdorfer-verwer-2003}. \Cref{tab:params} lists the initial model parameters. The financial-validation sweep later widens the domain from $\alpha=2.85$ to the accepted $\alpha=4.275$ while keeping the central spacing approximately fixed (\Cref{sec:validation-domain}).
+
+\begin{table}[htbp!]
+\centering
+\caption{Default model parameters.}
+\label{tab:params}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\midrule
+Spot prices $S_0$ & $(100, 100, 100)$ & Initial asset prices \\
+Strike $K$ & 100 & Option strike \\
+Risk-free rate $r$ & 0.04 & Continuously compounded \\
+Maturity $T$ & 1.0 year & Fixed \\
+Volatilities $\sigma$ & $(0.30, 0.35, 0.40)$ & Per-asset annual volatility \\
+Correlations $\rho$ & $(0.50, 0.50, 0.50)$ & Off-diagonal pairs $(\rho_{01}, \rho_{02}, \rho_{12})$ \\
+Basket weights $w$ & $(1/3, 1/3, 1/3)$ & Equal-weight basket \\
+Grid half-width $\alpha$ & 2.85 & Initial domain $\pm \alpha \sigma \sqrt{T}$ per dimension \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Stiffness grows quadratically with refinement because the central second difference of the diffusion term on $n$ interior points per axis has eigenvalues
+\[
+\lambda_k = -\frac{2\sigma^2}{\Delta x^2}\Big(1 - \cos\frac{k\pi}{n+1}\Big),
+\qquad k = 1, \ldots, n,
+\]
+Thus the extreme eigenvalue scales as $O(\Delta x^{-2})=O(n^2)$ \cite{hundsdorfer-verwer-2003}. The uniform box has axis-dependent spacing
+$\Delta x_d=2\alpha\sigma_d\sqrt{T}/(n-1)$. The spectrum quoted here is measured from the fully assembled three-dimensional operator with those three spacings. Its most negative eigenvalue moves from $-24$ at $n=11$ to $-2924$ at $n=101$, where $N=n^3$, which is consistent with the predicted scaling. Once temporal error falls below the spatial-discretization and domain-truncation errors of a fixed grid, smaller time steps cannot improve the total option-price error. Further temporal work would only over-solve that grid.

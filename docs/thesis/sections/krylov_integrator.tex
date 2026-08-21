@@ -1,0 +1,197 @@
+\section{The Krylov exponential integrator}\label{sec:ksm}
+
+Spatial discretization turns the pricing PDE into a large linear ODE. A system is \emph{autonomous} when its right-hand side depends on the state but not explicitly on time; it is \emph{non-autonomous} when time appears explicitly. For the basket payoff, the time-dependent boundary forcing makes this system non-autonomous:
+\begin{equation}
+  \frac{d\vect{u}}{d\tau}
+  = \mat{A}\vect{u} + \mat{B}\vect{s}(\tau),
+  \qquad
+  \vect{s}(\tau)=
+  \begin{bmatrix}\tau^2/2 & \tau & 1\end{bmatrix}^{\mathsf T},
+  \qquad
+  \vect{u}(\tau_0) = \vect{u}_0.
+  \label{eq:ode}
+\end{equation}
+The three-column matrix $\mat{B}$ contains the coefficients of the polynomial boundary
+forcing described in \Cref{sec:model}. Since
+$\vect{s}'(\tau)=\mat{K}\vect{s}(\tau)$ for the nilpotent shift
+\[
+\mat{K}=
+\begin{bmatrix}
+0&1&0\\
+0&0&1\\
+0&0&0
+\end{bmatrix},
+\]
+the forcing can be absorbed exactly into an autonomous augmented system. Define
+\begin{equation}
+  \widetilde{\mat{A}} =
+  \begin{bmatrix} \mat{A} & \mat{B} \\ \mat{0} & \mat{K} \end{bmatrix}
+  \in \R^{M\times M},
+  \qquad
+  M=N+3,
+  \qquad
+  \widetilde{\vect{v}} =
+  \begin{bmatrix} \vect{u}_k \\ \vect{s}(\tau_k) \end{bmatrix}
+  \in \R^M.
+  \label{eq:extended}
+\end{equation}
+Then the first $N$ components of
+$e^{h\widetilde{\mat{A}}}\widetilde{\vect{v}}$ equal
+$\vect{u}(\tau_k+h)$, while the last three components equal
+$\vect{s}(\tau_k+h)$. The rainbow payoff has no forcing matrix in the implementation. For
+that case $M=N$, $\widetilde{\mat{A}}=\mat{A}$, and
+$\widetilde{\vect{v}}=\vect{u}_k$.
+
+For one step, define the scaled operator $\mat{G}=h\widetilde{\mat{A}}$. The implementation applies Arnoldi to $\mat G$ with starting vector $\widetilde{\vect{v}}$, producing an orthonormal basis $\mat{V}_m$ and an upper Hessenberg matrix $\overline{\mat{H}}_m \in \R^{(m+1)\times m}$ \cite{saad-1992,hochbruck-lubich-1997}. Dropping the last row gives $\mat{H}_m \in \R^{m\times m}$, and the approximation reads
+\begin{equation}
+  e^{h\widetilde{\mat{A}}}\widetilde{\vect{v}}
+  \;\approx\;
+  \beta\, \mat{V}_m\, e^{\mat{H}_m} \vect{e}_1,
+  \qquad
+  \beta = \|\widetilde{\vect{v}}\|.
+  \label{eq:krylov_approx}
+\end{equation}
+Algorithm~\ref{alg:krylov_exp} gives the adaptive procedure; its Arnoldi iteration is Algorithm~\ref{alg:arnoldi}.
+
+% Both algorithms are sized and spaced to share one float page: they are
+% declared back to back so LaTeX defers them together, and \singlespacing plus
+% the \footnotesize algorithm font set in main.tex keeps their combined height
+% inside \textheight. Enlarging either one will split them across two pages.
+\begin{algorithm}[p]
+\singlespacing
+\caption{Adaptive Krylov Exponential Integrator for the Basket Polynomial Forcing}
+\label{alg:krylov_exp}
+\KwIn{Matrix $\mat{A} \in \R^{N \times N}$, forcing coefficients
+      $\mat{B}\in\R^{N\times3}$, initial condition $\vect{u}_0$,
+      final time $T$, time-step $\Delta\tau$,
+      absolute defect tolerance $\mathtt{tol}$, maximum dimension $m_{\max}$}
+\KwOut{Solution snapshots $\{\vect{u}_k\}_{k=0}^{K}$ at
+       $\tau_k = k\,\Delta\tau$}
+$\mat{K}\gets\begin{bmatrix}0&1&0\\0&0&1\\0&0&0\end{bmatrix}$;\quad
+$\widetilde{\mat{A}}\gets
+\begin{bmatrix}\mat{A}&\mat{B}\\\mat{0}&\mat{K}\end{bmatrix}$;\quad
+$M\gets N+3$\;
+$\tau \gets 0$\;
+\For{$k = 0, 1, \ldots, K-1$}{
+  $h \gets \min(\Delta\tau,\; T - \tau)$\;
+  $\mat G\gets h\widetilde{\mat A}$\;
+  $\widetilde{\vect{v}}\gets
+      [\vect{u}_k^{\mathsf T},\ \vect{s}(\tau)^{\mathsf T}]^{\mathsf T}$
+      \tcp{Eq.~\eqref{eq:extended}}
+  $m \gets 1$;\quad $\eta_m \gets \infty$\;
+  \BlankLine
+  \tcc{Adaptive Krylov loop}
+  \While{$m \le \min(M,m_{\max})$}{
+    Run $m$ Arnoldi iterations on
+        $(\mat G,\,\widetilde{\vect{v}})$
+        $\;\Rightarrow\;$
+        $\mat{V}_{m+1},\; \overline{\mat{H}}_m$
+        \tcp{Algorithm~\ref{alg:arnoldi}}
+    Store $\bar{h}_{m+1,m} \gets [\overline{\mat{H}}_m]_{m+1,m}$
+        \tcp{sub-diagonal entry}
+    $\mat{H}_m \gets \overline{\mat{H}}_m(1{:}m,\;1{:}m)$
+        \tcp{drop last row}
+    $\beta \gets \|\widetilde{\vect{v}}\|$\;
+    $\vect{f} \gets e^{\mat{H}_m}\,\vect{e}_1$
+        \tcp{small $m\times m$ matrix exponential}
+    $\vect{w} \gets \beta\;\mat{V}_m\;\vect{f}$
+        \tcp{Krylov approximation in full space}
+    \BlankLine
+    \tcc{Endpoint residual/defect indicator}
+    $\eta_m \gets \beta\,|\bar{h}_{m+1,m}|\;|[\vect{f}]_m|$\;
+    \If{$\eta_m < \mathtt{tol}$}{
+      \textbf{break}\;
+    }
+    $m \gets m + 1$\;
+  }
+  $\vect{u}_{k+1} \gets \vect{w}(1{:}N)$
+      \tcp{extract first $N$ components}
+  $\tau \gets \tau + h$\;
+}
+\end{algorithm}
+
+\begin{algorithm}[p]
+\singlespacing
+\caption{Arnoldi Iteration for the Scaled Operator}
+\label{alg:arnoldi}
+\KwIn{Scaled matrix $\mat G=h\widetilde{\mat{A}} \in \R^{M \times M}$,
+      vector $\widetilde{\vect{v}} \in \R^M$,
+      subspace dimension $m$,
+      breakdown tolerance $\mathtt{tol}_{\mathrm{break}}$}
+\KwOut{Orthonormal basis $\mat{V}_{m+1} \in \R^{M\times(m+1)}$,
+       upper Hessenberg $\overline{\mat{H}}_m \in \R^{(m+1)\times m}$}
+$\beta \gets \|\widetilde{\vect{v}}\|$;\quad
+$\vect{v}_1 \gets \widetilde{\vect{v}} / \beta$\;
+\For{$j = 1, \ldots, m$}{
+  $\vect{w} \gets \mat G\,\vect{v}_j$\;
+  \For{$i = 1, \ldots, j$}{
+    \tcp{Modified Gram--Schmidt}
+    $h_{i,j} \gets \vect{v}_i^T \vect{w}$\;
+    $\vect{w} \gets \vect{w} - h_{i,j}\,\vect{v}_i$\;
+  }
+  $h_{j+1,j} \gets \|\vect{w}\|$\;
+  \If{$h_{j+1,j} < \mathtt{tol}_{\mathrm{break}}$}{
+    \textbf{break} \tcp{Invariant subspace found (happy breakdown)}
+  }
+  $\vect{v}_{j+1} \gets \vect{w} / h_{j+1,j}$\;
+}
+\end{algorithm}
+
+The scalar $\eta_m$ in Algorithm~\ref{alg:krylov_exp} has a specific, limited meaning. Arnoldi is applied to the scaled operator $h\widetilde{\mat{A}}$. For the projected
+trajectory $\widetilde{\vect{y}}_m(\theta)=\beta\mat{V}_m
+e^{\theta\mat{H}_m}\vect{e}_1$, $0\leq\theta\leq1$, the endpoint defect with respect to the scaled coordinate $\theta$ is parallel to $\vect{v}_{m+1}$ and has norm
+\[
+\eta_m=
+\beta\,|\bar h_{m+1,m}|\,
+|\vect{e}_m^{\mathsf T}e^{\mat{H}_m}\vect{e}_1|.
+\]
+The implementation uses $10^{-8}$ as a fixed double-precision engineering tolerance for every Krylov action. This value was selected before the experiments. It keeps the required Krylov dimension moderate and is stricter than the temporal accuracies compared in \Cref{sec:benchmark}, but it is not a calibrated total-price tolerance. Without a separate stability estimate or an integrated defect, the indicator does not bound the state error, global time-integration error, or option-price error. An independent exponential-action referee supplies the solution-accuracy check used later in the thesis.
+
+GPU shared memory defines the production cap. The projected exponential uses four static $m\times m$ binary64 work arrays and two shared integers. Both tested architectures allow at most 48\,KiB of statically allocated shared memory per CUDA thread block. Larger opt-in allocations apply to dynamic shared memory and would require a kernel redesign \cite{nvidia-cuda-guide}. The largest common value for the unchanged kernel is therefore $m_{\max}=39$. It uses 48{,}680 bytes; $m=40$ would require 51{,}208 bytes. The CMake cache variable \texttt{CAKSM\_GPU\_CA\_MAX\_M} makes the cap configurable for other builds and rejects values above the static limit.
+
+The dense calibration uses the actual $n=5$ Basket and Rainbow discretizations. This grid keeps the three-dimensional stencil and both boundary treatments while making a dense matrix exponential inexpensive. The sweep covers $m=1,\ldots,39$ at the first and midpoint time steps for $T=0.5$ and $h=0.005$. All 40 stopping cases meet their requested tolerance and select at most $m=6$. The hardware ceiling therefore does not determine their numerical stopping point.
+
+Unless a reduced-precision experiment is named explicitly, every numerical kernel in this thesis uses IEEE~754 binary64 (C++ \texttt{double}). For calibration, the \emph{true action error} is the norm of the difference between the Krylov approximation and the dense value $\exp(h\widetilde{\mat A})\widetilde{\vect v}$ for one time step. Once that difference reaches the dense reference's rounding floor, it no longer resolves decreasing truncation error. Before the floor, $\eta_m$ is 1.004 to 5.006 times the true action error. At tolerance $10^{-8}$ it selects $m=5$, where the action error is $3.8\times10^{-12}$ to $1.5\times10^{-11}$; $s=1$ and $s=4$ agree at the shown precision. Across the full $m\le39$ sweep, the relative Arnoldi-relation residual stays below $8.2\times10^{-14}$ and orthogonality loss below $2.0\times10^{-13}$.
+For these small actions, the stopping indicator is conservative. This result is not a universal bound and does not guarantee that $m_{\max}=39$ is sufficient on larger grids.
+
+\subsection{Cost structure and the sequential dependency}\label{sec:ksm-cost}
+
+After numerical acceptance, the next question is cost. Arnoldi dominates. Each iteration $j$ requires one sparse matrix--vector product $\vect{w}=\widetilde{\mat{A}}\vect{v}_j$, costing $O(N)$, and orthogonalization against all previous vectors, costing $O(jN)$. Iteration $j$ cannot start until iteration $j-1$ produces $\vect{v}_j$, creating a sequential dependency across the Krylov dimension $m$. The SpMV and inner products within one iteration can be parallelized, but they scale poorly for different reasons: SpMV is bandwidth-bound, while every inner product in the modified Gram--Schmidt (MGS) loop requires a global reduction. These are the two \emph{communication} walls in \Cref{tab:two-mechanisms}.
+
+\begin{table}[htbp!]
+\centering
+\small
+\caption{The two kernels, their bounds, and the CA mechanism each motivates.}
+\label{tab:two-mechanisms}
+\begin{tabular}{@{}lllp{4.0cm}@{}}
+\toprule
+\textbf{Kernel} & \textbf{Bound} & \textbf{Communication} & \textbf{CA mechanism} \\
+\midrule
+SpMV & bandwidth (memory hierarchy) & vertical & matrix powers / cache blocking \\
+Gram--Schmidt & synchronization (reductions) & horizontal & $s$-step / Krylov-column orthogonalization \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Communication-avoiding reformulations}\label{sec:ksm-ca}
+
+The two communication walls motivate two CA reformulations and one terminology convention. A $q$-column \emph{Krylov block} is $\mat{Z}_q=[\vect{v},\mat{A}\vect{v},\ldots,\mat{A}^{q-1}\vect{v}]$ and needs $q-1$ operator applications; it is neither a partition of $\mat A$ nor a CUDA execution unit. A \emph{CUDA thread block} is a scheduled thread group, a \emph{spatial tile} the grid region it stages, and a \emph{slab} one GPU's subdomain. The OpenMP label \texttt{block} in \Cref{sec:locality} instead names a row schedule. A \emph{time step} advances $\tau$, an \emph{Arnoldi iteration} adds one Krylov vector, and a \emph{recurrence application} multiplies by $\mat A$ within a Krylov block. Archived CPU degrees are converted by $q_{\max}=s_{\max}+1$; distributed tables retain the executable's $s=q$.
+
+The CA-Arnoldi reformulation \cite{hoemmen-2010,demmel-2008,carson-2015} constructs one such Krylov block per communication phase. The \emph{matrix-powers kernel} \cite{mohiyuddin-2009} reuses an operator tile across the $q-1$ applications, attacking the vertical wall. The
+Krylov block is then orthogonalized at once---here by CholeskyQR2 \cite{yamamoto-2015}---which reduces the number of synchronization phases relative to MGS.
+
+The condition-number test used by the implementation requires a qualification that is important for every result below. For a tall matrix $\mat{Z}\in\R^{M\times q}$, the cited CholeskyQR2 analysis includes the dimension-dependent sufficient condition
+\begin{equation}
+\delta = 8\,\kappa_2(\mat{Z})
+\sqrt{Mq\,u+q(q+1)u}\le 1,
+\label{eq:cholqr2-sufficient}
+\end{equation}
+in addition to its other hypotheses. The simpler line
+$\kappa_2(\mat{Z})\le u^{-1/2}$ describes a practical breakdown scale for the normal equations; it is not a dimension-free sufficient theorem.
+For the production dimension, $M=61^3+3=226{,}984$ and $q=4$, so \eqref{eq:cholqr2-sufficient} limits $\kappa_2(\mat{Z})$ to approximately $1.25\times10^4$. The value $6.0\times10^6$ is the largest condition number recorded over the evolving width-four monomial Krylov blocks in the $n=61$ Rainbow integration reported in \Cref{tab:ca-guard}. Substitution gives $\delta\approx482$. Because \eqref{eq:cholqr2-sufficient} is sufficient rather than necessary, this value makes the theorem inconclusive for the measured Krylov block; it does not diagnose instability. The distributed Gram matrix also introduces all-reduce rounding beyond the serial formulation.
+
+Throughout the thesis, $u^{-1/2}$ is therefore called the \emph{implemented conditioning guard} or \emph{heuristic line}. Its operational role is to detect rapidly growing Krylov-block conditioning and trigger a narrower Krylov block before normal-equations breakdown. Numerical acceptance is based on the guard together with Cholesky success, measured orthogonality, and final-state agreement with an independent referee. This separates the theorem's sufficient guarantee from the direct evidence available for the tested implementation. The regime study then measures how the monomial Krylov-block conditioning grows with $q$ and how that growth affects the width selected by the guard.
+
+Rational Krylov offers an alternative by replacing the sequential polynomial recurrence with independent shifted solves. Berljafa and G\"uttel analyze a parallel rational Arnoldi implementation, including simultaneous shifted solves and their numerical conditioning \cite{berljafa-guttel-2017}. The parallelism is attractive, but each shifted solve is a sparse linear system whose iterative solution reintroduces both communication walls. Near-optimal pole selection also adds problem-specific tuning. This study uses the $s$-step route because its costs can be expressed directly in the machine terms of the regime map.
+
+Randomized orthogonalization is another promising direction. It constructs a well-conditioned basis whose much smaller random sketch is orthonormal, which can reduce arithmetic and communication while retaining a randomized Arnoldi relation \cite{de-damas-grigori-2025}. It is not ranked against CA-Arnoldi here because it was not implemented or measured on this pricing operator. A useful follow-up would apply the same regime coordinates and test whether the lower synchronization cost improves complete-solver time on these machines.
