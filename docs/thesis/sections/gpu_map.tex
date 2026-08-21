@@ -1,0 +1,127 @@
+\section{Recomputing the map for a GPU}\label{sec:gpu}
+
+\subsection{A cross-architecture transfer test}
+
+Because $\Rv$ and $\Rh$ are dimensionless, the same definitions can be evaluated for another pairing of an operator and a machine. Moving from puffin to a GPU changes both cache ownership and reduction mechanisms. This section recomputes the machine-dependent terms and asks two questions: do the opportunity coordinates remain interpretable, and does measured kernel behavior agree with their placement? A disagreement can reveal a missing term in the model.
+
+The two GPU classes provide a useful architectural contrast (\Cref{tab:gpus}). The RTX~3090 and V100 have the same nominal 6\,MB L2 capacity and similar measured streaming bandwidth, while their FP64 peaks differ by about $11\times$. They also differ in SM organization, cache behavior, clocks, memory technology, ECC, scheduling, and launch behavior. The comparison can expose a roofline distinction for the measured kernels, but it cannot isolate FP64 throughput as the cause.
+
+\begin{table}[htbp!]
+\centering
+\caption{Two GPU architectures measured on idle devices. Memory bandwidth is achieved (STREAM); the FP64 ridge is peak FP64 over achieved bandwidth. Similar nominal L2 capacity and measured bandwidth make the contrast useful, but architectural differences beyond FP64 remain uncontrolled.}
+\label{tab:gpus}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+ & \textbf{L2} & \textbf{Memory BW} & \textbf{FP64 peak} & \textbf{FP64 ridge} \\
+\midrule
+RTX 3090 (consumer, puffin)      & 6\,MB & 821\,GB/s & 0.570\,TFLOP/s & 0.69\,FLOP/B \\
+Tesla V100 (datacenter, synge)   & 6\,MB & 818\,GB/s & 6.375\,TFLOP/s & 7.79\,FLOP/B \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This contrast makes one precondition explicit: the map describes communication opportunities only when the relevant kernel lies on the memory side of its roofline. A compute-bound kernel is outside that interpretation. Each placement therefore begins with the precision-specific check $AI\cdot BW_{\text{achieved}}<\text{FLOP/s}_{\text{peak}}$. For the measured kernels, it separates the memory-bound V100 Gram kernel from the compute-bound RTX~3090 Gram kernel. This scopes the mechanism without assigning the difference solely to FP64 throughput.
+
+\subsection{What transfers, and what breaks}
+
+The synthetic operator, the tensor identity in \eqref{eq:tensor-law}, and the conditional reduction ledger are machine-independent. The CholeskyQR2 guard remains an operational policy whose sufficient theory is assessed separately. The unit lines $\theta_v=\theta_h=1$ also remain equality lines, not portable performance thresholds. The machine-dependent terms must be recomputed, and three changes are structural rather than simple constant substitutions:
+
+\begin{itemize}
+\item \textbf{The denominator of $\Rv$.} On the CPU each engaged CCX brings its own L3 slice, so aggregate last-level cache scales with the team. A GPU's L2 is one fixed cache shared by every streaming multiprocessor, and engaging more of the device adds no cache. Within one device, $\Rv$ therefore stops depending on team size and the two axes decouple. On the CPU both coordinates shared the parallelism parameter ($\Rv \sim 1/P$, $\Rh \sim P\log P$), which made $\Rv \Rh$ approximately $P$-independent (${\sim}0.04$ on puffin) in the calibrated model and excluded the upper-right region. A GPU provides no structural reason for that cancellation, so the product must be re-derived from the chosen definition of team size.
+
+\item \textbf{The numerator of $\Rh$.} The CPU model has two reduction levels and one saturation constant \eqref{eq:treduce}. A GPU reduction crosses at least five qualitatively different levels (\Cref{tab:tiers}), and a grid-wide reduction includes fixed kernel-launch latency with no CPU analogue. Two parameters cannot represent all five levels. The GPU model therefore needs a vector of topology costs and a predictor that traverses it. On-device, intra-node PCIe, and inter-node reductions place the same problem at different $\Rh$ values. The performance crossover is still measured separately.
+
+\item \textbf{The reuse model.} On the CPU, the scatter parameter costs a factor of a few in cache-line reuse. A GPU uses \emph{warp coalescing} to combine adjacent requests from 32 threads into a small number of memory transactions. The same permutation can defeat coalescing and turn one access into as many as 32 transactions. The scatter axis becomes more sensitive, but its reuse model must be recalibrated.
+\end{itemize}
+
+\begin{table}[htbp!]
+\centering
+\caption{The reduction levels for a multi-node GPU cluster with a PCIe intra-node interconnect. Every tier cost is a machine constant to be calibrated, never assumed.}
+\label{tab:tiers}
+\begin{tabular}{@{}lp{5.2cm}lp{3.4cm}@{}}
+\toprule
+\textbf{Tier} & \textbf{Mechanism} & \textbf{Scope} & \textbf{Cost class} \\
+\midrule
+Warp   & register shuffle                & on-die     & near-free, no memory traffic \\
+CUDA thread block & shared memory + barrier & on-die & cheap, on-chip \\
+Grid   & atomics or a second launch      & on-die     & expensive; carries launch latency \\
+Device & PCIe + cross-socket link        & intra-node & expensive; a genuine cross-socket hop \\
+Node   & network fabric                  & inter-node & dominant \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The decoupled invariant}\label{sec:gpu-invariant}
+
+In the CPU model, $\Rv\Rh$ is approximately independent of core count $P$ because $\Rv\sim1/P$ and $\Rh\sim P\log P$ move in opposite directions. On a GPU, let $P$ denote the engaged streaming multiprocessors. The denominator of $\Rv$ is one shared L2, while $\Rh$ uses a device-wide bandwidth roof after saturation. The GPU model therefore decouples both coordinates from $P$: grid size moves $\Rv$, and reduction level moves $\Rh$. In the memory-bound regime established by the roofline check, modeled cycle time becomes bytes divided by bandwidth, and the product is
+\begin{equation}
+\Rv \cdot \Rh = g(m)\, R(m)\, \Lambda, \qquad \Lambda = \frac{\tau\,\text{BW}}{C},
+\label{eq:gpu-invariant}
+\end{equation}
+in which $g(m)$ (a byte ratio) and $R(m)$ (the MGS reduction count) are the machine-independent method terms. The dimensionless machine term $\Lambda$ measures how many cache-fulls of data the memory system delivers during one reduction. The upper-right window (both $\Rv \ge 1$ and $\Rh \ge 1$ at a footprint under the 16\,GB device memory) is non-empty exactly when this product exceeds 1, and its width in $N$ equals the product. The 16\,GB ceiling never binds because it lies two orders of magnitude beyond every reachable reduction level, so $\Rh$ closes the window from above. Setting the product to 1 gives a reduction-latency threshold of $\tau^{\star}\approx0.9\,\mu$s for placing the production operator in the upper-right opportunity region.
+
+Modeled equality occurs at $\tau^{\star}\approx0.9\,\mu$s. Isolated V100 collectives at the stated payloads calibrate the five reduction levels in \Cref{tab:ladder}, with no application work included. The same operator therefore receives five $\Rh$ values. The nominal upper-right region begins between the CUDA-thread-block and grid levels, inside one device. This is a model placement, not a measured solver crossover at $\tau^{\star}$. On this topology, node-to-node cost is only $1.9\times$ device-to-device cost, while the largest latency jump comes from the grid reduction's second kernel launch. Participant count, topology, and launch costs cannot be represented by one universal node-level constant.
+
+\begin{table}[htbp!]
+\centering
+\caption{The calibrated V100 reduction levels. Each level is an isolated collective at its stated scope and $\tau$ is cumulative. The modeled upper-right opportunity region ($\Rv\Rh>1$) begins between the CUDA-thread-block and grid levels; this is not by itself a performance crossover.}
+\label{tab:ladder}
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Rung} & \textbf{Scope} & $\tau$ \textbf{(cumulative)} & \textbf{Corner} \\
+\midrule
+warp (register shuffle)      & on-die     & 0.42\,$\mu$s  & closed \\
+CUDA thread block (shared + barrier) & on-die & 0.79\,$\mu$s & closed \\
+grid (second kernel launch)  & on-die     & 5.54\,$\mu$s  & \textbf{open} \\
+device (PCIe + cross-socket) & intra-node & 11.46\,$\mu$s & \textbf{open} \\
+node (inter-node fabric)     & inter-node & 22.09\,$\mu$s & \textbf{open} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reaching the corner, and the gate that discriminates}\label{sec:gpu-corner}
+
+At production resolution ($n_1=61$, $m=12$, polynomial degree 8), the recomputed coordinates are $\Rv=7.2$ and $\Rh=1.7$ for the selected reduction levels on both cards. The operator lies inside the upper-right \emph{opportunity} region. The dimensionless definitions can therefore be evaluated on the GPU hierarchy after recalibration. This placement does not imply that the speedup boundary is unchanged or that both mechanisms will pay.
+
+The roofline check is essential because the coordinates assume a communication-bound kernel (\Cref{tab:gpu-gate}). SpMV, with arithmetic intensity 0.135\,FLOP/B, and MGS, at 0.375, lie on the memory side of both measured roofs. The Krylov-block method introduces a tall-skinny Gram matrix whose intensity grows with width. At the tested production width, it is memory-bound on the V100 and compute-bound on the RTX~3090. The implemented $u^{-1/2}$ guard admits this width. Since the dimension-dependent sufficient condition does not cover it, the diagnostics in \Cref{sec:ksm-ca} determine numerical acceptance. The roofline result explains why the communication interpretation applies to the V100 Gram kernel but not the RTX~3090 kernel. The coordinates alone still do not predict end-to-end speedup.
+
+\begin{table}[htbp!]
+\centering
+\caption{The roofline gate at production resolution, per kernel. The baseline kernels are
+on-map on both cards; the $s$-step Krylov-block Gram is memory-bound only on the datacenter card.}
+\label{tab:gpu-gate}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Kernel (AI, FLOP/B)} & \textbf{V100 (ridge 7.79)} & \textbf{3090 (ridge 0.69)} \\
+\midrule
+SpMV (0.135)                 & on map & on map \\
+MGS (0.375)                  & on map & on map \\
+$s$-step Gram (${\sim}1.1$)  & \textbf{memory-bound} ($3.9\times$) & \textbf{compute-bound} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Roofline-bound kernels and the $s$-step crossover}\label{sec:gpu-sstep}
+
+Measuring this roofline distinction required kernels designed for very tall matrices with few columns. In the benchmark harness, cuBLAS \texttt{dsyrk} and \texttt{dtrsm} had low utilization for these shapes. The specialized implementations use a split-K Gram, which parallelizes the long dimension and reduces partial results \cite{ernst-2021}, and a per-row triangular solve, which exploits independent row solves. Both agree numerically with cuBLAS. At $s=8$, split-K is 2091$\times$ faster than cuBLAS on the V100 and 1915$\times$ on the RTX~3090. The per-row solve is 4.26$\times$ and 27.39$\times$ faster, respectively (\Cref{tab:gpu-kernels}). These ratios are specific to the tested shapes and harness, not general comparisons with current cuBLAS, cuBLASLt, or CUTLASS.
+
+\begin{table}[htbp!]
+\centering
+\caption{The two hand-written tall-skinny kernels at $s=8$. Speedups are reported separately for each card because the cuBLAS baselines differ.}
+\label{tab:gpu-kernels}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Kernel} & \textbf{V100 speedup} & \textbf{V100 roof} & \textbf{3090 speedup and roof} \\
+\midrule
+split-K Gram & 2091$\times$ & 88\% DRAM (memory-bound) & 1915$\times$; 79\% FP64 (compute-bound) \\
+per-row trsm & 4.26$\times$ & 95\% DRAM (memory-bound) & 27.39$\times$; 94\% roof (at the knee) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+With roofline-bound kernels the two-card contrast becomes a hardware measurement rather than a prediction. Profiled with Nsight Compute at $s = 8$, $n = 2 \times 10^6$, the \emph{same} Gram kernel runs at 86\% of DRAM throughput and 16\% of compute on the V100, but at 38\% of DRAM and 94\% of compute on the RTX~3090.
+
+The RTX~3090 gives the negative transfer result: once the CA method's own Gram kernel becomes compute-bound, the communication-opportunity model no longer applies. The roofline gate catches this case by comparing arithmetic intensity with each device's FP64 ridge before $\Rv$ or $\Rh$ is interpreted. The triangular solve lies near the RTX~3090's compute/memory knee and is less decisive.
+
+The final experiment times the reduction saving itself. At matched $m=12$, the Krylov-block method replaces MGS's 91 reductions with 5 while maintaining observed orthogonality $\lVert\mat{I}-\mat{Q}^{\mathsf T}\mat{Q}\rVert\sim10^{-15}$. On one device, the specialized Krylov-block kernels beat MGS at every tested grid on both cards. Across two GPUs, each dot product or Krylov-block Gram becomes an NCCL all-reduce. Its measured ${\sim}11.5\,\mu$s latency agrees with the independently calibrated reduction level. At this topology, the five-reduction arm is faster across the tested range. This is an orthogonalizer experiment, not an end-to-end price comparison. Its behavior agrees with the calibrated horizontal opportunity coordinate, while the crossover remains a measured, topology-specific result.

@@ -183,6 +183,9 @@ enum class AgreementMode {
 struct SolverOptions {
     bool exact_depth = false;
     bool deferred_certificate = false;
+    bool halo_overlap = false;
+    bool shell_halo_initialization = false;
+    MpkSharedCarveout shared_carveout = MpkSharedCarveout::Default;
     AgreementMode agreement = AgreementMode::Step;
     bool agreement_self_test = false;
 
@@ -227,7 +230,9 @@ struct Slab {
     int block_max = 0;
     int potrf_lwork = 0;
     cudaStream_t stream = nullptr;
+    cudaStream_t halo_stream = nullptr;
     cudaEvent_t halo_ready = nullptr;
+    cudaEvent_t halo_received = nullptr;
     ncclComm_t comm = nullptr;
     cublasHandle_t blas = nullptr;
     cusolverDnHandle_t solver = nullptr;
@@ -361,7 +366,7 @@ __global__ void ca_decision_verdict(
 }
 
 /**
- * @brief Wait for every slab's stream.
+ * @brief Wait for every slab's compute and halo streams.
  *
  * Timing brackets and correctness reads need all devices quiet, not just the one
  * currently selected.
@@ -371,6 +376,7 @@ void sync_all(std::vector<Slab>& slabs)
     for (Slab& slab : slabs) {
         CUDA_CHECK(cudaSetDevice(slab.device));
         CUDA_CHECK(cudaStreamSynchronize(slab.stream));
+        CUDA_CHECK(cudaStreamSynchronize(slab.halo_stream));
     }
 }
 

@@ -1,16 +1,16 @@
-"""
-Recreates Figure 1 from Niesen and Wright:
-  Log-log plots of ODE error vs CPU time for five numerical methods,
-  on 31-point (left column) and 61-point (right column) grids,
-  for rainbow (top row) and basket (bottom row) options.
+"""Reproduction of Figure 1 from Niesen and Wright.
 
-Data is read from:
-  data/n31/caksm_sweep_n31.csv   (always expected)
-  data/n61/caksm_sweep_n61.csv   (optional, panels grayed out if missing)
+Log-log ODE error against CPU time for five numerical methods, on 31-point
+(left) and 61-point (right) grids, for the rainbow (top) and basket (bottom)
+payoffs. The 2x2 grid and the log-log axes are the source figure's; only the
+titling and labeling follow this thesis's house style.
 
-Per-method sweep selection:
-  KSM-EI: tolerance sweep (temporal_steps=100, tol_ei varies)
-  Others: step-size sweep (tol_ei=1e-8, temporal_steps varies)
+Per-method sweep selection: KSM-EI varies tolerance at 100 temporal steps,
+every other method varies step size at tol_ei = 1e-8.
+
+Sources: data/n31/caksm_sweep_n31.csv and data/n61/caksm_sweep_n61.csv.
+
+  uv run scripts/plots/benchmark_plots.py
 """
 # /// script
 # dependencies = [
@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
+import figstyle as fs
 from figstyle import mark_better
 
 
@@ -44,7 +45,7 @@ N61_CSV = DATA_DIR / "n61" / "caksm_sweep_n61.csv"
 METHOD_META = {
     "KSM-EI": {"label": "Krylov (KSM-EI)",         "color": "#1A1A1A", "lw": 1.8},
     "ADI-HV": {"label": "Hundsdorfer–Verwer (HV)", "color": "#185FA5", "lw": 1.8},
-    "ADI-DR": {"label": "Douglas (DR)",            "color": "#0F6E56", "lw": 1.8},
+    "ADI-DR": {"label": "Douglas-Rachford (DR)",            "color": "#0F6E56", "lw": 1.8},
     "CN":     {"label": "Crank–Nicolson (CN)",     "color": "#993C1D", "lw": 1.8},
     "ME":     {"label": "Al-Mohy–Higham (ME)",     "color": "#1D9E75", "lw": 1.8},
 }
@@ -150,12 +151,9 @@ def plot_panel(
     ax.set_yscale("log")
     ax.xaxis.set_major_formatter(ticker.LogFormatterSciNotation())
     ax.yaxis.set_major_formatter(ticker.LogFormatterSciNotation())
-    ax.grid(True, which="both", ls="-", lw=0.3, alpha=0.35)
-    ax.set_xlabel("CPU time (s)", fontsize=9)
-    ax.set_ylabel(r"$\|u_{\mathrm{cube}} - u_{\mathrm{ref\_cube}}\|$", fontsize=9)
-    # Pinned rather than "best": every method's accuracy improves with time, so the
-    # bottom-right is empty in all four panels while the top-right carries the DR curve.
-    ax.legend(fontsize=8, framealpha=0.92, loc="lower right")
+    fs.style_axes(ax)
+    ax.set_xlabel("CPU time (s)")
+    ax.set_ylabel(r"$\|u_{\mathrm{cube}} - u_{\mathrm{ref\_cube}}\|$")
     mark_better(ax, "down", loc="lower left")
 
 
@@ -197,16 +195,25 @@ def main() -> None:
             )
 
             if row_idx == 0:
-                ax.set_title(col_titles[col_idx], fontsize=11)
+                fs.panel_title(ax, col_titles[col_idx])
             if col_idx == 0:
                 ax.set_ylabel(
                     row_titles[row_idx] + "\n"
-                    + r"$\|u_{\mathrm{cube}} - u_{\mathrm{ref\_cube}}\|$",
-                    fontsize=9,
-                )
+                    + r"$\|u_{\mathrm{cube}} - u_{\mathrm{ref\_cube}}\|$")
+
+    # One key for the whole figure. Four copies of an identical six-entry
+    # legend cost four panels a corner each and say nothing extra.
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    unique = {}
+    for handle, label in zip(handles, labels):
+        unique.setdefault(label, handle)
+    fig.legend(list(unique.values()), list(unique.keys()), fontsize=8.5,
+               frameon=False, ncol=len(unique), loc="outside lower center",
+               labelcolor=fs.C_INK, handlelength=2.0)
 
     fig.savefig(OUTPUT, dpi=300, bbox_inches="tight")
-    print(f"Saved: {OUTPUT}")
+    plt.close(fig)
+    print(f"wrote {OUTPUT.name}")
 
 
 if __name__ == "__main__":

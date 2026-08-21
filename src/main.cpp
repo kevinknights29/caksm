@@ -35,7 +35,13 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
 {
     const bool rainbow = (option_type == EuropeanOptionType::CALL_MIN_RAINBOW);
     const std::string_view opt_label = rainbow ? "Rainbow min-call" : "Basket call";
-    const double reference           = rainbow ? 4.4450 : 13.2449;
+    // The four-decimal values published by Dang, Christara and Jackson: 4.4450
+    // from a Johnson evaluation and 13.2449 from an FFT method. They fix the
+    // historical comparison this benchmark has always reported, and they carry
+    // no stated uncertainty, so they are not accuracy references. The accepted
+    // references and their uncertainty live in data/financial-validation,
+    // written by ./financial-reference and consumed by ./financial-validation.
+    const double historical_comparison = rainbow ? 4.4450 : 13.2449;
 
     std::println("\n {}", opt_label);
     std::println("  Parameters: n={}, steps={}, K={:.0f}, r={:.2f}, T={:.1f}",
@@ -50,7 +56,7 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
         for (const auto& m : cfg.skip_methods) std::print(" {}", m);
         std::println("");
     }
-    std::println("  Reference price: {:.4f}\n", reference);
+    std::println("  Historical comparison value: {:.4f}\n", historical_comparison);
 
     std::println("  [Building PDE system...]");
     const PDESystem sys = build_pde_system(
@@ -68,20 +74,27 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
     }
     const VecXd ref_cube = extract_cube(ref_u, sys.grid, cfg.initial_prices);
 
+    // "Hist Err" is the distance to the historical comparison value and mixes
+    // every discretization error; "ODE Err" is the distance to the
+    // semi-discrete referee and isolates the time integration. They are kept in
+    // separate columns because only the second is a statement about the method.
     std::println("  {:<12} {:>10}  {:>10}  {:>10}  {:>10}",
-                 "Method", "Price", "PDE Err", "ODE Err", "Time(ms)");
+                 "Method", "Price", "Hist Err", "ODE Err", "Time(ms)");
     std::println("  {}", std::string(60, '-'));
 
     struct Run {
         std::string_view name;
         VecXd (*fn)(const PDESystem&, const Config&);
     };
+    // ADI-HV is the unsmoothed control and keeps its historical meaning.
+    // ADI-HV-S is the same scheme with the two start-up steps at theta = 1.
     const Run runs[] = {
-        {"CN",      solve_cn},
-        {"ADI-DR",  solve_adi_dr},
-        {"ADI-HV",  solve_adi_hv},
-        {"ME",      solve_me},
-        {"KSM-EI",  solve_ksm_ei},
+        {"CN",        solve_cn},
+        {"ADI-DR",    solve_adi_dr},
+        {"ADI-HV",    solve_adi_hv},
+        {"ADI-HV-S",  solve_adi_hv_s},
+        {"ME",        solve_me},
+        {"KSM-EI",    solve_ksm_ei},
     };
 
     for (const auto& run : runs) {
@@ -95,18 +108,18 @@ void run_benchmark(const Config& cfg, EuropeanOptionType option_type,
 
         const double ms      = std::chrono::duration<double, std::milli>(t1 - t0).count();
         const double price   = extract_price(u, sys.grid, cfg.initial_prices);
-        const double pde_err = std::abs(price - reference);
+        const double hist_err = std::abs(price - historical_comparison);
         const double ode_err = (extract_cube(u, sys.grid, cfg.initial_prices) - ref_cube).norm();
 
         std::println("  {:<12} {:>10.4f}  {:>10.4f}  {:>10.3e}  {:>10.1f}",
-                     run.name, price, pde_err, ode_err, ms);
+                     run.name, price, hist_err, ode_err, ms);
 
         if (csv) {
             *csv << std::format("{},{},{},{},{:.6e},{},{:.6f},{:.6f},{:.6e},{:.3f}\n",
                                 (rainbow ? "rainbow" : "basket"),
                                 cfg.n, cfg.temporal_steps, cfg.ei_steps,
                                 cfg.tol_ei, run.name,
-                                price, pde_err, ode_err, ms);
+                                price, hist_err, ode_err, ms);
         }
     }
     std::println("");
@@ -173,7 +186,7 @@ int main(const int argc, char* argv[])
             if (!csv)
                 throw std::runtime_error("Cannot open CSV file: " + csv_path);
             csv << "option_type,n,temporal_steps,ei_steps,tol_ei,"
-                   "method,price,pde_err,ode_err,time_ms\n";
+                   "method,price,historical_err,ode_err,time_ms\n";
             std::println("  Exporting to {}\n", csv_path);
         }
 

@@ -1,0 +1,17 @@
+\section{Conclusion}\label{sec:conclusion}
+
+This thesis studied communication avoidance in a Krylov exponential integrator for two three-asset option PDEs. The coordinates $\Rv$ and $\Rh$ identify opportunities for cache reuse and fewer reductions. Their unit lines organize the experiments; they are not universal performance crossovers.
+
+The CPU results separate the two mechanisms. Reducing the synchronization count by 11--16$\times$ gives no wall-clock gain because reductions are not the limiting cost. Cache-blocked matrix powers also remain below their traffic opportunity because halo arithmetic and latency dominate. Direct placement of all eight production grids moves from horizontal-only at $n=25$, through neither mechanism at $n=30$--61, to vertical-only from $n=74$. The map identifies which mechanism is worth measuring without promising a speedup.
+
+Numerical admissibility is empirical. The $u^{-1/2}$ guard matches 20 of 21 cases, but the available theorem for CholeskyQR2 covers only about $1.25\times10^4$ at the production dimension. A measured Krylov block reaches $6\times10^6$. The numerical claims therefore rely on the guard, successful factorization, measured orthogonality, and agreement with the independent referee over the tested range.
+
+On one V100, plane streaming accepts roughly half the occupancy in exchange for fewer halo instructions and load sectors. The promoted dispatch improves the full solver by a 1.248$\times$ geometric mean on four selection cases, with a 1.204$\times$ worst case. Four active held-out cases give a 1.239$\times$ mean and 1.182$\times$ worst case, while four small-grid fallback controls remain near parity at 0.991$\times$.
+
+In the distributed solver, the equal-work $s=4$ arm is 0.98--1.01$\times$ the $s=1$ control on one V100 and 1.78--1.80$\times$ faster on four V100s. However, same-width strong scaling is only $0.89\times$, or about 22\% efficiency, and the best four-GPU time is 12--15\% slower than the best one-GPU time. The four measured topology rungs do not establish a scaling law. Communication also overlaps device work, so the cost decomposition is not additive. Peer-halo overlap hides 99.7\% of copy time but gives no end-to-end improvement within the measured ranges.
+
+The largest-common-grid test stops at its independent boundary gate. At $n=337$, the Krylov residual passes, but the augmentation-tail error is $6.40\times10^{-5}$. No validated large-grid price is claimed.
+
+For the stated Basket and Rainbow contracts, both the Krylov and smoothed Hundsdorfer--Verwer ADI solvers show second-order spatial refinement toward independent references and are compared at equal declared accuracy. Basket Delta errors are 0.011--0.020\%, and the node-stencil diagonal Gammas are consistent with the references within their 0.05--0.22\% uncertainty. Rainbow Delta and Gamma center differences are 0.17--0.24\% and 0.54--0.88\%, respectively. Off-node Gamma remains limited by extraction. These results apply to the tested three-asset European contracts and do not compare production pricing systems.
+
+The main conclusion is methodological. Communication-avoiding performance depends on the operator, numerical basis, kernel geometry, topology, and a fair equal-work control. The regime coordinates organize these factors and show where richer models of tile redundancy and distributed synchronization are still needed.

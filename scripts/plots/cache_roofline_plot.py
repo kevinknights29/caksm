@@ -1,14 +1,14 @@
-"""
-Cache-aware roofline for puffin (AMD Threadripper 3960X, AVX2),
-n=31 (left) and n=61 (right).
+"""Cache-aware roofline for puffin, at both grids.
 
-Left panel:  n=31 - SpMV resides in L3 cache; problem is cache-resident.
-Right panel: n=61 - SpMV spills to DRAM; the performance gap between the
-             measured point and the L3 roof at the same arithmetic intensity
-             marks the opportunity for communication-avoiding (CA) matrix powers.
+At n=31 the SpMV working set is L3-resident; at n=61 it spills to DRAM. The
+vertical gap between the measured SpMV point and the L3 roof above it at the
+same arithmetic intensity is the headroom communication-avoiding matrix powers
+would have to recover, which is what the vertical study goes on to test.
 
-Data transcribed from profiler runs (basket option, rainbow is within ~1%
-and tells the same story).
+Data transcribed from profiler runs on the basket option; rainbow is within
+about a percent and tells the same story.
+
+  uv run scripts/plots/cache_roofline_plot.py
 """
 # /// script
 # dependencies = [
@@ -24,6 +24,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+import figstyle as fs
+import cpu_figstyle as cpu
 from figstyle import mark_better
 
 OUTPUT = Path(__file__).resolve().parent / "cache_roofline.png"
@@ -53,10 +55,10 @@ RUNS = {
     ),
 }
 
-TIER_COLOR   = {"DRAM": "#993C1D", "L3": "#0F6E56", "L2": "#185FA5"}
-KERNEL_COLOR = {"SpMV": "#D85A30", "Gram-Schmidt": "#534AB7", "dense expm": "#7A7A73"}
-C_PEAK       = "#5F5E5A"
-C_CA_ARROW   = "#1D9E75"
+TIER_COLOR = cpu.TIER_COLOR
+KERNEL_COLOR = cpu.KERNEL_COLOR
+C_PEAK = cpu.C_GUIDE
+C_CA_ARROW = cpu.PINE
 
 
 def draw_roofline(ax: plt.Axes, n: int) -> None:
@@ -110,15 +112,15 @@ def draw_roofline(ax: plt.Axes, n: int) -> None:
     ax.set_yscale("log")
     ax.set_xlabel("arithmetic intensity (FLOPs / byte)", fontsize=9)
     ax.set_ylabel("performance (GFLOP/s)", fontsize=9)
-    ax.set_title(f"$n = {n}$", fontsize=11)
+    fs.panel_title(ax, f"n = {n}")
     ax.set_xlim(ai.min(), ai.max())
     ax.set_ylim(0.25, peak * 1.6)
-    ax.grid(True, which="both", ls="-", lw=0.3, alpha=0.35)
+    fs.style_axes(ax)
     handles, _ = ax.get_legend_handles_labels()
-    # Upper left: the roofs are low at low intensity, so that corner is empty in both
-    # panels. Lower right would sit on the dense-expm point and its label.
-    ax.legend(handles=handles + extra_keys, loc="upper left", fontsize=8,
-              framealpha=0.92)
+    # Upper left is the only free corner, but the compute-peak roof runs flat
+    # across the top of both panels and straight through the label text, so
+    # the key sits on an opaque ground.
+    fs.legend(ax, loc="upper left", handles=handles + extra_keys, opaque=True)
     mark_better(ax, "up", loc="lower right")
 
 
@@ -136,7 +138,8 @@ def main() -> None:
     ax_61.set_ylabel("")  # shared y-axis, label only on the left panel
 
     fig.savefig(OUTPUT, dpi=300, bbox_inches="tight")
-    print(f"Saved: {OUTPUT}")
+    plt.close(fig)
+    print(f"wrote {OUTPUT.name}")
 
 
 if __name__ == "__main__":

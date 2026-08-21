@@ -68,7 +68,8 @@ namespace regime_control {
  * @param n      grid points per asset (N = n^3), keep small (C4/C6 dense-eigensolve).
  * @param v0_out the operator's actual starting vector: the discounted payoff u0.
  */
-inline SyntheticOperator real_bs_operator(int n, Eigen::VectorXd& v0_out)
+inline SyntheticOperator real_bs_operator(
+    int n, Eigen::VectorXd& v0_out, bool compute_dense_diagnostics = true)
 {
     const std::array<double, 3> sigma{0.30, 0.35, 0.40};
     const std::array<double, 3> rho_off{0.50, 0.50, 0.50};
@@ -84,9 +85,11 @@ inline SyntheticOperator real_bs_operator(int n, Eigen::VectorXd& v0_out)
     op.perm.resize(static_cast<std::size_t>(op.n));
     std::iota(op.perm.begin(), op.perm.end(), int64_t{0});   // identity: no scatter here
 
-    op.henrici = henrici_departure(op.A);
-    const double fro = op.A.norm();
-    op.is_normal             = (op.henrici <= 1e-9 * fro * fro);
+    op.henrici = compute_dense_diagnostics
+        ? henrici_departure(op.A) : std::numeric_limits<double>::quiet_NaN();
+    const double fro = compute_dense_diagnostics ? op.A.norm() : 0.0;
+    op.is_normal             = compute_dense_diagnostics
+        && (op.henrici <= 1e-9 * fro * fro);
     op.has_analytic_spectrum = false;      // cross terms: no closed form, dense eigensolve
     op.lambda                = Eigen::VectorXd();
     op.lambda_min = op.lambda_max = std::numeric_limits<double>::quiet_NaN();
@@ -110,6 +113,8 @@ struct Args {
     std::string machine    = "amd-3960x";
     int         P          = 24;
     int         real_bs    = 0;   ///< >0: run the real Black-Scholes operator at this n (N=n^3)
+    bool        placement_only = false; ///< measure m and place large real-BS points; skip dense gates
+    int         predicted_m = 0;  ///< optional modeled m to compare with --placement-only
     std::string csv_path;
 };
 
@@ -141,12 +146,15 @@ inline Args parse(std::span<const char* const> argv)
         else if (arg == "--machine")    a.machine = std::string(next());
         else if (arg == "--P")          a.P = std::stoi(std::string(next()));
         else if (arg == "--real-bs")    a.real_bs = std::stoi(std::string(next()));
+        else if (arg == "--placement-only") a.placement_only = true;
+        else if (arg == "--predicted-m") a.predicted_m = std::stoi(std::string(next()));
         else if (arg == "--csv")        a.csv_path = std::string(next());
         else if (arg == "--help") {
             std::println("Usage: ./regime-control [--n1 N] [--dim 1|2|3] [--h H] [--tol T]");
             std::println("                        [--scale S] [--shift MU] [--s-ceiling S]");
             std::println("                        [--m-ceiling M] [--seed SEED]");
             std::println("                        [--machine KEY] [--P P] [--csv PATH]");
+            std::println("                        [--placement-only] [--predicted-m M]");
             std::println("");
             std::println("  Control gate. Exits non-zero if any GATING check fails.");
             std::println("  --dim D        Laplacian scaffold dimension (d = 2D+1 nonzeros/row)");
@@ -166,6 +174,9 @@ inline Args parse(std::span<const char* const> argv)
             std::println("                 (N=n^3) with its payoff u0 as the start vector, instead");
             std::println("                 of the synthetic scaffold. Transfer by MEASUREMENT (C6);");
             std::println("                 overrides --n1/--dim/knobs. n<=32 (dense-eigensolved).");
+            std::println("  --placement-only  with --real-bs, skip dense spectral/conditioning");
+            std::println("                 gates and measure only m, R_v, and R_h at large n");
+            std::println("  --predicted-m M compare that modeled m with the placement measurement");
             std::println("  --machine      amd-3960x (puffin, default and only preset)");
             std::exit(0);
         }

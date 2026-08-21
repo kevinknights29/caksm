@@ -9,7 +9,7 @@ after the reserve, so a topology's limit is set by how much of the domain each
 device has to hold. Hue carries the option and the width is a texture, so
 neither reads as rank.
 
-Source: data/ca-integrator-largest-common.
+Source: data/ca-integrator-largest-common-m39.
 
   uv run scripts/plots/ca_memory_model.py
 """
@@ -68,7 +68,7 @@ def draw() -> str | None:
     selected = lib.LARGEST / "selected_n.txt"
     if not reports.exists():
         return FIGURE.blocked(
-            "data/ca-integrator-largest-common/memory_reports.csv is absent")
+            "data/ca-integrator-largest-common-m39/memory_reports.csv is absent")
 
     with reports.open() as handle:
         records = list(csv.DictReader(handle))
@@ -135,10 +135,6 @@ def draw() -> str | None:
     # The memory budget behind every bar goes to the run log rather than onto
     # the image, where it was a second sentence competing with the title for a
     # figure that only makes one claim.
-    lib.title(
-        fig,
-        "Largest admissible grid across GPU topologies, "
-        "and the common grid it forces")
     print(f"  binds at n={chosen} on "
           + ", ".join(sorted({
               f"{TOPOLOGY_LABEL[r['topology']]} s={r['s']}".replace("\n", " ")

@@ -1,8 +1,9 @@
 #!/bin/bash
 # Record what the machine actually is, before any kernel runs on it.
 #
-# Nothing here needs the project built or a GPU kernel launched: it reads
-# nvidia-smi, the fabric and the scheduler. That bounds what it can answer.
+# Most of this needs no project build or GPU kernel launch: it reads nvidia-smi,
+# the fabric and the scheduler. If gpu-device-probe is built, the script also
+# queries static CUDA device properties; that probe launches no kernel.
 # Identity, capacity and topology come from here. Device geometry does not,
 # because nvidia-smi does not report it, and no roof or reduction cost does,
 # because those are measured. The closing message says which field comes from
@@ -24,8 +25,18 @@
 # the first node only, which is the failure mode this note exists to prevent.
 set -uo pipefail
 
-WORK_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+# A direct sbatch launch runs a copy under /var/spool. Prefer the submission
+# directory in that case; srun and interactive invocations use the current
+# checkout as before.
+WORK_DIR="${ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+if [[ ! -f "$WORK_DIR/CMakeLists.txt" || ! -d "$WORK_DIR/scripts/regime" ]]; then
+    echo "Error: repository root not found at $WORK_DIR" >&2
+    echo "Submit from the repository root or export ROOT=/absolute/path/to/caksm." >&2
+    exit 1
+fi
 DATA_DIR="$WORK_DIR/data/regime"
+BUILD_DIR="${BUILD_DIR:-$WORK_DIR/build}"
+DEVICE_PROBE="${GPU_DEVICE_PROBE:-$BUILD_DIR/gpu-device-probe}"
 mkdir -p "$DATA_DIR"
 OUT="$DATA_DIR/gpu_probe_$(uname -n).txt"
 
@@ -44,6 +55,17 @@ echo "  gpus     : ${SLURM_JOB_GPUS:-${CUDA_VISIBLE_DEVICES:-<unset>}}"
 echo "  exclusive: ${SLURM_JOB_OVERSUBSCRIBE:-<unknown>}"
 if command -v lscpu >/dev/null 2>&1; then
     lscpu | grep -E 'Model name|Socket|NUMA node\(s\)|NUMA node[0-9]' | sed 's/^/  cpu    : /'
+fi
+echo
+
+echo "### CUDA copy and concurrency capabilities"
+CAPABILITIES_CSV="$DATA_DIR/gpu_capabilities_$(uname -n).csv"
+if [[ -x "$DEVICE_PROBE" ]]; then
+    "$DEVICE_PROBE" --csv "$CAPABILITIES_CSV" \
+        || echo "  gpu-device-probe failed; no capability values are recordable."
+else
+    echo "  gpu-device-probe not found at $DEVICE_PROBE"
+    echo "  Build target gpu-device-probe, or set GPU_DEVICE_PROBE to its path."
 fi
 echo
 
@@ -131,9 +153,11 @@ echo "    device_memory_bytes      memory.total"
 echo "    gpu_count                GPU lines listed for this host"
 echo "    node_count               the nodes: line above"
 echo "    interconnect             topo matrix cell (SYS, NV#, PIX, ...)"
+echo "    overlap                  gpu-device-probe (async engines, concurrent kernels,"
+echo "                             device overlap and unified addressing)"
 echo
-echo "nvidia-smi does not report device geometry. gpu-stream"
-echo "prints SMs and L2 in its header. All four are cudaGetDeviceProperties:"
+echo "nvidia-smi does not report device geometry. gpu-stream and gpu-device-probe"
+echo "read cudaGetDeviceProperties:"
 echo "    sm_count                 multiProcessorCount"
 echo "    l2_bytes                 l2CacheSize"
 echo "    shared_mem_bytes_per_sm  sharedMemPerMultiprocessor"

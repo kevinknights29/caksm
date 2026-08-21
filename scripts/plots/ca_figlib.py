@@ -31,12 +31,12 @@ DATA = ROOT / "data"
 DOCS = ROOT / "docs"
 
 WEAK = DATA / "ca-integrator-weak"
-EXACT = DATA / "ca-integrator-exact-depth"
-STRONG = DATA / "ca-integrator-strong"
+EXACT = DATA / "ca-integrator-exact-depth-m39"
+STRONG = DATA / "ca-integrator-strong-m39"
 VERTICAL = DATA / "ca-integrator-mpk-vertical"
-CERTIFICATE = DATA / "ca-integrator-certificate"
+CERTIFICATE = DATA / "ca-integrator-certificate-m39"
 PARTICIPANTS = DATA / "ca-participant-calibration-quiet"
-LARGEST = DATA / "ca-integrator-largest-common"
+LARGEST = DATA / "ca-integrator-largest-common-m39"
 REFEREE_DOC = DOCS / "ca_referee_baseline.md"
 
 DPI = 300
@@ -788,130 +788,11 @@ def run(figure: Figure, draw) -> int:
 # Drawing furniture
 
 
-HEADLINE_SIZE = 12.5
-PANEL_SIZE = 9.5
-
-
-def title(fig, headline: str) -> None:
-    """Set the figure's single headline.
-
-    The headline states the finding rather than restating the axes, so a reader
-    who reads only the top line leaves holding the claim. Provenance stays out
-    of the image and lives in the LaTeX caption instead, which is where a
-    published figure carries it.
-
-    Args:
-        fig: Figure to title.
-        headline: One line naming the result.
-    """
-    fig.suptitle(headline, fontsize=HEADLINE_SIZE, color=ca.C_INK)
-
-
-def panel_title(ax, text: str, subtitle: str = "") -> None:
-    """Set a panel heading, optionally with a subordinate second line.
-
-    Args:
-        ax: Axes to title.
-        text: The panel's name.
-        subtitle: Optional second line, set smaller and lighter.
-    """
-    if subtitle:
-        ax.set_title(
-            f"{text}\n{subtitle}", fontsize=PANEL_SIZE, color=ca.C_INK,
-            linespacing=1.4)
-    else:
-        ax.set_title(text, fontsize=PANEL_SIZE, color=ca.C_INK)
-
-
-def legend(ax, *, loc: str = "best", ncol: int = 1, **kwargs):
-    """Draw a legend in the one style every figure in this set uses.
-
-    Args:
-        ax: Axes to attach the legend to.
-        loc: Matplotlib location string.
-        ncol: Number of columns.
-        **kwargs: Passed through to ``Axes.legend``, for explicit handles
-            and labels.
-
-    Returns:
-        The created legend.
-    """
-    return ax.legend(
-        fontsize=8.0, frameon=False, loc=loc, ncol=ncol,
-        labelcolor=ca.C_INK, handlelength=2.6, borderaxespad=0.4, **kwargs)
-
-
-def label_series(ax, x, y, text: str, color: str, *, dy: float = 9.0,
-                 dx: float = 0.0, ha: str = "center",
-                 size: float = 9.0) -> None:
-    """Name a series on the series itself.
-
-    Cheaper for the reader than a legend, which asks them to hold a color in
-    memory and match it across the figure. Only worth it where the label has
-    clear space; where series converge, a legend is the better tool.
-
-    Args:
-        ax: Axes to draw on.
-        x: Data x of the anchor point.
-        y: Data y of the anchor point.
-        text: The series name.
-        color: The series color, so label and data read as one thing.
-        dy: Vertical offset in points from the anchor.
-        dx: Horizontal offset in points from the anchor.
-        ha: Horizontal alignment.
-        size: Font size in points.
-    """
-    ax.annotate(
-        text, xy=(x, y), xytext=(dx, dy), textcoords="offset points",
-        ha=ha, va="bottom" if dy >= 0 else "top", fontsize=size,
-        color=color, fontweight="medium", zorder=6)
-
-
-def label_value(ax, x, y, text: str, *, dy: float = 6.0, dx: float = 0.0,
-                color: str | None = None, size: float = 7.6,
-                ha: str = "center", weight: str = "normal") -> None:
-    """Put a number on the mark it belongs to.
-
-    A reader comparing two bars that differ by a tenth of a millisecond is
-    guessing, and a number that needs the script re-run to recover is not on the
-    figure.
-
-    Args:
-        ax: Axes to draw on.
-        x: Data x of the mark.
-        y: Data y of the mark.
-        text: The formatted number.
-        dy: Vertical offset in points from the mark.
-        dx: Horizontal offset in points from the mark.
-        color: Text color; defaults to the subordinate gray.
-        size: Font size in points.
-        ha: Horizontal alignment.
-        weight: Font weight.
-    """
-    ax.annotate(
-        text, xy=(x, y), xytext=(dx, dy), textcoords="offset points",
-        ha=ha, va="bottom" if dy >= 0 else "top", fontsize=size,
-        color=color or ca.C_MUTED, fontweight=weight, zorder=6,
-        annotation_clip=False)
-
-
-def style_axes(ax, grid_axis: str = "both") -> None:
-    """Apply the shared axes styling: light grid, no top or right spine.
-
-    Args:
-        ax: Axes to style.
-        grid_axis: Which axis carries grid lines: "both", "x" or "y".
-    """
-    ax.grid(alpha=0.35, lw=0.5, color=ca.C_GRID, axis=grid_axis)
-    ax.set_axisbelow(True)
-    for spine in ("top", "right"):
-        ax.spines[spine].set_visible(False)
-    for spine in ("left", "bottom"):
-        ax.spines[spine].set_color(ca.C_GRID)
-    ax.tick_params(colors=ca.C_INK, labelsize=8.5)
-    ax.xaxis.label.set_color(ca.C_INK)
-    ax.yaxis.label.set_color(ca.C_INK)
-    ax.title.set_color(ca.C_INK)
+# Re-exported so the CA scripts keep calling lib.legend and the rest
+# while the definitions live in figstyle beside the neutral colors they use.
+from figstyle import (  # noqa: E402
+    PANEL_SIZE, label_series, label_value, legend, panel_title, style_axes,
+)
 
 
 def plot_distribution(ax, x, run: Run, color: str, marker: str, label=None):

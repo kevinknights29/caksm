@@ -9,7 +9,7 @@ same devices.
 A stopped or acceptance-failed arm is a hollow hatched bar in every panel, and
 each pair carries the percentage change between the arms.
 
-Source: data/ca-integrator-exact-depth, produced by
+Source: data/ca-integrator-exact-depth-m39, produced by
 scripts/regime/ca_exact_depth_weak.sh.
 
   uv run scripts/plots/ca_correction_impact.py
@@ -36,7 +36,7 @@ def draw() -> str | None:
     runs = [r for r in lib.load_runs(lib.EXACT) if r.world_gpus > 1]
     if not runs:
         return FIGURE.blocked(
-            "data/ca-integrator-exact-depth is empty; run "
+            "data/ca-integrator-exact-depth-m39 is empty; run "
             "scripts/regime/ca_exact_depth_weak.sh on an idle two-node Synge "
             "allocation")
 
@@ -166,15 +166,18 @@ def draw() -> str | None:
         axis.set_ylim(0.0, ceiling * 1.30)
         lib.style_axes(axis, grid_axis="y")
 
-    axes[0].legend(
-        handles=[
+    legend_handles = [
             Patch(facecolor=ca.ARM_COLOR["as-measured"],
                   label="as measured"),
             Patch(facecolor=ca.ARM_COLOR["exact-depth"],
                   label="exact depth"),
+        ]
+    if stopped_any:
+        legend_handles.append(
             Patch(facecolor="none", edgecolor=ca.C_STOPPED, hatch="////",
-                  label="stopped or acceptance failure"),
-        ],
+                  label="stopped or acceptance failure"))
+    axes[0].legend(
+        handles=legend_handles,
         fontsize=8.0, frameon=False, ncol=3, loc="upper center",
         labelcolor=ca.C_INK)
     axes[2].set_xticks(positions)
@@ -226,10 +229,6 @@ def draw() -> str | None:
         for _, value in pairs
         if not any(r.stopped or not r.recordable for r in value.values())
     ]
-    lib.title(
-        fig,
-        "Removing one unused power and one excess halo plane halves the "
-        "s=1 control's exchanges")
     if exchange_change and saving:
         print(f"  s=1 halo exchanges {max(exchange_change):+.0f}%; "
               f"cycle time {max(saving):+.0f}% to {min(saving):+.0f}%")

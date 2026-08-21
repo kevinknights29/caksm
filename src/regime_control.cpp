@@ -562,7 +562,11 @@ int main(int argc, char* argv[])
         const int64_t control_N = a.real_bs > 0
             ? static_cast<int64_t>(a.real_bs) * a.real_bs * a.real_bs
             : synthetic_dimension(a.spec);
-        if (control_N > kControlMaxN)
+        if (a.placement_only && a.real_bs <= 0)
+            throw std::invalid_argument("--placement-only requires --real-bs n");
+        if (a.predicted_m > 0 && !a.placement_only)
+            throw std::invalid_argument("--predicted-m is only valid with --placement-only");
+        if (control_N > kControlMaxN && !a.placement_only)
             throw std::invalid_argument(std::format(
                 "operator N={} exceeds the control limit {} ({}). The control "
                 "validates arithmetic, which is N-independent; use a smaller {}. "
@@ -590,7 +594,7 @@ int main(int argc, char* argv[])
         Eigen::VectorXd v0;
         SyntheticOperator op;
         if (a.real_bs > 0) {
-            op = real_bs_operator(a.real_bs, v0);
+            op = real_bs_operator(a.real_bs, v0, !a.placement_only);
             std::println("  REAL Black-Scholes basket operator: n={} N={} nnz={}",
                          a.real_bs, op.n, op.nnz);
             std::println("  (log-price coordinates: sigma, rho, r are CONSTANT, so despite "
@@ -600,6 +604,38 @@ int main(int argc, char* argv[])
             op = build_synthetic(banded_spec);
             v0 = sine_vector(op.n);
         }
+        if (a.placement_only) {
+            const int ceiling = std::min(a.m_ceiling, static_cast<int>(op.n));
+            const int m_measured = measured_krylov_dim(op.A, v0, -a.h, a.tol, ceiling);
+            const RegimePoint measured = place(
+                mc, a.P, op.nnz, op.n, m_measured,
+                modeled_x_reuse(mc, a.P, banded_spec.scatter_block, op.n));
+
+            std::println("");
+            std::println("Large real-BS placement measurement (dense gates skipped)");
+            std::println("{}", std::string(78, '='));
+            std::println("  operating point: h={:.6g} tol={:.3e} P={} machine={}",
+                         a.h, a.tol, a.P, mc.key);
+            std::println("  measured: m={} R_v={:.6f} R_h={:.6e}",
+                         m_measured, measured.rv, measured.rh);
+            if (m_measured >= ceiling)
+                std::println("  WARNING: m reached --m-ceiling={}; rerun with a larger ceiling",
+                             ceiling);
+            if (a.predicted_m > 0) {
+                const RegimePoint predicted = place(
+                    mc, a.P, op.nnz, op.n, a.predicted_m,
+                    modeled_x_reuse(mc, a.P, banded_spec.scatter_block, op.n));
+                std::println("  predicted: m={} R_v={:.6f} R_h={:.6e}",
+                             a.predicted_m, predicted.rv, predicted.rh);
+                std::println("  ratio measured/predicted: R_v={:.6f} R_h={:.6f}",
+                             measured.rv / predicted.rv, measured.rh / predicted.rh);
+            }
+            std::println("  NOTE: the machine key selects the modeled coordinate constants;");
+            std::println("        host timing does not enter the placement. A different floating-");
+            std::println("        point implementation can change m only at a stopping boundary.");
+            return m_measured >= ceiling ? EXIT_FAILURE : EXIT_SUCCESS;
+        }
+
         std::println("  operator: normal={} analytic_spectrum={} henrici={:.3e}{}",
                      op.is_normal, op.has_analytic_spectrum, op.henrici,
                      op.has_analytic_spectrum && !op.is_normal

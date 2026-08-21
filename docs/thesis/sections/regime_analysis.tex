@@ -1,0 +1,290 @@
+\section{Regime analysis}\label{sec:regime}
+
+The scaling study shows that the baseline solver is limited by memory traffic and synchronization. It does not show where a CA reformulation will help. The regime analysis organizes this question with a dimensionless map whose axes represent the two communication mechanisms. Each unit line marks demand comparable with supply, so it is an opportunity boundary rather than a universal performance crossover. A synthetic instrument traverses the map first. The real Black--Scholes operator is then placed on it and compared with the measured outcomes.
+
+The synthetic instrument extends the discretized operator of \Cref{sec:model} into a family of independently controlled parameters. Its backbone is a \emph{Kronecker sum}. A tridiagonal operator $\mat{T}\in\R^{n_1\times n_1}$ combines advection and diffusion using the same three-point stencil as \Cref{sec:model}, with diffusion scale $\sigma$ and advection strength $\gamma$. It extends to the $d$-dimensional grid as
+\[
+\mat{A}_d = \mat{T} \oplus \cdots \oplus \mat{T}
+= \sum_{i=1}^{d} \mat{I} \otimes \cdots \otimes
+  \underbrace{\mat{T}}_{i\text{-th factor}} \otimes \cdots \otimes \mat{I}
+\in \R^{n_1^d \times n_1^d},
+\]
+This applies the same one-dimensional stencil along each axis, as in a separable PDE discretization \cite{golub-vanloan-2013}. Two optional terms break the clean structure in controlled ways that mirror the real operator in \eqref{eq:bs-pde}. The \emph{correlation cross term} adds $c\,(\mat{D}\otimes\mat{D})$, a discrete mixed second derivative coupling one axis pair and playing the role of the PDE's $\rho_{dd'}$ terms. Turning it off gives an axis-by-axis factorization with a closed-form spectrum; turning it on breaks that factorization. The \emph{symmetric scatter permutation} relabels the grid unknowns by replacing $\mat{A}$ with $\mat{P}\mat{A}\mat{P}^\top$. This destroys the banded memory layout while preserving the operator's numerical properties, so locality can be changed without changing the mathematical problem (gate C2 below).
+
+The parameters move the map axes independently. Grid size $N=n_1^d$ sets the Arnoldi working set and therefore $\Rv$. The spectral parameters ($\sigma$, $\mu$, $\gamma$, and $\rho$) change basis conditioning and the width admitted by the implemented guard without changing the memory footprint. The scatter parameter changes the access pattern at a fixed spectrum. This separation lets one operator family move one modeled coordinate while holding the other fixed, making it an instrument rather than only a test matrix.
+
+\subsection{The coordinates}\label{sec:coords}
+
+Two coordinates separate working-set pressure from reduction latency.
+
+\begin{table}[htbp!]
+\centering
+\caption{The two dimensionless coordinates.}
+\label{tab:coords}
+\begin{tabular}{@{}lp{5.2cm}p{4.6cm}l@{}}
+\toprule
+\textbf{Axis} & \textbf{Definition} & \textbf{Mechanism it governs} & \textbf{Scales like} \\
+\midrule
+$\Rv$ & Arnoldi working set / aggregate last-level cache & \textbf{vertical mechanism}, matrix-powers tiling to avoid DRAM traffic & ${\sim}1/P$ \\
+$\Rh$ & reduction cost / compute per core between reductions & \textbf{horizontal mechanism}, $s$-step to cut the reduction count & ${\sim}P\log P$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each coordinate is a demand-to-supply ratio. $\Rv$ divides the Arnoldi working-set bytes by the last-level-cache capacity available to hold them. $\Rh$ divides global-reduction latency by the useful computation between reductions. The unit lines $\theta_v=\theta_h=1$ mark equality of these modeled quantities. Below a line, the corresponding resource is not an evident first-order opportunity. Above it, a CA mechanism may have communication to remove. The ratios do not include associativity, reuse distance, halo work, launch costs, overlap, or topology, so they cannot locate the wall-clock crossover by themselves. The four regions are therefore labeled by \emph{opportunity}: neither, horizontal, vertical, or both. The Krylov dimension $m$ changes the working set and $\Rv$, but two machines with the same $m$ can still fall on opposite sides of the unit line.
+
+The numerator of $\Rh$ needs a measured magnitude, not only a trend in $P$. A calibration instrument therefore times an isolated scalar all-reduce with no application work. The scalar itself is the payload. The fitted model is
+\begin{equation}
+t_{\text{reduce}}(P) = t_{\text{intra}} \cdot \text{intra levels}(P)
+  + t_{\text{cross}} \cdot \min(\text{cross levels}(P),\ L^{*}).
+\label{eq:treduce}
+\end{equation}
+On puffin, $t_{\text{intra}} = 120.8$\,ns, $t_{\text{cross}} = 652.8$\,ns, and $L^{*} = 2.20$. A cross-CCX tree level costs 5.4$\times$ an intra-CCX level, and subtree concurrency hides additional cost beyond roughly two cache-domain crossings. Measured tree all-reduce latency runs from 9.6\,ns at $P=1$ to 1.70\,$\mu$s at $P=24$ ($R^2 = 0.98$ against the model). The cost is set by how many cache-domain boundaries the tree crosses rather than core count, which is why this coordinate cannot be measured on a virtualized topology (\Cref{sec:platform}).
+
+\subsection{The instrument and its gates}\label{sec:gates}
+
+The map depends on the algebra of the synthetic instrument, so a single-threaded control program checks its arithmetic claims before any timing begins (\Cref{tab:gates}). The program contains no timed result and does not depend on the host. Its verdicts are therefore properties of the operator, not the machine. A \emph{gate} checks a claim required by the downstream study; a \emph{finding} records a result without making it a prerequisite.
+
+\begin{table}[htbp!]
+\centering
+\caption{The controls. A gate failure is fatal; a finding is a result.}
+\label{tab:gates}
+\begin{tabular}{@{}lp{9.2cm}l@{}}
+\toprule
+\textbf{Control} & \textbf{Claim under test} & \textbf{Status} \\
+\midrule
+C1  & the Kronecker-sum spectrum is analytic and correct & gate \\
+C2  & the scatter knob is an exact similarity transform (so a pure-$\Rv$ dial exists) & gate \\
+C3  & measured $m$ obeys the Hochbruck--Lubich spectral bound \cite{hochbruck-lubich-1997} & gate (Hermitian PSD) \\
+C3b & a spectral shift leaves $m$ fixed & finding \\
+C4  & $\kappa$ of the matrix-powers basis equals the row-scaled Vandermonde from the spectrum & gate when normal \\
+C5  & relation of the implemented $u^{-1/2}$ guard to observed factorization behavior & finding \\
+C5b & worst-case Krylov-block count over the physical ensemble & finding \\
+C6  & where the operator is non-normal, does the spectral prediction survive? & finding \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+C2 is essential because it separates layout from spectrum. The scatter parameter applies $\mat{P}\mat{A}\mat{P}^\top$, where $\mat{P}$ is a permutation matrix. Since $\mat{P}$ is orthogonal, $\mat{P}\mat{A}\mat{P}^\top=\mat{P}\mat{A}\mat{P}^{-1}$ is a similarity transform, and similar matrices have the same spectrum \cite{golub-vanloan-2013,trefethen-1997}. The permutation changes which rows are adjacent in memory without changing the spectrum. If both changed together, either could explain a timing difference; that would be a confound. The sweep then proceeds through five phases: gates, separation controls, the $m$ range, non-normality, and the real Black--Scholes operator with its discounted payoff across grids. The final phase places the real operator on the same $(\Rv,\Rh)$ plane as the synthetic instrument and tests transfer by measurement.
+
+\subsection{Basis conditioning and the confound control}\label{sec:conditioning}
+
+The regime instrument records $s_{\max}$, the largest polynomial degree admitted by the implemented $u^{-1/2}$ conditioning guard. The corresponding Krylov block has $q_{\max}=s_{\max}+1$ columns. A row-scaled Vandermonde construction predicts this \emph{heuristic} degree from the spectrum \cite{trefethen-1997}, and the experiment compares the prediction with the guard. Where a closed-form spectrum exists, the two integers agree on 20 of 21 sampled runs. The exception is the most non-normal point ($\gamma=0.4$, $\kappa(X)=7.7\times10^8$), where they differ by one degree. This agreement describes the sampled predictor--guard relationship; it is not a stability theorem or a population-level accuracy claim. The real Black--Scholes points differ by at most one degree over the measured grids.
+
+The first separation test asks whether guard-admitted $s_{\max}$ simply tracks the Krylov dimension $m$. If it did, Krylov-block width could not be predicted or tuned independently, and a longer solve might be mistaken for poor conditioning. For a normal operator $\mat{A}=\mat{X}\bm{\Lambda}\mat{X}^*$, the matrix-powers Krylov block factors as
+\[
+[\vect{v},\ \mat{A}\vect{v},\ \ldots,\ \mat{A}^s\vect{v}]
+= \mat{X}\, \operatorname{diag}(\mat{X}^*\vect{v})\,
+  \mat{V}_s(\lambda_1, \ldots, \lambda_N),
+\]
+where $\mat{V}_s$ is the Vandermonde matrix in the eigenvalues. Conditioning depends on the eigenvalues and the starting vector's eigen-coefficients; $m$ does not appear \cite{trefethen-1997,carson-2015}. The measurements follow this separation. With the spectrum fixed and $m$ varied from 5 to 12 through step size and tolerance, $s_{\max}$ remains 7. With $m$ fixed at 5 and the spectrum scaled and shifted, $s_{\max}$ ranges from 4 to 14. Solver length and admissible Krylov-block width are therefore treated as separate inputs. Orthogonality and solution diagnostics provide the downstream numerical checks.
+
+\subsection{The reduction ledger in the measured small-$m$ regime}\label{sec:ledger}
+
+Once a usable Krylov-block width is known, the next question is how much synchronization it removes from one Arnoldi cycle. The ledger compares the orthogonalizers used by the two principal arms. The baseline integrator uses MGS (\Cref{alg:arnoldi}), while the CA arm uses CholeskyQR2. CholeskyQR2 orthogonalizes a complete Krylov block with two Gram-formation phases, independent of the block width. Its appeal here is the communication count and measured cost; the reach of its sufficient bound is assessed separately. TSQR obtains a similar synchronization count through a reduction tree, but with greater implementation complexity \cite{demmel-2008,hoemmen-2010}. It is measured later as a robustness comparison.
+
+The \emph{reduction ledger} in \Cref{tab:ledger} counts global reductions in one Arnoldi cycle. MGS requires $1+m(m+3)/2$ reductions, while a Krylov-block method with $q_{\max}$ columns requires $1+2\lceil m/q_{\max}\rceil$. The guard-admitted value $q_{\max}=8$ gives an \textbf{11--16$\times$ reduction-count cut} across the measured $m=8\text{--}11$ range. Here ``small-$m$'' describes the observed number of Krylov blocks; it is not a numerical safety theorem. The count is exact once the width is fixed. Safety is checked separately through successful factorization, orthogonality, and referee agreement. The real operator uses $m=6\text{--}8$ on eigensolvable grids $n=10\text{--}20$ and mean $m=7.6$--11.3 on $n=31\text{--}89$, so one reported cycle contains only two or three Krylov blocks.
+
+\begin{table}[htbp!]
+\centering
+\caption{Conditional reduction ledger at $q_{\max}=8$ Krylov-block columns.}
+\label{tab:ledger}
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+$m$ & \textbf{MGS reductions} & $s$\textbf{-step + CholQR2} & \textbf{cut} \\
+\midrule
+5  & 21 & 3 & 7.0$\times$ \\
+8  & 45 & 3 & 15.0$\times$ \\
+9  & 55 & 5 & 11.0$\times$ \\
+11 & 78 & 5 & 15.6$\times$ \\
+12 & 91 & 5 & 18.2$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Empirical log-sensitivity to non-normality}\label{sec:nonnormality}
+
+The spectral prediction of Krylov-block conditioning assumes a normal operator. The pricing operator is non-normal because of convection and mixed derivatives. Prediction error is reported as $|\log_{10}\kappa_{\mathrm{meas}}-\log_{10}\kappa_{\mathrm{pred}}|$ in \emph{decades}. One decade is a factor of 10, and 0.3 decades is approximately a factor of 2. In the sampled family, each added matrix power raises the measured condition number by a median 1.05 decades. A difference of roughly 1.2 decades is therefore comparable with one change in guard-admitted degree.
+
+\Cref{fig:nonnormality} tests whether increasing eigenvector non-orthogonality makes the spectral predictor less accurate. Prediction error grows more slowly for constant-coefficient operators than for the variable-coefficient advection arm. The fits are descriptive and are not extrapolated. The real Black--Scholes points are excluded from both fits; they differ from prediction by 0.19--0.85 decades at measured $\kappa(X)\le2.3\times10^3$. This is less than one sampled change in guard-admitted degree. The predictor remains useful over the measured grids, while direct factorization and orthogonality checks determine acceptance.
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.85\textwidth]{regime_nonnormality.png}
+\caption{Empirical log-sensitivity of prediction error in decades against $\log_{10}\kappa(X)$. The identity line is the worst-case eigenvector-conditioning envelope; separate descriptive fits are shown for the sampled constant- and variable-coefficient families. The real Black--Scholes operator is a test point excluded from both fits.}
+\label{fig:nonnormality}
+\end{figure}
+
+Operator by operator, what the spectral prediction needs is normality; definiteness and separability are conveniences (\Cref{tab:operators}).
+
+\begin{table}[htbp!]
+\centering
+\caption{Which structural properties the spectral prediction of $s_{\max}$ actually needs.}
+\label{tab:operators}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Operator} & \textbf{Normal?} & \textbf{Definite?} & \textbf{Separable?} & \textbf{Spectral prediction} \\
+\midrule
+Laplacian & yes & PSD & yes & exact (closed form) \\
+shift $\mu$ & yes & indefinite & yes & exact ($\kappa(X) = 1$) \\
+correlation $\rho$ & yes & PSD & no  & exact (dense eigensolve) \\
+constant $\gamma$ advection & no & -- & yes & agrees within 1 degree \\
+$\rho + \gamma$ & no & -- & no  & agrees within 1 degree \\
+variable $\gamma$ advection & no & -- & no & differs by $>$1 degree \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The rows apply cumulative changes to one backbone. The Laplacian is a pure-diffusion Kronecker sum with a tridiagonal Toeplitz one-dimensional factor, meaning that each of its three diagonals is constant. The shift adds $\mu\mat{I}$ and moves the eigenvalues without changing the eigenvectors. The correlation row adds $c\,(\mat{D}\otimes\mat{D})$, and the advection rows add a skew-symmetric first difference with constant or position-dependent strength $\gamma$. The three structural properties are standard \cite{trefethen-1997,golub-vanloan-2013}. Normality, $\mat{A}\mat{A}^\top=\mat{A}^\top\mat{A}$, supplies an orthonormal eigenbasis. Definiteness places a symmetric operator's eigenvalues on one side of zero, and separability gives a Kronecker-sum factorization. Normality makes the Vandermonde prediction exact. Separability determines whether the spectrum comes from small factors or requires a dense eigensolve. The last column compares predicted and measured guard degrees; factorization and orthogonality provide the acceptance evidence.
+
+\subsection{Conditioning growth with asset dimension}\label{sec:dsweep}
+
+At fixed $d=3$, mesh refinement leaves $\kappa(X)$ approximately flat in the synthetic design because the cell P\'eclet number, the local convection-to-diffusion ratio, is held approximately constant \cite{hundsdorfer-verwer-2003}. Asset dimension is the more important growth axis. With one coupled axis pair, the operator factors as $\mat{A}_d=\mat{B}_{01}\oplus\mat{T}\oplus\cdots\oplus\mat{T}$. The Kronecker-product eigenvectors then make condition numbers multiply \cite{golub-vanloan-2013}:
+\begin{equation}
+\kappa(X) = \kappa(X_{01})\, \kappa(X_1)^{\,d-2}
+\qquad\Longrightarrow\qquad
+\log_{10}\kappa(X) = 0.40499\, d + 0.01422.
+\label{eq:tensor-law}
+\end{equation}
+The slope $0.404995=\log_{10}\kappa(X_1)$ comes from one small one-dimensional eigensolve, not from a fit over $d$. It reproduces the nondegenerate $d=2,3$ points to $3\times10^{-7}$. From $d=4$ onward, exact axis symmetries create repeated eigenvalues, and the dense eigensolver may choose different bases inside the same invariant subspace. Across eight symmetric permutations, the ratio between the largest and smallest dense $\kappa(X)$ is 3.84 at $d=4$ and 7.76 at $d=5$. The canonical Kronecker-factor value therefore provides the interpretable dimension trend (\Cref{tab:dsweep}).
+
+\begin{table}[htbp!]
+\centering
+\caption{Canonical vs.\ dense $\kappa(X)$ along the asset dimension.}
+\label{tab:dsweep}
+\begin{tabular}{@{}rrrrl@{}}
+\toprule
+$d$ & $N$ & \textbf{canonical} $\kappa(X)$ & \textbf{dense} $\kappa(X)$ & \textbf{spectrum} \\
+\midrule
+2 & 16 & 6.671 & 6.671 & simple (agree to $3\times 10^{-7}$) \\
+3 & 64 & 16.95 & 16.95 & simple (agree to $3\times 10^{-7}$) \\
+4 & 256 & 43.07 & 109.5 & repeated; dense basis-dependent \\
+5 & 1024 & 109.4 & $5.2\times 10^3$ & repeated; dense basis-dependent \\
+6 & 4096 & 278.1 & $3.7\times 10^4$ & repeated; dense basis-dependent \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Within this synthetic design, changing $\rho$ over the sampled range changes canonical conditioning by about as much as adding 1.7 assets, while dependence on $d$ remains geometric. The \emph{Krylov-block width} here is the number $q$ of columns---consecutive matrix powers---orthogonalized in one communication phase. A width selected at low asset count should not be reused at higher $d$ without new conditioning and accuracy measurements.
+
+For a pricer, two consequences matter. First, increasing asset count can require a narrower stable Krylov block even when the one-dimensional mesh is unchanged. Second, the full grid contains $n_1^d$ states and becomes impractical rapidly. Leentvaar and Oosterlee address this dimensional growth by combining solutions on smaller component grids to approximate the full-grid basket price, using coordinate transformations and grid stretching to retain accuracy through five assets \cite{leentvaar-oosterlee-2008}. Monte Carlo and quasi-Monte Carlo with dimension reduction provide another route at still higher dimension \cite{wang-2009,weng-wang-he-2017}. The tensor conditioning identity is specific to the synthetic one-pair coupling; the real basket operator couples all asset pairs and still requires direct numerical checks.
+
+\subsection{The horizontal mechanism}\label{sec:horizontal}
+
+Cutting the reduction count by 11--16$\times$ leaves Gram--Schmidt wall-clock time unchanged. Two measurements explain why.
+\begin{enumerate}
+
+\item \textbf{The reduction primitive was not the bottleneck.} The synchronization staircase in \Cref{fig:strong} and MGS's repeated global dot products made the primitive an obvious candidate constraint before the control was run. Replacing the naive barrier-plus-$O(P)$ scan with a binary tree improves bare all-reduce latency by 1.7$\times$ at $P=24$ (2.91\,$\mu$s to 1.70\,$\mu$s) but leaves Gram--Schmidt wall-clock within 5\% at every core count. The OpenMP barrier is already tree-structured, and the removed scan was not the dominant term.
+
+\item \textbf{Gram--Schmidt is vector-bound, not reduction-bound.} MGS re-reads column $\vect{V}_i$ once for every $j \ge i$, so $m(m+1)/2$ column reads at $8N$ bytes each. That quadratic is a \emph{bandwidth} term, and it is what the roll-off in the scaling study is actually made of.
+\end{enumerate}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.9\textwidth]{scaling_reduction.png}
+\caption{Gram--Schmidt wall-clock under the calibrated tree reduction vs.\ the $O(P)$ redundant scan it replaced ($n=61$, arm B; one contaminated $P=15$ launch, inflated across all kernels, is excluded). A 1.7$\times$ faster primitive leaves the kernel unchanged within 5\%.}
+\label{fig:reduction}
+\end{figure}
+
+Before the timed experiment, the calibrated map placed the production-resolution case at $\Rh=0.080\ll\theta_h=1$. Reduction latency was only 8\% of useful compute time between reductions, so the case did not enter puffin's upper-right opportunity region. The later null timing result is consistent with this pre-run placement. The unit line still marks equality of modeled terms, not a universal wall-clock crossover, because the ratio omits vector traffic, overlap, and implementation overhead.
+
+No measured or calibrated puffin configuration enters the upper-right opportunity region. Puffin is a single-NUMA socket, so its reduction tree crosses no boundary more expensive than a CCX. In the present model, reaching $\Rh=1$ while $\Rv>1$ would require a reduction cost roughly 25$\times$ above the calibrated range. This conclusion is specific to puffin's topology.
+
+\subsection{The vertical mechanism}\label{sec:vertical}
+
+The roofline in \Cref{sec:profile} identifies 4--8$\times$ of recoverable traffic for the spilled SpMV, but \eqref{eq:gain} is only a ceiling. It counts the bytes that tiling could save and omits the redundant halo arithmetic required to save them. A timed sweep therefore compares a cache-blocked matrix-powers kernel with the untiled baseline on grids spanning $\Rv=0.035$ to 86. Measured performance remains well below the modeled traffic ceiling (\Cref{tab:vertical}).
+
+The tiled arm never becomes bandwidth-bound, so the gap points to a kernel ceiling rather than a measured performance boundary. A controlled no-halo diagnostic skips ghost-region work. It cannot produce a valid basis or solver result and is used only to isolate the halo cost (\Cref{fig:mechanism}). At L2, where small panels have a large halo, removing it raises throughput from 1.17 to 2.13. The untiled kernel reaches 2.70 at the same $n_1=400$ point. Cache blocking recovers traffic, but the redundant halo arithmetic costs more than it saves. At the corresponding L3 point, removing the thinner halo changes throughput only from 2.06 to 2.11, compared with 2.76 for the matched untiled baseline. The persistent L3 cap is most consistent with gather latency from indirect column access.
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.95\textwidth]{regime_sweep_mechanism.png}
+\caption{The no-halo diagnostic. L2 tiling recovers toward baseline without the halo (the halo trade is the shortfall); L3 tiling barely moves (the cap is insensitive to cache residency).}
+\label{fig:mechanism}
+\end{figure}
+
+\begin{table}[htbp!]
+\centering
+\caption{Measured speedup of the tiled matrix-powers kernel against the modeled traffic ratio in the vertical sweep.}
+\label{tab:vertical}
+\begin{tabular}{@{}llccc@{}}
+\toprule
+\textbf{Pattern} & \textbf{Tile level} & $\Rv$ \textbf{(1 core)} & \textbf{Measured speedup} & \textbf{Modeled ratio} \\
+\midrule
+banded & L3 & 0.035--2.69 & \textbf{0.72--1.31$\times$} & 4--8$\times$ \\
+banded & L2 & 1.12--86.1 & \textbf{0.37--0.89$\times$} & 4--8$\times$ \\
+scattered & L3 & 0.035--2.69 & 1.00$\times$ (falls back to naive) & 4$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The scattered arm tests whether the geometric tile survives a change in storage order. The permutation destroys the regular band and halo layout, so the code falls back to the naive form and measures 1.00$\times$ by construction. Since the similarity transform keeps the spectrum and working set fixed, the comparison isolates sensitivity to storage order. Matrix-powers blocking is still possible for general sparse matrices. For example, the recursive algebraic coloring engine (RACE) uses breadth-first graph levels to recover spatial and temporal locality without assuming a geometric band layout \cite{alappat-2022}.
+
+Puffin's uncore counters require root access, so this experiment does not count DRAM traffic. The modeled bytes are instead reconciled against the roofline, which provides weaker evidence and is labeled accordingly.
+
+\subsection{Krylov-block width}\label{sec:swidth}
+
+The CPU regime instrument pins the Krylov block at the largest degree admitted by the implemented conditioning guard. The experiment then asks which limit arrives first as the block grows: numerical conditioning or shared-cache ghost capacity. A wider Krylov block gives fewer reductions and more powers per operator stream, but two independent ceilings restrict it.
+\begin{itemize}
+\item \textbf{Numerical conditioning.} $\kappa([\vect{v},\mat{A}\vect{v},\ldots,\mat{A}^{q-1}\vect{v}])$ grows rapidly with $q$. Beyond the heuristic $u^{-1/2}$ line, the current implementation narrows the Krylov block. This is a software policy, not the dimension-dependent sufficient condition in \eqref{eq:cholqr2-sufficient}.
+
+\item \textbf{Ghost capacity.} The halo grows with recurrence depth, so a wider Krylov block shrinks the panel until none fits and the tiling collapses.
+\end{itemize}
+
+The first limit depends on both the operator and the machine. On puffin, it also depends on the tiling level (\Cref{tab:swidth}).
+
+The instrument denotes by $s$ the highest power in $[\vect v,\mat A\vect v,\ldots,\mat A^s\vect v]$, so a degree-$s$ Krylov block contains $s+1$ columns. The sweep covers every integer $s=1,\ldots,39$, matching the common $m_{\max}$, and records the numerical and capacity stops independently. The numerical limit depends on grid refinement rather than cache level: $n_1=420$ admits $s=8$, whereas the broader discrete spectra at $n_1=480$ and 560 reach the conditioning guard at $s=6$. Agreement between L2 and L3 at fixed $n_1$ is therefore expected; only the capacity limit changes with tile level.
+\begin{table}[htbp!]
+\centering
+\captionsetup{width=0.9\textwidth}
+\caption{Observed Krylov-block degree limits over $s=1,\ldots,39$. The numerical column records the operational $u^{-1/2}$ guard rather than the dimension-dependent sufficient limit.}
+\label{tab:swidth}
+\begin{tabular}{@{}llccl@{}}
+\toprule
+\textbf{Tile level} & $n_1$ & \textbf{Numerical limit $s$} & \textbf{Capacity limit $s$} & \textbf{First observed limit} \\
+\midrule
+L3 & 420      & 8 & 23 & \textbf{heuristic guard} \\
+L3 & 480      & 6 & 21 & \textbf{heuristic guard} \\
+L3 & 560      & 6 & 19 & \textbf{heuristic guard} \\
+L2 & 420      & 8 & 1  & \textbf{capacity} \\
+L2 & 480      & 6 & 1  & \textbf{capacity} \\
+L2 & 560      & 6 & 1  & \textbf{capacity} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The distinction matters because the two limits respond to different changes. The numerical guard depends on how quickly the Krylov-block condition number grows with each power, which in turn depends on the polynomial basis.
+
+Newton and Chebyshev bases are standard approaches to moderating that growth \cite{bai-hu-reichel-1994,hoemmen-2010,carson-2015}. Where the guard binds first, a better-scaled basis may admit a wider Krylov block, reducing the number of orthogonalization phases and moving the solver leftward in reduction cost per useful column. It can also change the recurrence coefficients, Hessenberg assembly, matrix-powers work, and ghost traffic, so both $\Rv$ and $\Rh$ must be recomputed rather than carrying the monomial coordinates over unchanged. Where ghost capacity binds first, a better basis alone cannot enlarge the tile. None of these performance possibilities supplies a theorem for distributed CholeskyQR2 stability.
+
+\subsection{Placing the real operator on the map}\label{sec:map}
+
+The regime analysis becomes useful for the pricer once the real operator is placed from measurements rather than a synthetic surrogate. At every production grid in \Cref{tab:trajectory}, a placement-only run constructs the sparse Black--Scholes operator, measures the Krylov dimension $m$ at $h=0.01$ and tolerance $10^{-8}$, and evaluates $(\Rv,\Rh)$ with puffin's calibrated constants. Only the dense eigensolve diagnostics are omitted. They are not needed for the coordinates and are infeasible at the larger state dimensions.
+
+Grid refinement moves the coordinates in opposite directions. From $n=25$ to 120, $m$ rises from 9 to 41, and the larger basis and sparse operator drive $\Rv$ from 0.0356 to 7.377. During the same interval, useful local work grows faster than calibrated reduction latency, so $\Rh$ falls from 1.017 to 0.00464. The measured path starts in the horizontal-only region at $n=25$, passes through the region where neither mechanism is indicated for $n=30$--61, and enters the vertical-only region at $n=74$. For this CPU and operator, the map points the production experiment toward matrix-powers reuse. The timed vertical sweep then tests whether the implementation recovers that opportunity.
+
+The Krylov growth also has the expected scale. A descriptive fit over these production measurements gives $m\propto n^{0.95}$. Since $\lVert\mat A\rVert$ grows approximately as $n^2$, the trend $m\sim\sqrt{h\lVert\mat A\rVert}$ is consistent with the diagnostic scale for polynomial exponential approximation \cite{hochbruck-lubich-1997}. The operator is non-Hermitian and non-normal, so this is an explanation of the observed trend rather than a convergence theorem, and no extrapolation beyond $n=120$ is claimed.
+\begin{table}[htbp!]
+\centering
+\caption{Measured placement of the real Black--Scholes operator on puffin at $h=0.01$ and tolerance $10^{-8}$. The unit lines $\Rv=1$ and $\Rh=1$ define the named opportunity regions.}
+\label{tab:trajectory}
+\small
+\begin{tabular}{@{}rrrrrl@{}}
+\toprule
+$n$ & $N$ & $m$ & $\Rv$ & $\Rh$ & \textbf{Opportunity} \\
+\midrule
+25  & 15{,}625    & 9  & 0.0356 & 1.017   & horizontal only \\
+30  & 27{,}000    & 10 & 0.0636 & 0.623   & neither \\
+40  & 64{,}000    & 12 & 0.160  & 0.292   & neither \\
+50  & 125{,}000   & 15 & 0.336  & 0.171   & neither \\
+61  & 226{,}981   & 18 & 0.653  & 0.1057  & neither \\
+74  & 405{,}224   & 22 & \textbf{1.266} & 0.0671 & \textbf{vertical only} \\
+90  & 729{,}000   & 27 & 2.499  & 0.00863 & vertical only \\
+120 & 1{,}728{,}000 & 41 & 7.377 & 0.00464 & vertical only \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The transition at $n=74$ marks the first sampled grid where working-set pressure makes matrix-powers reuse worth testing. It does not promise a speedup. The timed sweep shows that halo arithmetic and access geometry can prevent the kernel from realizing the traffic opportunity. Puffin has no upper-right region in the calibrated range because reaching it would require a reduction roughly 25$\times$ more expensive.
+
+Collectives can reach costs of this order when they cross NUMA, socket, device, or node boundaries. This is why $s$-step and pipelined methods are often studied on distributed systems \cite{chronopoulos-gear-1989,demmel-2008,hoemmen-2010,carson-2015,ballard-2011,ghysels-vanroose-2014}. Synge has two nodes with two Tesla V100s per node, PCIe within each node, and a network fabric between nodes. It therefore provides several distinct communication boundaries. The next section recomputes the opportunity coordinates for this memory system and compares them with measurements, without assuming that the CPU unit lines transfer as GPU performance crossovers.

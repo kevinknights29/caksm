@@ -1,36 +1,16 @@
-"""
-The vertical crossover: does cache-blocked matrix-powers pay above R_v=1?
+"""The vertical crossover: does cache-blocked matrix-powers pay above R_v = 1?
 
-Consumes:
-  data/regime/regime_sweep.csv          (scripts/regime/regime_sweep.sh)  measured
-  data/regime/regime_sweep_nohalo.csv   (scripts/regime/regime_sweep.sh)  diagnostic
+The no-halo arm is a control, not a fault: it skips the halo entirely, so it
+computes the wrong basis and is reported for throughput only. Comparing it with
+the real tiled arm is what separates the cost of redundant halo arithmetic from
+a ceiling that cache residency cannot move.
 
-Produces:
-  regime_sweep.png            measured speedup vs R_v, plus a dashed roofline-projected
-                              curve (baseline time / modeled traffic ratio). The gap
-                              between the two lines is the finding: the model is not
-                              wrong, the kernel falls short of it on this hardware.
-  regime_sweep_mechanism.png  the no-halo diagnostic: baseline / real-tiled / no-halo
-                              GFLOP/s side by side, split by tile level, showing L2
-                              recovering and L3 staying flat.
+Produces regime_sweep_mechanism.png.
 
-Result: tiled/baseline speedup never approached the modeled traffic ratio at any swept
-grid (0.8-1.4x measured against a 4-8x model). Two independent fixes (a fair shared inner
-kernel, then breaking the row-dot's serial FMA chain) left the same diagnostic signature,
-gathered by a debug kernel that skips the halo entirely (wrong basis, throughput only):
+Source: data/regime/regime_sweep_nohalo.csv, produced by
+scripts/regime/regime_sweep.sh.
 
-  L2 (small panels, fat halo)   removing the halo raises GFLOP/s back toward baseline.
-                                The cache-blocking mechanism works: the panel is resident
-                                and the shortfall is the redundant halo arithmetic traded
-                                for DRAM traffic, a bad trade at these panel sizes rather
-                                than a broken kernel.
-  L3 (large panels, thin halo)  removing the halo barely moves GFLOP/s. Neither arm
-                                reaches a bandwidth-bound regime; both are capped by
-                                something insensitive to cache residency, most consistent
-                                with gather latency on the indirect column access.
-
-Nothing here is a counted DRAM measurement (puffin has no accessible uncore counters); the
-projected curve is an explicit model claim, labeled as such, never presented as data.
+  uv run scripts/plots/regime_sweep_plot.py
 """
 # /// script
 # dependencies = ["matplotlib", "numpy"]
@@ -42,152 +22,100 @@ import matplotlib
 matplotlib.use("Agg")
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
+import figstyle as fs
+import cpu_figstyle as cpu
 from figstyle import mark_better
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE.parent.parent / "data" / "regime"
-CSV_MEASURED = DATA / "regime_sweep.csv"
-CSV_NOHALO   = DATA / "regime_sweep_nohalo.csv"
+CSV_NOHALO = DATA / "regime_sweep_nohalo.csv"
+DPI = 300
 
-C_L3    = "#0F6E56"
-C_L2    = "#534AB7"
-C_SCAT  = "#D85A30"
-C_LIM   = "#993C1D"
-C_FAIL  = "#C0142C"
-C_PROJ  = "#999999"
-C_BASE  = "#5F5E5A"
-C_TILE  = "#0F6E56"
-C_NOHALO = "#C79A00"
+VARIANTS = (
+    ("gflops_baseline", "baseline", cpu.VARIANT_COLOR["baseline"], "-"),
+    ("gflops_tiled", "real tiled (with halo)", cpu.VARIANT_COLOR["tiled"], "-"),
+    # Named as the control it is. "Wrong basis" is accurate but reads as a
+    # defect in the kernel, when the point is that this arm deliberately skips
+    # the halo so the halo's cost can be priced.
+    ("gflops_nohalo", "no-halo control (throughput only)",
+     cpu.VARIANT_COLOR["no-halo"], (0, (4, 2))),
+)
 
 
 def load(path):
+    """Read one sweep CSV, or report it missing and return None."""
     if not path.exists():
-        print(f"(skip) {path} not found - run scripts/regime/regime_sweep.sh on puffin")
+        print(f"(skip) {path} not found - run scripts/regime/regime_sweep.sh")
         return None
-    with path.open() as f:
-        return list(csv.DictReader(f))
-
-
-def subset(rows, pattern, level):
-    out = [r for r in rows if r["pattern"] == pattern and r["tile_level"] == level]
-    out.sort(key=lambda r: float(r["rv_1core"]))
-    return out
-
-
-def plot_crossover(rows):
-    fig, ax = plt.subplots(figsize=(8.4, 5.6), constrained_layout=True)
-
-    arms = [("banded", "L3", C_L3, "o", "banded, tiled to L3"),
-            ("banded", "L2", C_L2, "s", "banded, tiled to L2"),
-            ("scattered", "L3", C_SCAT, "^", "scattered (no tiling)")]
-
-    labeled_fail = labeled_proj = False
-    for pattern, level, col, mk, lab in arms:
-        s = subset(rows, pattern, level)
-        if not s:
-            continue
-        rv = np.array([float(r["rv_1core"]) for r in s])
-        sp = np.array([float(r["speedup"]) for r in s])
-        ax.plot(rv, sp, "-", color=col, marker=mk, ms=5, lw=1.6, label=lab, zorder=3)
-
-        # Roofline projection: what a kernel that hit exactly its modeled DRAM-traffic cut
-        # would deliver. 1x where cache-resident (nothing to cut), the row's own
-        # traffic_ratio where tiling is modeled to apply. Not a measurement; see the
-        # module docstring and the title below.
-        if pattern == "banded":
-            proj = np.array([1.0 if float(r["rv_1core"]) < 1.0 else float(r["traffic_ratio"])
-                             for r in s])
-            ax.plot(rv, proj, "--", color=col, lw=1.1, alpha=0.55, zorder=2,
-                    label="roofline-projected (model, not measured)" if not labeled_proj else None)
-            labeled_proj = True
-
-        fail = [i for i, r in enumerate(s) if r["ai_gate_pass"] == "0"]
-        if fail:
-            ax.scatter(rv[fail], sp[fail], s=130, facecolor="none",
-                       edgecolor=C_FAIL, linewidth=1.7, zorder=5,
-                       label="AI-gate fail (see mechanism figure)" if not labeled_fail else None)
-            labeled_fail = True
-
-    ax.axvline(1.0, color=C_LIM, ls="--", lw=1.3, zorder=1,
-               label=r"$\theta_v = 1$ (working set fills the cache)")
-    ax.axhline(1.0, color="#bbb", ls=":", lw=1.0, zorder=1,
-               label="break-even (speedup = 1)")
-
-    ax.set_xscale("log")
-    ax.set_xlabel(r"$R_v$ (Arnoldi working set / one core's cache)")
-    ax.set_ylabel("tiled / baseline speedup")
-    ax.grid(alpha=0.25, lw=0.5, which="both")
-    ax.legend(fontsize=8, loc="upper left")
-    # The empty mid-right band: the measured curves hug break-even along the bottom and
-    # the projected curve rides high, leaving the middle clear.
-    mark_better(ax, "up", at=(0.955, 0.4))
-
-    out = HERE / "regime_sweep.png"
-    fig.savefig(out, dpi=200, bbox_inches="tight")
-    print(f"wrote {out}")
-
-    s = subset(rows, "banded", "L3")
-    if s:
-        worst = min(s, key=lambda r: abs(float(r["speedup"]) - 1.0))
-        best_sp = max(float(r["speedup"]) for r in s)
-        print(f"  measured: banded L3 speedup stays in [{min(float(r['speedup']) for r in s):.2f}, "
-              f"{best_sp:.2f}]x across the whole R_v sweep -- never approaches the modeled "
-              f"traffic ratio.")
+    with path.open() as handle:
+        return list(csv.DictReader(handle))
 
 
 def plot_mechanism(rows):
+    """Baseline, tiled and no-halo throughput, split by the tier tiled to."""
     if not rows:
         return
-    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.2), constrained_layout=True, sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 5.0),
+                             constrained_layout=True, sharey=True)
 
-    verdict_lines = []
-    for ax, level, col_tile in zip(axes, ("L3", "L2"), (C_L3, C_L2)):
-        s = [r for r in rows if r["tile_level"] == level]
-        s.sort(key=lambda r: float(r["rv_1core"]))
-        if not s:
+    verdicts = {}
+    for ax, level in zip(axes, ("L2", "L3")):
+        selected = [r for r in rows if r["tile_level"] == level]
+        selected.sort(key=lambda r: float(r["rv_1core"]))
+        if not selected:
             ax.set_visible(False)
             continue
-        rv = np.array([float(r["rv_1core"]) for r in s])
-        gb = np.array([float(r["gflops_baseline"]) for r in s])
-        gt = np.array([float(r["gflops_tiled"]) for r in s])
-        gn = np.array([float(r["gflops_nohalo"]) for r in s])
+        rv = np.array([float(r["rv_1core"]) for r in selected])
 
-        ax.plot(rv, gb, "-o", color=C_BASE, ms=4, lw=1.4, label="baseline")
-        ax.plot(rv, gt, "-o", color=col_tile, ms=4, lw=1.4, label="real tiled (with halo)")
-        ax.plot(rv, gn, "--o", color=C_NOHALO, ms=4, lw=1.4,
-                label="no-halo (DEBUG, wrong basis)")
+        # One hue per variant, the same hue in both panels. Taking the tiled
+        # arm's color from the panel's tier, as this figure once did, painted
+        # one series green on the left and blue on the right.
+        for field, label, color, linestyle in VARIANTS:
+            ax.plot(rv, np.array([float(r[field]) for r in selected]),
+                    marker="o", ms=4, lw=1.5, ls=linestyle, color=color,
+                    label=label, zorder=4)
 
-        # The residency verdict is the finding; print it for the caption rather than
-        # asserting it in the panel title.
-        verdicts = [r["cache_resident_verdict"] for r in s]
-        resident = verdicts.count("1") > len(verdicts) / 2 if verdicts else False
-        verdict_lines.append(
-            f"  {level}: {'halo removal recovers throughput (mechanism works)' if resident else 'GFLOP/s insensitive to halo (gather-latency ceiling)'}")
-        ax.set_title(f"tile-level = {level}", fontsize=10)
+        # The gap the halo costs, which is what the diagnostic is for.
+        tiled = np.array([float(r["gflops_tiled"]) for r in selected])
+        nohalo = np.array([float(r["gflops_nohalo"]) for r in selected])
+        ax.fill_between(rv, tiled, nohalo, color=cpu.VARIANT_COLOR["no-halo"],
+                        alpha=0.12, lw=0, zorder=1)
+        recovery = float(np.median(nohalo / tiled))
+        verdicts[level] = recovery
+
+        fs.panel_title(ax, f"Tiled to {level}")
         ax.set_xscale("log")
+        # The L3 panel spans well under a decade, so the decade ticks fall
+        # outside it entirely and it would carry no labels at all. Ticking on
+        # the leading digits puts labels inside every range, and plain numbers
+        # keep 1.4x10^0 off an axis that never leaves single figures.
+        ax.xaxis.set_major_locator(
+            ticker.LogLocator(base=10.0, subs=(1.0, 2.0, 3.0, 5.0, 7.0),
+                              numticks=12))
+        ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
+        ax.xaxis.set_minor_formatter(ticker.NullFormatter())
         ax.set_xlabel(r"$R_v$ (1 core)")
-        ax.grid(alpha=0.25, lw=0.5, which="both")
-        ax.legend(fontsize=8, loc="best")
-        mark_better(ax, "up", loc="lower right")
-
-    axes[0].set_ylabel("GFLOP/s")
+        fs.style_axes(ax)
+        if ax is axes[0]:
+            ax.set_ylabel("GFLOP/s")
+            fs.legend(ax, loc="upper left")
+            mark_better(ax, "up", loc="lower right")
 
     out = HERE / "regime_sweep_mechanism.png"
-    fig.savefig(out, dpi=200, bbox_inches="tight")
-    print(f"wrote {out}")
-    for line in verdict_lines:
-        print(line)
+    fig.savefig(out, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out.name}")
+    for level, recovery in verdicts.items():
+        print(f"  {level}: removing the halo moves throughput {recovery:.2f}x")
 
 
 def main():
-    measured = load(CSV_MEASURED)
-    if measured:
-        plot_crossover(measured)
     nohalo = load(CSV_NOHALO)
     if nohalo:
         plot_mechanism(nohalo)
-    if not measured and not nohalo:
+    else:
         print("Nothing to plot.")
 
 

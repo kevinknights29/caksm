@@ -10,7 +10,7 @@ Hue is the configuration, meaning participant count and grid, which is what
 separates these points; the marker is the correction arm. Only two-node
 topologies are plotted, since the calibration was recorded across two nodes.
 
-Sources: data/ca-integrator-weak, -exact-depth and -strong, plus
+Sources: data/ca-integrator-weak, -exact-depth-m39 and -strong-m39, plus
 data/ca-participant-calibration-quiet.
 
   uv run scripts/plots/ca_predicted_measured.py
@@ -189,9 +189,7 @@ def draw() -> str | None:
     parity.set_aspect("equal", adjustable="box")
     parity.set_xlabel("predicted communication-floor saving (ms/step)")
     parity.set_ylabel("measured cycle-time saving (ms/step)")
-    lib.panel_title(
-        parity, "Predicted against measured",
-        "above the line the solver saved more than the floor explains")
+    lib.panel_title(parity, "Predicted against measured")
     lib.style_axes(parity)
     # Only the marker needs a key; the hue is already named on the data.
     handles = [
@@ -228,9 +226,7 @@ def draw() -> str | None:
     for tick, (gpus, n, _) in zip(residual_ax.get_xticklabels(), slots):
         tick.set_color(config_color[(gpus, n)])
     residual_ax.set_ylabel("measured minus predicted (ms/step)")
-    lib.panel_title(
-        residual_ax, "Residual by configuration",
-        "the miss is set by participants and grid, not by the option")
+    lib.panel_title(residual_ax, "Residual by configuration")
     lib.style_axes(residual_ax, grid_axis="y")
     # The two hues are a direction, not two categories, so the key says which
     # direction each one is rather than repeating the color names.
@@ -254,10 +250,6 @@ def draw() -> str | None:
 
     best = min(points, key=lambda p: abs(p["residual"]))
     worst = max(points, key=lambda p: abs(p["residual"]))
-    lib.title(
-        fig,
-        "The calibrated floor predicts the saving at two participants, "
-        "not elsewhere")
     print(f"  closest {abs(best['residual']):.2f} ms/step at "
           f"{config_label[(best['gpus'], best['n'])]}; furthest "
           f"{abs(worst['residual']):.2f} ms/step at "

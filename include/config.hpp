@@ -32,6 +32,8 @@ struct Config {
     std::array<double, 3> weight = {1.0/3, 1.0/3, 1.0/3};
     std::array<double, 3> initial_prices = {100.0, 100.0, 100.0};
     double alpha = 2.85;
+    /// Start-up steps that ADI-HV-S runs at theta = 1 before switching to 0.5.
+    int hv_smoothing_steps = 2;
     EuropeanOptionType option_type = EuropeanOptionType::CALL_BASKET;
     bool benchmark = false;
     bool export_csv = false;
@@ -58,6 +60,8 @@ inline Config parse_args(std::span<const char* const> args)
         else if (arg == "--skip")         cfg.skip_methods.emplace_back(next());
         else if (arg == "--n")            cfg.n              = std::stoi(std::string(next()));
         else if (arg == "--steps")        cfg.temporal_steps = std::stoi(std::string(next()));
+        else if (arg == "--hv-smoothing-steps")
+            cfg.hv_smoothing_steps = std::stoi(std::string(next()));
         else if (arg == "--tol") {
             cfg.tol_ei = std::stod(std::string(next()));
             tol_given  = true;
@@ -75,10 +79,12 @@ inline Config parse_args(std::span<const char* const> args)
             std::println("       ./pricer --save-referee --n N --referee-dir DIR");
             std::println("  --steps M          temporal steps for CN, ADI-DR, ADI-HV, KSM-EI");
             std::println("  --tol T            KSM-EI convergence tolerance (default 1e-8)");
+            std::println("  --hv-smoothing-steps K  ADI-HV-S start-up steps at theta=1 "
+                         "(default 2)");
             std::println("  --export           write results to caksm_export_<timestamp>.csv");
             std::println("  --save-referee     compute ME referee and save to DIR; then exit");
             std::println("  --referee-dir DIR  load pre-computed referees from DIR");
-            std::println("  --skip METHOD      omit METHOD (CN, ADI-DR, ADI-HV, ME, KSM-EI)");
+            std::println("  --skip METHOD      omit METHOD (CN, ADI-DR, ADI-HV, ADI-HV-S, ME, KSM-EI)");
             std::exit(0);
         }
         else throw std::invalid_argument("Unknown flag: " + std::string(arg));

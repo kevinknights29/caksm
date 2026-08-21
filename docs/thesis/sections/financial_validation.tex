@@ -1,0 +1,155 @@
+\section{Financial validation}\label{sec:validation}
+
+The references in \Cref{sec:reference} make it possible to ask a total-error question: how far is the computed price from an independent financial price? The experiments refine domain width, grid spacing, and temporal resolution in that order so that each comparison isolates one source of error.
+
+\subsection{The working domain}\label{sec:validation-domain}
+
+Domain truncation is tested first because grid refinement cannot remove it. Each domain in \Cref{tab:fin-domain} rescales the base pair $(\alpha_0,n_0)=(4.275,61)$ to an exactly odd grid size. This keeps the central spacing matched to roundoff: the largest relative mismatch across the sweep is $4.9\times10^{-16}$. A change in spacing therefore cannot be mistaken for a domain effect.
+
+At the repository's historical $\alpha = 2.85$ the Basket price is $2.0\times10^{-2}$ below the reference, and about $1.6\times10^{-2}$ of that is domain truncation, which grid refinement cannot remove. At $\alpha = 4.275$ the remaining domain effect, measured between the two widest domains, is $1.0\times10^{-4}$ for the Basket and $4.5\times10^{-6}$ for the Rainbow, both an order of magnitude below the accompanying spatial error. This is the accepted domain for the validation experiments that follow.
+
+The Rainbow row at $\alpha=2.1375$ is a useful warning about \emph{cancellation error}. Its price is closer to the reference than at any wider domain only because the domain and spatial errors have opposite signs. The narrow domain is not more accurate, and choosing $\alpha$ from the smallest observed total error would select the wrong one.
+
+\begin{table}[htbp!]
+\centering
+\caption{Domain truncation at matched central spacing, smoothed HV-ADI at 200 time steps. Each grid size is the base pair rescaled, so $\Delta x$ is held fixed to roundoff across the sweep.}
+\label{tab:fin-domain}
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+& & \multicolumn{2}{c}{\textbf{Basket}} & \multicolumn{2}{c}{\textbf{Rainbow}} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+$\alpha$ & $n$ & Price & Error & Price & Error \\
+\midrule
+2.1375 & 31 & 13.136441 & $-1.08\times10^{-1}$ & 4.478207 & $+3.32\times10^{-2}$ \\
+2.85   & 41 & 13.224686 & $-2.02\times10^{-2}$ & 4.401538 & $-4.35\times10^{-2}$ \\
+3.5625 & 51 & 13.239449 & $-5.45\times10^{-3}$ & 4.397490 & $-4.75\times10^{-2}$ \\
+4.275  & 61 & 13.241017 & $-3.88\times10^{-3}$ & 4.397329 & $-4.77\times10^{-2}$ \\
+4.9875 & 71 & 13.241120 & $-3.78\times10^{-3}$ & 4.397325 & $-4.77\times10^{-2}$ \\
+\midrule
+\multicolumn{2}{@{}l}{Remaining domain effect} & \multicolumn{2}{c}{$1.03\times10^{-4}$} & \multicolumn{2}{c}{$4.50\times10^{-6}$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Spatial and temporal refinement}\label{sec:validation-refinement}
+
+At the accepted domain, both payoffs converge at second order and the two methods agree. \Cref{tab:fin-base} gives the base case. \Cref{fig:fin-convergence} shows both trends and draws the reference uncertainty as a floor, making it clear when a plotted error would only report noise.
+
+Prices approach the references from below, as Dang, Christara and Jackson also report \cite{dang-christara-jackson-2010}. Only the order and direction are compared: their linear domain and one-sided boundary scheme differ from the log-price grid and boundary closures used here, so the absolute error constants describe different discretizations.
+
+After the start-up region, the temporal trend is second order for both payoffs. This includes the Basket with its time-dependent boundary forcing, which the two HV stages treat differently and which a misplaced forcing term would affect first. Tightening the Krylov tolerance from $10^{-4}$ to $10^{-12}$ changes the Basket price by $5.0\times10^{-9}$ and the Rainbow price by $2.4\times10^{-9}$. Both changes are four orders of magnitude below the spatial error, so Krylov temporal error is negligible in this grid's budget.
+
+\subsection{Delta and diagonal Gamma}\label{sec:validation-greeks}
+
+Price convergence alone does not validate the extracted sensitivities. Their accuracy also depends on how derivatives are reconstructed from the discrete field. Both methods therefore extract price and Greeks from one solved field per configuration. Trilinear interpolation forms a weighted average of the eight corners of the surrounding cell and is linear in each log-price coordinate. Rebuilding a centered grid for every bumped spot would mix the finite-difference error with changes in the discretization, so every term is evaluated from the same field.
+
+Relative to the independent references, the Basket Delta errors are 0.011--0.020\%; the Rainbow Delta errors are 0.17--0.24\%. These are small multiples of the corresponding relative price errors, as expected for a first derivative extracted from a second-order field.
+
+The interpolated diagonal Gammas do not agree with the references, and the extraction method explains why. A trilinear interpolant is linear inside a cell, so its second difference collapses when the bump is smaller than the grid spacing. The estimate then becomes the grid's curvature scaled by the ratio of spacing to bump. Even a two percent spot bump spans less than one cell on the accepted grid. The departure follows this span. For the Rainbow, the relative excess falls from $0.21$ at $0.69$ cells to $0.12$ at $0.79$ and $0.023$ at $0.93$; for the Basket, it falls from $3.4$ at $0.40$ cells to $0.15$ at $0.93$, approximately as the reciprocal of the span.
+
+The grid-node stencil confirms that extraction is the source. Its Basket centers differ by 0.011--0.066\%, which lies inside their stated 0.05--0.22\% randomized-QMC uncertainty. They are consistent, not separately resolved. The Rainbow differences are 0.54--0.88\% against 0.13--0.30\% uncertainty. The stencil therefore resolves curvature at the reported accuracy, while trilinear extraction loses it (\Cref{tab:fin-base}). A sub-cell bump is unreliable, but a multi-cell bump introduces increasing $O(h^2)$ truncation error.
+
+\subsection{The equal-accuracy comparison}\label{sec:validation-equal}
+
+With total accuracy established, the next comparison asks how much each method costs at a common numerical target. Both methods run with one thread on the same host, domain, and grid, which isolates algorithmic work at the declared accuracy. GPU KSM-EI timings elsewhere in the thesis measure application throughput and are not included in the speedup ratios of \Cref{tab:fin-timing}.
+
+At a fixed grid both methods converge to the same semi-discrete answer, so the remaining question is how much temporal work each needs to reach a declared total price-error target. For each payoff the target is
+\[
+\max\!\left(1.05\,|V_{\mathrm{grid}}^{\mathrm{conv}}-V_{\mathrm{ref}}|,
+4\,\delta_{\mathrm{ref}}\right),
+\]
+where $V_{\mathrm{grid}}^{\mathrm{conv}}$ is that grid's temporally converged price and $\delta_{\mathrm{ref}}$ is the reference uncertainty. The first term gives the grid's unavoidable error a 5\% margin; the second prevents claiming resolution below the reference. Here the first term binds, giving $1.05(3.884\times10^{-3})=4.08\times10^{-3}$ for the Basket and $1.05(4.772\times10^{-2})=5.01\times10^{-2}$ for the Rainbow.
+
+Spatial and temporal errors are signed differences. A coarse time step can shift the price upward while the converged spatial solution lies below the reference. Their sum can then become smaller even though neither component improved. To avoid accepting this cancellation, the next finer temporal setting must also meet the target. Timings exclude shared PDE assembly and include method-specific setup; one warm-up is discarded and seven repetitions are measured.
+
+\subsection{The price and Greek error hierarchy}\label{sec:validation-budget}
+
+\Cref{tab:fin-budget} separates the price-scale error sources so that the limiting term is visible for each payoff. No claim is carried to more significant digits than its largest unresolved component supports.
+
+\begin{table}[htbp!]
+\centering
+\caption{Base case at the accepted domain $\alpha = 4.275$, $n = 121$, 200 time steps, Krylov tolerance $10^{-12}$. Greeks are quoted at the bump the reference sweep accepted for each one. The two solvers agree to every digit shown on every Greek, so the informative comparison is between the interpolated and node-stencil extractions of the same field.}
+\label{tab:fin-base}
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+\textbf{Payoff} & \textbf{Quantity} & \textbf{Bump} & \textbf{Reference} & \textbf{Uncert.} & \textbf{Interpolated} & \textbf{Node stencil} \\
+\midrule
+Basket  & Price          & ---   & 13.244899 & $6.8\times10^{-6}$ & 13.243948 & --- \\
+Basket  & $\Delta_1$     & 0.005 & 0.197035  & $2.4\times10^{-6}$ & 0.197056  & 0.197064 \\
+Basket  & $\Delta_2$     & 0.005 & 0.203353  & $2.5\times10^{-6}$ & 0.203384  & 0.203393 \\
+Basket  & $\Delta_3$     & 0.005 & 0.209812  & $3.1\times10^{-6}$ & 0.209853  & 0.209864 \\
+Basket  & $\Gamma_{11}$  & 0.050 & 0.001587  & $7.4\times10^{-7}$ & 0.001730  & 0.001588 \\
+Basket  & $\Gamma_{22}$  & 0.020 & 0.001551  & $3.4\times10^{-6}$ & 0.002435  & 0.001550 \\
+Basket  & $\Gamma_{33}$  & 0.020 & 0.001497  & $2.4\times10^{-6}$ & 0.003027  & 0.001498 \\
+\midrule
+Rainbow & Price          & ---   & 4.445018  & $<10^{-13}$ & 4.433070 & --- \\
+Rainbow & $\Delta_1$     & 0.005 & 0.105830  & $7.4\times10^{-6}$ & 0.105573 & 0.105570 \\
+Rainbow & $\Delta_2$     & 0.005 & 0.085719  & $4.7\times10^{-6}$ & 0.085556 & 0.085553 \\
+Rainbow & $\Delta_3$     & 0.005 & 0.072605  & $7.3\times10^{-6}$ & 0.072485 & 0.072482 \\
+Rainbow & $\Gamma_{11}$  & 0.020 & $-0.001931$ & $2.4\times10^{-6}$ & $-0.001976$ & $-0.001916$ \\
+Rainbow & $\Gamma_{22}$  & 0.010 & $-0.001757$ & $4.9\times10^{-6}$ & $-0.003064$ & $-0.001741$ \\
+Rainbow & $\Gamma_{33}$  & 0.020 & $-0.001505$ & $4.5\times10^{-6}$ & $-0.001825$ & $-0.001497$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The price rows carry the accepted errors of both solvers: $-9.51\times10^{-4}$ for the smoothed ADI and $-9.54\times10^{-4}$ for the Krylov integrator on the Basket, $-1.19\times10^{-2}$ and $-1.20\times10^{-2}$ on the Rainbow. Both are dominated by the spatial term, which the two methods share.
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.8\textwidth]{financial_validation.png}
+\caption{Absolute price error against central grid spacing at the accepted domain, for both payoffs and both methods, with second-order guides. The two methods agree to about $3\times10^{-5}$ at every grid, two orders below the spatial error they share, so their curves coincide at this scale. The sampled Basket reference's uncertainty is drawn as a floor; the analytic Rainbow reference is stable below $10^{-13}$ and its floor would lie ten decades below the plot.}
+\label{fig:fin-convergence}
+\end{figure}
+
+\begin{table}[htbp!]
+\centering
+\caption{Equal-accuracy comparison on puffin at $n = 61$, $\alpha = 4.275$, one thread, one discarded warm-up and seven measured repetitions. Timings exclude the shared PDE assembly and include all method-specific setup. A configuration is admissible only if its distance from the grid's converged price fits inside what the target does not already spend on that grid's spatial error, so neither row reaches its accuracy by cancellation.}
+\label{tab:fin-timing}
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+\textbf{Payoff} & \textbf{Method} & \textbf{Time steps} & \textbf{Price} & \textbf{Error} & \textbf{Median (s)} & \textbf{Range (s)} \\
+\midrule
+Basket  & ADI-HV-S & 50 & 13.241066 & $3.83\times10^{-3}$ & 3.090 & 3.076--3.095 \\
+Basket  & KSM-EI   & 1  & 13.240901 & $4.00\times10^{-3}$ & 0.533 & 0.532--0.536 \\
+\multicolumn{4}{@{}l}{\emph{Declared target} $4.08\times10^{-3}$} & \multicolumn{3}{l}{\emph{reference floor} $6.8\times10^{-6}$} \\
+\midrule
+Rainbow & ADI-HV-S & 50 & 4.397854  & $4.72\times10^{-2}$ & 2.936 & 2.914--2.944 \\
+Rainbow & KSM-EI   & 1  & 4.397355  & $4.77\times10^{-2}$ & 0.460 & 0.458--0.462 \\
+\multicolumn{4}{@{}l}{\emph{Declared target} $5.01\times10^{-2}$} & \multicolumn{3}{l}{\emph{reference floor} $<10^{-13}$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Krylov price is unchanged to thirteen digits from one to 400 time steps because this autonomous linear problem can be advanced by one exponential action to the stopping tolerance. Its cheapest admissible configuration therefore uses one time step. Under the same declared-error rule, the start-up-smoothed HV method needs 50 time steps. The resulting one-thread speedups are $5.80\times$ for the Basket and $6.39\times$ for the Rainbow, with non-overlapping timing ranges.
+
+\begin{table}[htbp!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\caption{Price-error hierarchy at the accepted working point. The largest unresolved component is the spatial discretization for both payoffs, so no price is claimed to more digits than it supports.}
+\label{tab:fin-budget}
+\begin{tabular}{@{}lrrp{5.2cm}@{}}
+\toprule
+\textbf{Component} & \textbf{Basket} & \textbf{Rainbow} & \textbf{Evidence} \\
+\midrule
+Independent reference   & $6.8\times10^{-6}$  & $<10^{-13}$ & QMC half-width; Johnson quadrature stability \\
+Domain truncation       & $1.0\times10^{-4}$  & $4.5\times10^{-6}$  & two widest matched-spacing domains \\
+Spatial discretization  & $2.9\times10^{-3}$  & $3.6\times10^{-2}$  & odd-grid refinement at the accepted domain \\
+ADI temporal            & $2.2\times10^{-6}$  & $2.4\times10^{-5}$  & smoothed HV time-step refinement, finest pair \\
+KSM temporal            & $5.3\times10^{-15}$ & $3.6\times10^{-15}$ & tolerance refinement and the defect calibration \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The hierarchy gives a clear next step. At the accepted working point, every term except spatial discretization is at least one order of magnitude smaller, and the Krylov temporal term is ten orders smaller. Improving either price requires grid refinement. The references are already at least two orders of magnitude more accurate than the current spatial result.
+
+The separate Greek hierarchy is in \Cref{tab:fin-base}: uncertainty combines QMC sampling and finite-difference truncation, node versus reference tests the spatial field, and interpolated versus node isolates extraction. Off-node Gamma is therefore not folded into the price-error table.
+
+\subsection{Scope of the validation}\label{sec:validation-limits}
+
+\Cref{sec:benchmark} validates time integration against the accurate exponential action of the same spatial operator; \Cref{sec:validation} validates the complete discretized price against an independent financial reference. Consequently, a $10^{-11}$ semi-discrete difference can coexist with a $10^{-3}$ total price error: the latter is dominated by the grid, not the time integrator.
+
+The Greek accuracy also depends on where it is extracted. Delta and node-stencil Gamma are limited principally by spatial discretization and agree with their references. An \emph{off-node} Gamma is the second spot derivative requested at a location that is not a grid node, so it must first be reconstructed from nearby field values. Trilinear interpolation has no within-cell curvature and cannot support that derivative below one cell. Higher-order tensor-product B-spline finite-element interpolation has been shown to deliver high-order convergence for option prices, Delta, and Gamma \cite{raahauge-2004}; adapting such an interpolant is the direct opportunity here. This thesis does not implement it and therefore makes no accuracy claim for off-node Gamma.
+
+The scope is three European assets under one model. The references assume lognormal terminal distributions with fixed correlation, the Johnson formula is specific to a call on the minimum, and the domain and grid were selected for these two contracts at these parameters. The results do not cover high-dimensional baskets, path dependence, early exercise, or stochastic volatility. The equal-accuracy table also compares two CPU methods inside this codebase; it is not a comparison of production pricing systems.

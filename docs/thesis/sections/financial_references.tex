@@ -1,0 +1,46 @@
+\subsection{Independent financial references}\label{sec:reference}
+
+The preceding benchmark isolates temporal error by comparing each integrator with an accurate solution of the same spatially discretized ODE. This is the right control for time stepping, but it does not test the grid, finite domain, boundary treatment, or interpolation. This section constructs independent financial references, which \Cref{sec:validation} then uses to measure total price error.
+
+The two references have different roles. Neither uses the PDE assembly, boundary closure, grid interpolation, Krylov code, or ADI solvers. Their implementation is a separate translation unit that links no part of the solver library, preventing a reference from inheriting the discretization error of the method it evaluates.
+
+\subsubsection{The analytical Rainbow price}\label{sec:reference-johnson}
+
+For a European call on the minimum of several lognormal assets there is a closed form \cite{johnson-1987}. Under the risk-neutral measure, $S_i(T) = S_i(0)\exp((r - \sigma_i^2/2)T + \sigma_i\sqrt{T}W_i)$ with $\mat{W}\sim\mathcal{N}(0,\mat{R})$, and separating the payoff into the exercise indicator and the identity of the minimum asset gives
+\begin{equation}
+C = \sum_{j} S_j(0)\,\Phi_3\!\big(d^{(1)}_j,\ \{d_{ij}\}_{i\neq j};\ \mat{R}^{(j)}\big)
+\;-\; K e^{-rT}\,\Phi_3\!\big(d^{(2)}_1, d^{(2)}_2, d^{(2)}_3;\ \mat{R}\big),
+\label{eq:johnson}
+\end{equation}
+where $d^{(2)}_j = (\log(S_j(0)/K) + (r - \sigma_j^2/2)T)/(\sigma_j\sqrt{T})$ and $d^{(1)}_j = d^{(2)}_j + \sigma_j\sqrt{T}$ are the usual Black--Scholes arguments, and, writing $\sigma_{ij}^2 = \sigma_i^2 + \sigma_j^2 - 2\rho_{ij}\sigma_i\sigma_j$ for the pairwise spread volatility,
+\[
+d_{ij} = \frac{\log(S_i(0)/S_j(0)) - \sigma_{ij}^2 T/2}{\sigma_{ij}\sqrt{T}}.
+\]
+The matrix $\mat{R}^{(j)}$ is the correlation of the constraint vector---asset $j$ finishes above the strike and below each other asset---after changing to the measure in which asset $j$ is the \emph{numeraire}, the strictly positive traded asset used as the unit in which all other values are expressed. For row order (strike for $j$, spread $i-j$, spread $k-j$), its diagonal is one and its upper-triangular entries are
+\[
+R^{(j)}_{01}=\frac{\rho_{ij}\sigma_i-\sigma_j}{\sigma_{ij}},\quad
+R^{(j)}_{02}=\frac{\rho_{kj}\sigma_k-\sigma_j}{\sigma_{kj}},\quad
+R^{(j)}_{12}=\frac{\sigma_i\sigma_k\rho_{ik}-\sigma_i\sigma_j\rho_{ij}-\sigma_k\sigma_j\rho_{kj}+\sigma_j^2}{\sigma_{ij}\sigma_{kj}}.
+\]
+
+Here $\Phi_3(a,b,c;\mat R)$ is the probability that three correlated standard-normal variables are simultaneously below $a$, $b$, and $c$. Its numerical evaluation is deterministic. The bivariate function $\Phi_2$ uses Genz's bounded-integral form of Plackett's identity, which describes how a multivariate-normal probability changes with correlation \cite{genz-1992}. For $\Phi_3$, a Cholesky factor $\mat L$, satisfying $\mat R=\mat L\mat L^{\mathsf T}$, transforms independent normals into correlated ones and permits conditioning on the first coordinate. Composite Gauss--Legendre quadrature evaluates the remaining one-dimensional integrals as weighted sums at polynomially accurate nodes. No random state is involved.
+
+\subsubsection{The randomized quasi-Monte Carlo reference}\label{sec:reference-qmc}
+
+The Basket has no closed form, so its reference samples the terminal distribution directly. A Sobol sequence is a deterministic low-discrepancy sequence that fills the unit cube more evenly than independent random points. The sampler maps its coordinates through the inverse normal CDF and a correlation Cholesky factor, evaluates the payoff, and discounts it. Points are drawn in powers of two starting at index zero. Truncating or concatenating a Sobol run would lose the balance required by the construction. Before applying the quantile, any coordinate on the closed boundary is moved to the nearest representable interior value.
+
+Uncertainty comes from a Matou\v{s}ek linear scramble followed by a uniform digital shift \cite{matousek-1998,owen-1997}. The scramble is an invertible binary transformation, and the shift XORs base-2 digits with independent random bits. Both are bijections of the dyadic digits and preserve uniformity. The estimator averages $R=16$ independently scrambled replicates and reports a nominal two-sided 95\% Student $t$ interval across their means \cite{lecuyer-lemieux-2002}. Sobol points inside one replicate are not treated as independent.
+
+With seed 25{,}378{,}095, the adaptive pilot evaluates $2^{14},\ldots,2^{22}$ points per scramble. Successive-level agreement and the half-width target accept $2^{21}=2{,}097{,}152$. The same replicates select the level and supply the interval, so the reported uncertainty is an empirical randomized-QMC estimate rather than guaranteed fixed-design coverage. The Greek pass reuses the accepted level and seed as common random numbers across spot bumps; it is not a fresh confirmation sample.
+
+\subsubsection{Delta and diagonal Gamma}\label{sec:reference-greeks}
+
+Prices alone do not validate risk sensitivities, so the independent references also provide Greeks, the derivatives of option value with respect to market inputs. Delta measures first-order sensitivity to an asset's spot price, while diagonal Gamma measures curvature with respect to that same spot. They are estimated here by centered differences on the same terminal draws:
+\[
+\Delta_i = \frac{V(S + h_i \vect{e}_i) - V(S - h_i \vect{e}_i)}{2 h_i},
+\qquad
+\Gamma_{ii} = \frac{V(S + h_i \vect{e}_i) - 2V(S) + V(S - h_i \vect{e}_i)}{h_i^2}.
+\]
+The terminal value is proportional to the initial spot, so a bumped path is the center path rescaled. The same Sobol points, scramble, normal draws, and lognormal factors serve all three evaluations exactly. Each derivative is formed inside its scramble before averaging, preserving the covariance from the common draws. A gate verifies that the bump machinery leaves every scramble's center bit for bit unchanged.
+
+Two error terms pull in opposite directions: sampling uncertainty shrinks as the bump widens, whereas the centered difference's $O(h^2)$ truncation error shrinks as it narrows. Adjacent bump sizes estimate the truncation coefficient, and the narrowest bump checks the expected second-order trend. The reported bump minimizes the estimated sum of sampling and truncation errors; the budget keeps the two contributions separate.

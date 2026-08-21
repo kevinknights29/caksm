@@ -52,8 +52,9 @@ struct Args {
     int steps = 100;
     int repeats = 1;
     double tol = 1.0e-8;
-    double single_state_tol = 0.0;
-    bool single_state_tol_set = false;
+    double single_state_atol = 0.0;
+    double single_state_rtol = 0.0;
+    bool single_state_tolerance_set = false;
     double expiry = 1.0;
     bool rainbow = false;
     std::vector<int> devices{0, 1};
@@ -63,6 +64,9 @@ struct Args {
     int profile_start = -1;
     int profile_steps = 5;
     std::string halo_backend = "auto";
+    std::string halo_overlap = "off";
+    std::string halo_memset = "full";
+    std::string shared_carveout = "default";
     bool require_mpi = false;
     bool memory_report = false;
     double memory_reserve = 0.10;
@@ -101,9 +105,13 @@ struct Args {
         else if (arg == "--steps") args.steps = std::stoi(next());
         else if (arg == "--repeats") args.repeats = std::stoi(next());
         else if (arg == "--tol") args.tol = std::stod(next());
-        else if (arg == "--single-state-tol") {
-            args.single_state_tol = std::stod(next());
-            args.single_state_tol_set = true;
+        else if (arg == "--single-state-atol" || arg == "--single-state-tol") {
+            args.single_state_atol = std::stod(next());
+            args.single_state_tolerance_set = true;
+        }
+        else if (arg == "--single-state-rtol") {
+            args.single_state_rtol = std::stod(next());
+            args.single_state_tolerance_set = true;
         }
         else if (arg == "--expiry") args.expiry = std::stod(next());
         else if (arg == "--devices") args.devices = parse_devices(next());
@@ -113,6 +121,9 @@ struct Args {
         else if (arg == "--profile-start") args.profile_start = std::stoi(next());
         else if (arg == "--profile-steps") args.profile_steps = std::stoi(next());
         else if (arg == "--halo-backend") args.halo_backend = next();
+        else if (arg == "--halo-overlap") args.halo_overlap = next();
+        else if (arg == "--halo-memset") args.halo_memset = next();
+        else if (arg == "--shared-carveout") args.shared_carveout = next();
         else if (arg == "--require-mpi") args.require_mpi = true;
         else if (arg == "--memory-report") args.memory_report = true;
         else if (arg == "--memory-reserve")
@@ -144,13 +155,16 @@ struct Args {
             std::printf(
                 "Usage: ./ca-integrator-2gpu [--n N] [--m M] [--s S]\n"
                 "       [--steps K] [--repeats K] [--tol T]\n"
-                "       [--single-state-tol T] [--expiry T]\n"
+                "       [--single-state-atol T] [--single-state-rtol T]\n"
+                "       [--expiry T]\n"
                 "       [--option basket|rainbow]\n"
                 "       [--devices 0,1] [--basis monomial] [--orth cholqr2]\n"
                 "       [--referee-dir DIR] [--single-gpu-state FILE]\n"
                 "       [--save-state FILE]\n"
                 "       [--profile-start STEP] [--profile-steps K]\n"
-                "       [--halo-backend auto|peer|nccl] [--require-mpi]\n"
+                "       [--halo-backend auto|peer|nccl]\n"
+                "       [--halo-overlap off|on] [--halo-memset full|shells]\n"
+                "       [--shared-carveout default|max] [--require-mpi]\n"
                 "       [--memory-report] [--memory-reserve F]\n"
                 "       [--arm as-measured|exact-depth]\n"
                 "       [--certificate immediate|deferred]\n"
@@ -170,12 +184,19 @@ struct Args {
     if (args.repeats < 1) throw std::invalid_argument("--repeats must be positive");
     if (!(args.tol > 0.0) || !std::isfinite(args.tol))
         throw std::invalid_argument("--tol must be finite and positive");
-    if (!args.single_state_tol_set)
-        args.single_state_tol = args.tol;
-    if (!(args.single_state_tol > 0.0)
-        || !std::isfinite(args.single_state_tol))
+    if (!args.single_state_tolerance_set)
+        args.single_state_atol = args.tol;
+    if (!(args.single_state_atol >= 0.0)
+        || !std::isfinite(args.single_state_atol))
         throw std::invalid_argument(
-            "--single-state-tol must be finite and positive");
+            "--single-state-atol must be finite and nonnegative");
+    if (!(args.single_state_rtol >= 0.0)
+        || !std::isfinite(args.single_state_rtol))
+        throw std::invalid_argument(
+            "--single-state-rtol must be finite and nonnegative");
+    if (args.single_state_atol == 0.0 && args.single_state_rtol == 0.0)
+        throw std::invalid_argument(
+            "one single-state tolerance must be positive");
     if (!(args.expiry > 0.0) || !std::isfinite(args.expiry))
         throw std::invalid_argument("--expiry must be finite and positive");
     if (args.profile_start < -1 || args.profile_start >= args.steps)
@@ -193,6 +214,16 @@ struct Args {
         && args.halo_backend != "nccl")
         throw std::invalid_argument(
             "--halo-backend must be auto, peer, or nccl");
+    if (args.halo_overlap != "off" && args.halo_overlap != "on")
+        throw std::invalid_argument(
+            "--halo-overlap must be off or on");
+    if (args.halo_memset != "full" && args.halo_memset != "shells")
+        throw std::invalid_argument(
+            "--halo-memset must be full or shells");
+    if (args.shared_carveout != "default"
+        && args.shared_carveout != "max")
+        throw std::invalid_argument(
+            "--shared-carveout must be default or max");
     if (!(args.memory_reserve >= 0.0 && args.memory_reserve < 1.0))
         throw std::invalid_argument("--memory-reserve must be in [0,1)");
     if (args.arm != "as-measured" && args.arm != "exact-depth")
@@ -214,25 +245,41 @@ struct Args {
     return args;
 }
 
-/// Zero each halo buffer and copy the owned planes into its middle.
+/// Initialize the required halo cells and copy the owned planes into the middle.
 ///
-/// The zeroing gives the outermost slabs their domain boundary: planes past the
-/// global edge are never received from anyone and must read as zero rather than
-/// as whatever the previous block left there.
+/// Full initialization is the historical control. Shell initialization writes
+/// only true domain boundaries; neighboring slabs overwrite every other ghost
+/// shell before a boundary kernel can consume it.
 void prepare_halos(
     std::vector<Slab>& slabs, const std::vector<const double*>& input,
-    int n, int depth)
+    int n, int depth, int world_gpus, bool shell_initialization)
 {
     const NvtxRange range("halo pack");
     const int64_t n2 = static_cast<int64_t>(n) * n;
     for (std::size_t rank = 0; rank < slabs.size(); ++rank) {
         Slab& slab = slabs[rank];
         CUDA_CHECK(cudaSetDevice(slab.device));
-        const std::size_t values =
-            static_cast<std::size_t>(slab.z_count + 2 * depth)
+        const std::size_t shell_values =
+            static_cast<std::size_t>(depth)
             * static_cast<std::size_t>(n2);
-        CUDA_CHECK(cudaMemsetAsync(
-            slab.halo, 0, values * sizeof(double), slab.stream));
+        if (!shell_initialization) {
+            const std::size_t values =
+                static_cast<std::size_t>(slab.z_count + 2 * depth)
+                * static_cast<std::size_t>(n2);
+            CUDA_CHECK(cudaMemsetAsync(
+                slab.halo, 0, values * sizeof(double), slab.stream));
+        } else {
+            if (slab.global_rank == 0) {
+                CUDA_CHECK(cudaMemsetAsync(
+                    slab.halo, 0, shell_values * sizeof(double), slab.stream));
+            }
+            if (slab.global_rank + 1 == world_gpus) {
+                CUDA_CHECK(cudaMemsetAsync(
+                    slab.halo
+                        + static_cast<int64_t>(depth + slab.z_count) * n2,
+                    0, shell_values * sizeof(double), slab.stream));
+            }
+        }
         CUDA_CHECK(cudaMemcpyAsync(
             slab.halo + static_cast<int64_t>(depth) * n2,
             input[rank], static_cast<std::size_t>(slab.local_N) * sizeof(double),
@@ -246,37 +293,53 @@ void prepare_halos(
 /// for single-node runs without peer access.
 void exchange_halos_nccl(
     std::vector<Slab>& slabs, const std::vector<const double*>& input,
-    int n, int depth, int world_gpus)
+    int n, int depth, int world_gpus, bool overlap)
 {
     const NvtxRange range("NCCL halo exchange");
     const int64_t n2 = static_cast<int64_t>(n) * n;
     const std::size_t count =
         static_cast<std::size_t>(depth) * static_cast<std::size_t>(n2);
+    if (overlap) {
+        for (Slab& slab : slabs) {
+            CUDA_CHECK(cudaSetDevice(slab.device));
+            CUDA_CHECK(cudaStreamWaitEvent(
+                slab.halo_stream, slab.halo_ready, 0));
+        }
+    }
     NCCL_CHECK(ncclGroupStart());
     for (std::size_t local_rank = 0; local_rank < slabs.size(); ++local_rank) {
         Slab& slab = slabs[local_rank];
         CUDA_CHECK(cudaSetDevice(slab.device));
+        const cudaStream_t stream =
+            overlap ? slab.halo_stream : slab.stream;
         if (slab.global_rank > 0) {
             NCCL_CHECK(ncclRecv(
                 slab.halo, count, ncclDouble, slab.global_rank - 1,
-                slab.comm, slab.stream));
+                slab.comm, stream));
             NCCL_CHECK(ncclSend(
                 input[local_rank], count, ncclDouble, slab.global_rank - 1,
-                slab.comm, slab.stream));
+                slab.comm, stream));
         }
         if (slab.global_rank + 1 < world_gpus) {
             NCCL_CHECK(ncclRecv(
                 slab.halo + static_cast<int64_t>(depth + slab.z_count) * n2,
                 count, ncclDouble, slab.global_rank + 1,
-                slab.comm, slab.stream));
+                slab.comm, stream));
             NCCL_CHECK(ncclSend(
                 input[local_rank]
                     + static_cast<int64_t>(slab.z_count - depth) * n2,
                 count, ncclDouble, slab.global_rank + 1,
-                slab.comm, slab.stream));
+                slab.comm, stream));
         }
     }
     NCCL_CHECK(ncclGroupEnd());
+    if (overlap) {
+        for (Slab& slab : slabs) {
+            CUDA_CHECK(cudaSetDevice(slab.device));
+            CUDA_CHECK(cudaEventRecord(
+                slab.halo_received, slab.halo_stream));
+        }
+    }
 }
 
 /// The same exchange as a direct device-to-device copy, when both GPUs are on
@@ -284,7 +347,7 @@ void exchange_halos_nccl(
 /// events are what keep the copies ordered against the compute stream.
 void exchange_halos_peer(
     std::vector<Slab>& slabs, const std::vector<const double*>& input,
-    int n, int depth)
+    int n, int depth, bool overlap)
 {
     const NvtxRange range("peer halo exchange");
     const int64_t n2 = static_cast<int64_t>(n) * n;
@@ -293,21 +356,35 @@ void exchange_halos_peer(
         * sizeof(double);
     Slab& low = slabs[0];
     Slab& high = slabs[1];
+    const cudaStream_t low_stream =
+        overlap ? low.halo_stream : low.stream;
+    const cudaStream_t high_stream =
+        overlap ? high.halo_stream : high.stream;
 
     CUDA_CHECK(cudaSetDevice(low.device));
+    if (overlap)
+        CUDA_CHECK(cudaStreamWaitEvent(
+            low_stream, low.halo_ready, 0));
     CUDA_CHECK(cudaStreamWaitEvent(
-        low.stream, high.halo_ready, 0));
+        low_stream, high.halo_ready, 0));
     CUDA_CHECK(cudaMemcpyPeerAsync(
         low.halo + static_cast<int64_t>(depth + low.z_count) * n2,
-        low.device, input[1], high.device, bytes, low.stream));
+        low.device, input[1], high.device, bytes, low_stream));
+    if (overlap)
+        CUDA_CHECK(cudaEventRecord(low.halo_received, low_stream));
 
     CUDA_CHECK(cudaSetDevice(high.device));
+    if (overlap)
+        CUDA_CHECK(cudaStreamWaitEvent(
+            high_stream, high.halo_ready, 0));
     CUDA_CHECK(cudaStreamWaitEvent(
-        high.stream, low.halo_ready, 0));
+        high_stream, low.halo_ready, 0));
     CUDA_CHECK(cudaMemcpyPeerAsync(
         high.halo, high.device,
         input[0] + static_cast<int64_t>(low.z_count - depth) * n2,
-        low.device, bytes, high.stream));
+        low.device, bytes, high_stream));
+    if (overlap)
+        CUDA_CHECK(cudaEventRecord(high.halo_received, high_stream));
 }
 
 enum class HaloPurpose {
@@ -326,7 +403,8 @@ enum class HaloPurpose {
 void build_matrix_powers(
     std::vector<Slab>& slabs, const std::vector<const double*>& input,
     int n, int steps, const GpuPdeOperator& op, double scale,
-    bool peer_halo, int world_gpus, HaloPurpose purpose,
+    bool peer_halo, bool overlap, bool shell_halo_initialization,
+    MpkSharedCarveout shared_carveout, int world_gpus, HaloPurpose purpose,
     ReductionStats& stats)
 {
     if (steps == 0) {
@@ -351,21 +429,73 @@ void build_matrix_powers(
         CUDA_CHECK(cudaSetDevice(slab.device));
         CUDA_CHECK(gpu_pde_matrix_powers(
             input.front(), slab.B, slab.ld, steps, op, slab.face_b, scale,
-            slab.stream));
+            slab.stream, shared_carveout));
         stats.operator_steps += steps;
         return;
     }
-    prepare_halos(slabs, input, n, steps);
-    if (peer_halo)
-        exchange_halos_peer(slabs, input, n, steps);
-    else
-        exchange_halos_nccl(slabs, input, n, steps, world_gpus);
-    for (Slab& slab : slabs) {
-        CUDA_CHECK(cudaSetDevice(slab.device));
-        CUDA_CHECK(gpu_pde_slab_matrix_powers(
-            input[static_cast<std::size_t>(slab.rank)],
-            slab.halo, slab.B, slab.ld, steps, op, slab.face_b, scale,
-            slab.z_begin, slab.z_count, slab.stream));
+    prepare_halos(
+        slabs, input, n, steps, world_gpus, shell_halo_initialization);
+    if (!overlap) {
+        if (peer_halo)
+            exchange_halos_peer(slabs, input, n, steps, false);
+        else
+            exchange_halos_nccl(
+                slabs, input, n, steps, world_gpus, false);
+        for (Slab& slab : slabs) {
+            CUDA_CHECK(cudaSetDevice(slab.device));
+            CUDA_CHECK(gpu_pde_slab_matrix_powers(
+                input[static_cast<std::size_t>(slab.rank)],
+                slab.halo, slab.B, slab.ld, steps, op, slab.face_b, scale,
+                slab.z_begin, slab.z_count, slab.stream, shared_carveout));
+        }
+    } else {
+        // Queue both interiors before the short peer copies. If communication
+        // is submitted first, it can finish before the host reaches either
+        // kernel launch and no device work is available to overlap it.
+        for (Slab& slab : slabs) {
+            CUDA_CHECK(cudaSetDevice(slab.device));
+            CUDA_CHECK(gpu_pde_slab_tail_powers(
+                input[static_cast<std::size_t>(slab.rank)],
+                slab.B, slab.ld, steps, op, scale, slab.z_count, slab.stream));
+            const int interior_begin = steps;
+            const int interior_end = slab.z_count - steps;
+            if (interior_begin < interior_end) {
+                CUDA_CHECK(gpu_pde_slab_matrix_powers_range(
+                    slab.halo, slab.B, slab.ld, steps, op, slab.face_b, scale,
+                    slab.z_begin, slab.z_count, interior_begin,
+                    interior_end - interior_begin, slab.stream,
+                    shared_carveout));
+            }
+        }
+
+        if (peer_halo)
+            exchange_halos_peer(slabs, input, n, steps, true);
+        else
+            exchange_halos_nccl(
+                slabs, input, n, steps, world_gpus, true);
+
+        for (Slab& slab : slabs) {
+            CUDA_CHECK(cudaSetDevice(slab.device));
+            const int interior_begin = steps;
+            const int interior_end = slab.z_count - steps;
+            CUDA_CHECK(cudaStreamWaitEvent(
+                slab.stream, slab.halo_received, 0));
+            if (interior_begin < interior_end) {
+                CUDA_CHECK(gpu_pde_slab_matrix_powers_range(
+                    slab.halo, slab.B, slab.ld, steps, op, slab.face_b, scale,
+                    slab.z_begin, slab.z_count, 0, steps, slab.stream,
+                    shared_carveout));
+                CUDA_CHECK(gpu_pde_slab_matrix_powers_range(
+                    slab.halo, slab.B, slab.ld, steps, op, slab.face_b, scale,
+                    slab.z_begin, slab.z_count, interior_end, steps,
+                    slab.stream, shared_carveout));
+            } else {
+                CUDA_CHECK(gpu_pde_slab_matrix_powers_range(
+                    slab.halo, slab.B, slab.ld, steps, op, slab.face_b, scale,
+                    slab.z_begin, slab.z_count, 0, slab.z_count, slab.stream,
+                    shared_carveout));
+            }
+        }
     }
     stats.operator_steps += steps;
 
@@ -634,9 +764,8 @@ void record_first_factor(std::vector<Slab>& slabs, int block)
  */
 /// CholQR2 with the certificate folded on the device and read once.
 ///
-/// Same decisions, one round-trip instead of three. Accepted only on evidence
-/// that it changes no certificate decision and produces bitwise-identical saved
-/// states, which is what the acceptance gate compares.
+/// Same decisions, one round-trip instead of three. The acceptance gate checks
+/// the decisions exactly and the saved state within its declared tolerance.
 [[nodiscard]] bool cholqr2_deferred(
     std::vector<Slab>& slabs, int block, double& kappa,
     bool agreement_strict, bool agreement_self_test, int step,
@@ -732,7 +861,10 @@ struct StepResult {
             const NvtxRange range("deep-halo matrix powers");
             build_matrix_powers(
                 slabs, input, n, steps, op, scale,
-                peer_halo, world_gpus, HaloPurpose::BlockBuild, stats);
+                peer_halo, options.halo_overlap,
+                options.shell_halo_initialization, options.shared_carveout,
+                world_gpus,
+                HaloPurpose::BlockBuild, stats);
         }
         project_twice(slabs, filled, block, stats);
 
@@ -769,7 +901,10 @@ struct StepResult {
                 const NvtxRange range("boundary operator transition");
                 build_matrix_powers(
                     slabs, input, n, 1, op, scale,
-                    peer_halo, world_gpus, HaloPurpose::Transition, stats);
+                    peer_halo, options.halo_overlap,
+                    options.shell_halo_initialization, options.shared_carveout,
+                    world_gpus,
+                    HaloPurpose::Transition, stats);
             }
             for (Slab& slab : slabs) {
                 CUDA_CHECK(cudaSetDevice(slab.device));
@@ -1135,8 +1270,12 @@ void allocate_slab(
         slab.global_rank == 0 ? slab.ld : slab.local_N;
 
     CUDA_CHECK(cudaStreamCreate(&slab.stream));
+    CUDA_CHECK(cudaStreamCreateWithFlags(
+        &slab.halo_stream, cudaStreamNonBlocking));
     CUDA_CHECK(cudaEventCreateWithFlags(
         &slab.halo_ready, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventCreateWithFlags(
+        &slab.halo_received, cudaEventDisableTiming));
     CUBLAS_CHECK(cublasCreate(&slab.blas));
     CUSOLVER_CHECK(cusolverDnCreate(&slab.solver));
     CUBLAS_CHECK(cublasSetStream(slab.blas, slab.stream));
@@ -1234,6 +1373,8 @@ void free_slab(Slab& slab)
     CUBLAS_CHECK(cublasDestroy(slab.blas));
     CUSOLVER_CHECK(cusolverDnDestroy(slab.solver));
     CUDA_CHECK(cudaEventDestroy(slab.halo_ready));
+    CUDA_CHECK(cudaEventDestroy(slab.halo_received));
+    CUDA_CHECK(cudaStreamDestroy(slab.halo_stream));
     CUDA_CHECK(cudaStreamDestroy(slab.stream));
     NCCL_CHECK(ncclCommDestroy(slab.comm));
 }
@@ -1436,6 +1577,10 @@ int main(int argc, char** argv)
         SolverOptions options;
         options.exact_depth = args.arm == "exact-depth";
         options.deferred_certificate = args.certificate == "deferred";
+        options.halo_overlap = args.halo_overlap == "on";
+        options.shell_halo_initialization = args.halo_memset == "shells";
+        options.shared_carveout = args.shared_carveout == "max"
+            ? MpkSharedCarveout::Maximum : MpkSharedCarveout::Default;
         // Columns 0 to s-1 reach the basis, so the recurrence needs s-1 steps and
         // a halo s-1 planes deep. The as-measured arm asks for one more of each.
         const int block_depth = options.exact_depth ? args.s - 1 : args.s;
@@ -1459,8 +1604,8 @@ int main(int argc, char** argv)
         const int world_gpus = local_gpus * mpi_size;
         // A one-slab run has no peer whose adaptive schedule can diverge. Keeping
         // the NCCL min/max and pinned verdict round-trips enabled there would turn
-        // the C2 one-GPU/one-slab acceptance comparison into a measurement of a
-        // vacuous correctness check.
+        // the one-GPU/one-slab comparison into a measurement of a vacuous
+        // correctness check.
         options.agreement =
             world_gpus > 1
                 ? (args.agreement == "strict" ? AgreementMode::Strict
@@ -1749,10 +1894,15 @@ int main(int argc, char** argv)
 
         const Eigen::VectorXd solution = result.state.head(sys.N);
         const double price = extract_price(solution, sys.grid, model.spot);
-        const double reference_price = args.rainbow ? 4.4450 : 13.2449;
+        // The four-decimal values published by Dang, Christara and Jackson. A
+        // historical comparison, not a reference: they carry no stated
+        // uncertainty. The accepted references, with theirs, are written by
+        // ./financial-reference into data/financial-validation.
+        const double historical_comparison_price =
+            args.rainbow ? 4.4450 : 13.2449;
         const double literature_error =
             model.expiry == 1.0
-                ? std::abs(price - reference_price)
+                ? std::abs(price - historical_comparison_price)
                 : std::numeric_limits<double>::quiet_NaN();
         const double tail_error = args.rainbow
             ? result.state.tail(3).norm()
@@ -1761,6 +1911,11 @@ int main(int argc, char** argv)
         const bool single_requested = !args.single_gpu_state.empty();
         const bool referee_requested = !args.referee_dir.empty();
         double single_error = std::numeric_limits<double>::quiet_NaN();
+        double single_scale = std::numeric_limits<double>::quiet_NaN();
+        double single_relative_error =
+            std::numeric_limits<double>::quiet_NaN();
+        double single_error_limit =
+            std::numeric_limits<double>::quiet_NaN();
         double ode_error = std::numeric_limits<double>::quiet_NaN();
         double referee_price_error =
             std::numeric_limits<double>::quiet_NaN();
@@ -1778,6 +1933,11 @@ int main(int argc, char** argv)
                             "single-GPU state size does not match distributed state");
                     single_error =
                         (result.state - single).lpNorm<Eigen::Infinity>();
+                    single_scale = std::max(
+                        1.0, single.lpNorm<Eigen::Infinity>());
+                    single_relative_error = single_error / single_scale;
+                    single_error_limit = args.single_state_atol
+                        + args.single_state_rtol * single_scale;
                 }
                 if (referee_requested) {
                     const Eigen::VectorXd referee = load_vector_file(
@@ -1874,9 +2034,14 @@ int main(int argc, char** argv)
             args.n, sys.N, args.steps, args.tol, args.m, args.s,
             args.expiry);
         std::printf(
-            "  arm=%s | certificate=%s | agreement check=%s\n",
+            "  arm=%s | certificate=%s | agreement check=%s | "
+            "halo overlap=%s | halo memset=%s | shared carveout=%s\n",
             args.arm.c_str(), args.certificate.c_str(),
-            agreement_mode_name(options.agreement));
+            agreement_mode_name(options.agreement),
+            options.halo_overlap ? "on" : "off",
+            options.shell_halo_initialization ? "shells" : "full",
+            options.shared_carveout == MpkSharedCarveout::Maximum
+                ? "max" : "default");
         std::printf(
             "  decomposition=%d slabs across %d node(s) | local GPUs/process=%d | reductions=NCCL/%s | halo=%s | recordable=%s\n",
             world_gpus, distinct_hosts,
@@ -1952,17 +2117,19 @@ int main(int argc, char** argv)
             modeled_collective_ms_per_step, modeled_halo_floor_ms_per_step);
         if (std::isfinite(literature_error))
             std::printf(
-                "  price: %.8f | Niesen-Wright error: %.6e\n",
+                "  price: %.8f | historical comparison error: %.6e\n",
                 price, literature_error);
         else
             std::printf(
-                "  price: %.8f | Niesen-Wright error: not defined for expiry=%.6g\n",
+                "  price: %.8f | historical comparison error: not defined for expiry=%.6g\n",
                 price, model.expiry);
         std::printf("  boundary-state error: %.6e\n", tail_error);
         if (single_requested)
             std::printf(
-                "  single-GPU state error: %.6e | limit=%.6e\n",
-                single_error, args.single_state_tol);
+                "  single-GPU state error: absolute=%.6e relative=%.6e "
+                "| scale=%.6e limit=%.6e\n",
+                single_error, single_relative_error,
+                single_scale, single_error_limit);
         else
             std::printf("  single-GPU state error: not requested\n");
         if (referee_requested)
@@ -1977,7 +2144,8 @@ int main(int argc, char** argv)
         const bool single_passed =
             !single_requested
             || (std::isfinite(single_error)
-                && single_error <= args.single_state_tol);
+                && std::isfinite(single_error_limit)
+                && single_error <= single_error_limit);
         const bool referee_passed =
             !referee_requested
             || (std::isfinite(ode_error) && ode_error <= args.tol);

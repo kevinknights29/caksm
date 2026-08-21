@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
@@ -518,6 +519,91 @@ inline double extract_price(const VecXd& u, const Grid& g,
         spot[d] = (int)idx;
     }
     return u[spot[2]*n*n + spot[1]*n + spot[0]];
+}
+
+/**
+ * @brief Trilinear interpolation of the value field at an arbitrary spot vector.
+ *
+ * Interpolation happens in the log-price coordinates the grid is uniform in,
+ * not in price, so a cell is a box and the weights are the usual products.
+ *
+ * Added beside extract_price rather than replacing it. The nearest-node lookup
+ * stays as it is because the historical benchmark numbers were produced with
+ * it, and a silent change of extraction rule would move every stored result.
+ * Financial validation uses this function instead, because a spot bump lands
+ * between nodes by construction and rebuilding a grid around each bump would
+ * change the discretization the Greek is supposed to be measured on.
+ *
+ * @param u  Option value field on the full grid, gid = i3*n*n + i2*n + i1.
+ * @param g  Grid description.
+ * @param s  Spot vector to interpolate at.
+ * @throws std::out_of_range if the spot lies outside the computational domain.
+ */
+inline double interpolate_price_trilinear(const VecXd& u, const Grid& g,
+                                           const std::array<double, 3>& s)
+{
+    const int n = g.n;
+    int base[3];
+    double weight[3];
+
+    for (int d = 0; d < 3; ++d) {
+        if (!(s[d] > 0.0))
+            throw std::out_of_range(
+                "interpolate_price_trilinear: spot must be positive");
+        const double x = std::log(s[d]);
+        const double low = g.x[d][0];
+        const double high = g.x[d][n - 1];
+        // A point on the far face is admissible; the tolerance only absorbs the
+        // rounding of log(exp(x)) at the face itself.
+        const double tolerance = 1.0e-12 * std::max(1.0, std::abs(high - low));
+        if (x < low - tolerance || x > high + tolerance)
+            throw std::out_of_range(
+                "interpolate_price_trilinear: spot lies outside the domain");
+
+        const double cell = std::clamp((x - low) / g.dx[d], 0.0,
+                                        static_cast<double>(n - 1));
+        int index = static_cast<int>(std::floor(cell));
+        if (index > n - 2) index = n - 2;
+        if (index < 0) index = 0;
+        base[d] = index;
+        weight[d] = std::clamp(cell - static_cast<double>(index), 0.0, 1.0);
+    }
+
+    double value = 0.0;
+    for (int c3 = 0; c3 < 2; ++c3) {
+        const double w3 = c3 == 0 ? 1.0 - weight[2] : weight[2];
+        for (int c2 = 0; c2 < 2; ++c2) {
+            const double w2 = c2 == 0 ? 1.0 - weight[1] : weight[1];
+            for (int c1 = 0; c1 < 2; ++c1) {
+                const double w1 = c1 == 0 ? 1.0 - weight[0] : weight[0];
+                const int gid = (base[2] + c3) * n * n
+                              + (base[1] + c2) * n
+                              + (base[0] + c1);
+                value += w1 * w2 * w3 * u[gid];
+            }
+        }
+    }
+    return value;
+}
+
+/**
+ * @brief Whether every base spot sits exactly on a grid node.
+ *
+ * Odd centered grids place the base spots on nodes, but that is a property of
+ * how the grid was built rather than of n alone, so the harness asserts it
+ * instead of assuming it.
+ */
+inline bool spots_are_grid_nodes(const Grid& g, const std::array<double, 3>& s0,
+                                  double tolerance = 1.0e-12)
+{
+    for (int d = 0; d < 3; ++d) {
+        Eigen::Index idx = 0;
+        const double gap =
+            (g.x[d].array() - std::log(s0[d])).cwiseAbs().minCoeff(&idx);
+        if (gap > tolerance * std::max(1.0, std::abs(std::log(s0[d]))))
+            return false;
+    }
+    return true;
 }
 
 /**

@@ -14,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -28,10 +29,28 @@
 #include "ca_arnoldi.hpp"
 #include "ca_integrator_memory.hpp"
 #include "ca_pricing_gpu.hpp"
+#include "ca_referee_scaled.hpp"
 #include "gpu_ca_arnoldi.cuh"
 #include "gpu_contention.cuh"
+#include "gpu_pde_matrix_powers_streamed.cuh"
 #include "gram_splitk.cuh"
 #include "trsm_tallskinny.cuh"
+
+// The solver indexes the state logically in the payoff initialization, the Gram
+// and norm reductions, the final vector assembly and the host copies. A padded
+// row stride would have to be threaded through all of them, and the padded arm
+// has to clear its profiling gate in the matrix-powers harness before that is
+// worth doing, so a pitched build of the solver is refused rather than run.
+static_assert(kMpkPitchAlignment == 1,
+              "the one-GPU solver indexes the state logically; see the pitched "
+              "arm gate in the matrix-powers harness");
+
+// Which swept configuration this binary was built as, supplied by the build
+// definition. The default describes an ordinary hand-built binary rather than
+// pretending one was not built.
+#ifndef CAKSM_MPK_CONFIGURATION
+#define CAKSM_MPK_CONFIGURATION "default"
+#endif
 
 #define CUDA_CHECK(call) do {                                                     \
     const cudaError_t e_ = (call);                                                \
@@ -79,12 +98,78 @@ enum class PolynomialBasis {
     Chebyshev
 };
 
+/// Which matrix-powers kernel the solver dispatches to.
+///
+/// Auto is the measured dispatch rather than a preference: the plane-streamed
+/// family was faster than the production tile at every grid from 61 upward and
+/// slower at 31, because a small grid cannot give it enough blocks to fill the
+/// device. Auto encodes that boundary and nothing else.
+enum class MpkFamilySelection {
+    FullVolume,
+    PlaneStreamed,
+    Auto
+};
+
 /// Behavior chosen on the command line and held fixed for the whole solve.
 struct SolverOptions {
     bool exact_depth = false;
     /// Recurrence steps per kernel launch; 0 dispatches the block in one launch.
     int mpk_chunk = kMpkPreferredS;
+    /// The promoted production policy. Small grids retain the accepted
+    /// full-volume kernel; grids from the measured boundary upward use the
+    /// plane-streamed family when its width fits the device.
+    MpkFamilySelection family = MpkFamilySelection::Auto;
+    /// Streamed segment length. Negative asks for the measured rule for the
+    /// grid; zero streams the whole extent, which was never the fastest choice.
+    int stream_height = -1;
+    /// The device's opt-in shared-memory limit, queried once. Needed because
+    /// admissibility is a property of the device, and a width the streamed
+    /// family cannot hold has to fall back rather than abort the run.
+    std::size_t shared_optin_bytes = 0;
 };
+
+/// Whether this block runs streamed under the selected policy.
+///
+/// Admissibility is checked here rather than left to the launch. The streamed
+/// footprint grows faster in the block width than the full-volume tile's does,
+/// so a wide Chebyshev block can exceed what the device will opt into; the
+/// accepted kernel always fits, and falling back to it is what keeps a width the
+/// streamed family cannot hold from ending the run.
+[[nodiscard]] bool use_streamed(
+    const SolverOptions& options, int n, int steps, bool chebyshev)
+{
+    bool selected = false;
+    switch (options.family) {
+        case MpkFamilySelection::FullVolume: selected = false; break;
+        case MpkFamilySelection::PlaneStreamed: selected = true; break;
+        case MpkFamilySelection::Auto:
+            selected = n >= kMpkStreamMinimumGrid;
+            break;
+    }
+    if (!selected || steps < 1 || steps > kMpkMaxS) return false;
+    const std::size_t needed = mpk_stream_shared_bytes(steps, chebyshev);
+    return needed > 0
+        && (options.shared_optin_bytes == 0
+            || needed <= options.shared_optin_bytes);
+}
+
+/// The segment length a streamed launch uses at this grid.
+[[nodiscard]] int stream_height_for(const SolverOptions& options, int n)
+{
+    return options.stream_height >= 0
+        ? options.stream_height
+        : mpk_stream_auto_height(n);
+}
+
+[[nodiscard]] const char* family_selection_name(MpkFamilySelection family)
+{
+    switch (family) {
+        case MpkFamilySelection::FullVolume: return "full-volume";
+        case MpkFamilySelection::PlaneStreamed: return "plane-streamed";
+        case MpkFamilySelection::Auto: return "auto";
+    }
+    return "unknown";
+}
 
 /// Command line, already validated by parse_args.
 struct Args {
@@ -106,6 +191,8 @@ struct Args {
     double memory_reserve = 0.10;
     std::string arm = "as-measured";
     int mpk_chunk = -1;
+    MpkFamilySelection family = MpkFamilySelection::Auto;
+    int stream_height = -1;
 };
 
 /// Lower-case name for the record. Matches the string the figures key on.
@@ -201,6 +288,22 @@ struct Args {
             a.memory_reserve = std::stod(next());
         else if (arg == "--arm") a.arm = next();
         else if (arg == "--mpk-chunk") a.mpk_chunk = std::stoi(next());
+        else if (arg == "--stream-height") a.stream_height = std::stoi(next());
+        else if (arg == "--kernel-family") {
+            const std::string family = next();
+            if (family == "full-volume")
+                a.family = MpkFamilySelection::FullVolume;
+            else if (family == "plane-streamed")
+                a.family = MpkFamilySelection::PlaneStreamed;
+            else if (family == "auto")
+                a.family = MpkFamilySelection::Auto;
+            else {
+                std::fprintf(
+                    stderr,
+                    "--kernel-family must be full-volume, plane-streamed or auto\n");
+                std::exit(EXIT_FAILURE);
+            }
+        }
         else if (arg == "--basis") {
             const std::string basis = next();
             if      (basis == "monomial")  a.basis = PolynomialBasis::Monomial;
@@ -247,8 +350,10 @@ struct Args {
                 "                       [--orth cholqr2|tsqr|bgs2]\n"
                 "                       [--referee-dir DIR] [--save-state FILE]\n"
                 "                       [--memory-report] [--memory-reserve F]\n"
-                "                       [--arm as-measured|exact-depth]\n"
-                "                       [--mpk-chunk S] [--device D]\n");
+                "                       [--arm as-measured|exact-depth|scaled-augmentation]\n"
+                "                       [--mpk-chunk S] [--device D]\n"
+                "                       [--kernel-family full-volume|plane-streamed|auto] (default: auto)\n"
+                "                       [--stream-height H]\n");
             std::exit(EXIT_SUCCESS);
         } else {
             std::fprintf(stderr, "Unknown flag: %s\n", arg.c_str());
@@ -287,8 +392,21 @@ struct Args {
         std::fprintf(stderr, "--memory-reserve must be in [0,1)\n");
         std::exit(EXIT_FAILURE);
     }
-    if (a.arm != "as-measured" && a.arm != "exact-depth") {
-        std::fprintf(stderr, "--arm must be as-measured or exact-depth\n");
+    if (a.arm != "as-measured" && a.arm != "exact-depth"
+        && a.arm != "scaled-augmentation") {
+        std::fprintf(
+            stderr,
+            "--arm must be as-measured, exact-depth, or scaled-augmentation\n");
+        std::exit(EXIT_FAILURE);
+    }
+    if (a.arm == "scaled-augmentation"
+        && (a.steps == 0 || a.rainbow
+            || a.basis != PolynomialBasis::Monomial
+            || a.orthogonalization != Orthogonalization::CholQr2)) {
+        std::fprintf(
+            stderr,
+            "--arm scaled-augmentation is a Basket monomial+CholQR2 "
+            "integrator postmortem only\n");
         std::exit(EXIT_FAILURE);
     }
     if (a.mpk_chunk < -1 || a.mpk_chunk > kMpkMaxS) {
@@ -814,10 +932,16 @@ __global__ void ca_assemble_newton_block(
 /// the chunked and single-launch dispatches have different ghost redundancy and
 /// launch counts, so which one ran is a configuration, not an implementation
 /// detail.
+///
+/// The two kernel families differ in what a chunk costs them. The full-volume
+/// Chebyshev path carries a third full tile and so chunks internally; the
+/// streamed one carries a third plane per level and does not chunk at all,
+/// which is why its Chebyshev branch takes the whole width in one launch.
 void build_polynomial_block(
     DeviceWorkspace& w, const double* input, double* output, int steps,
     const GpuPdeOperator& op, const double* face_b, double scale,
-    PolynomialBasis basis, double center, double half_width, int chunk_width)
+    PolynomialBasis basis, double center, double half_width, int chunk_width,
+    const SolverOptions& options)
 {
     if (steps == 0) {
         // A width-one block is the start vector itself: no recurrence, no ghosts.
@@ -827,10 +951,20 @@ void build_polynomial_block(
             cudaMemcpyDeviceToDevice, nullptr));
         return;
     }
+    const bool streamed = use_streamed(
+        options, op.n, steps, basis == PolynomialBasis::Chebyshev);
+    const int height = stream_height_for(options, op.n);
+
     if (basis == PolynomialBasis::Chebyshev) {
-        CUDA_CHECK(gpu_pde_chebyshev_basis(
-            input, output, w.ld, steps, op, face_b, scale,
-            center, half_width));
+        if (streamed) {
+            CUDA_CHECK(gpu_pde_stream_chebyshev_basis(
+                input, output, w.ld, steps, op, face_b, scale,
+                center, half_width, height));
+        } else {
+            CUDA_CHECK(gpu_pde_chebyshev_basis(
+                input, output, w.ld, steps, op, face_b, scale,
+                center, half_width));
+        }
         return;
     }
 
@@ -842,18 +976,25 @@ void build_polynomial_block(
     int offset = 0;
     while (offset < steps) {
         const int chunk = std::min(width, steps - offset);
+        double* column = output + static_cast<int64_t>(offset) * w.ld;
         if (basis == PolynomialBasis::Newton) {
             // offset is the degree within this Arnoldi block. Chunk boundaries
             // advance through the Leja sequence; append_ca_block starts every
             // later Arnoldi block again at shift zero with its new start vector.
-            CUDA_CHECK(gpu_pde_newton_basis(
-                current, output + static_cast<int64_t>(offset) * w.ld,
-                w.ld, chunk, op, face_b, scale,
-                w.newton_shifts + offset, half_width));
+            const double* shifts = w.newton_shifts + offset;
+            CUDA_CHECK(streamed
+                ? gpu_pde_stream_newton_basis(
+                      current, column, w.ld, chunk, op, face_b, scale,
+                      shifts, half_width, height)
+                : gpu_pde_newton_basis(
+                      current, column, w.ld, chunk, op, face_b, scale,
+                      shifts, half_width));
         } else {
-            CUDA_CHECK(gpu_pde_matrix_powers(
-                current, output + static_cast<int64_t>(offset) * w.ld,
-                w.ld, chunk, op, face_b, scale));
+            CUDA_CHECK(streamed
+                ? gpu_pde_stream_matrix_powers(
+                      current, column, w.ld, chunk, op, face_b, scale, height)
+                : gpu_pde_matrix_powers(
+                      current, column, w.ld, chunk, op, face_b, scale));
         }
         offset += chunk;
         if (offset < steps) {
@@ -890,7 +1031,7 @@ void build_polynomial_block(
         const int steps = options.exact_depth ? block - 1 : block;
         build_polynomial_block(
             w, w.start, w.B, steps, op, face_b, scale,
-            basis, center, half_width, options.mpk_chunk);
+            basis, center, half_width, options.mpk_chunk, options);
 
         if (filled > 0) {
             CUBLAS_CHECK(cublasDgemm(
@@ -970,9 +1111,18 @@ void build_polynomial_block(
         filled += block;
 
         if (filled < w.target) {
-            CUDA_CHECK(gpu_pde_matrix_powers(
-                w.V + static_cast<int64_t>(filled - 1) * w.ld,
-                w.B, w.ld, 1, op, face_b, scale));
+            // The next block's start vector, one application of the operator.
+            // It follows the same family as the block itself: a solver that
+            // built its basis with one kernel and its restart vector with the
+            // other would not be measuring either of them.
+            const double* previous =
+                w.V + static_cast<int64_t>(filled - 1) * w.ld;
+            CUDA_CHECK(use_streamed(options, op.n, 1, false)
+                ? gpu_pde_stream_matrix_powers(
+                      previous, w.B, w.ld, 1, op, face_b, scale,
+                      stream_height_for(options, op.n))
+                : gpu_pde_matrix_powers(
+                      previous, w.B, w.ld, 1, op, face_b, scale));
             CUDA_CHECK(cudaMemcpyAsync(
                 w.start, w.B + w.ld,
                 static_cast<std::size_t>(w.ld) * sizeof(double),
@@ -1304,6 +1454,63 @@ int main(int argc, char** argv)
         report_toolkit();
         report_contention(contention);
 
+        // The device's opt-in shared-memory ceiling, queried once. The streamed
+        // family's footprint grows with the block width faster than the accepted
+        // kernel's, so whether a width is admissible is a device fact and the
+        // dispatch needs it before it can choose.
+        cudaDeviceProp device_properties{};
+        CUDA_CHECK(cudaGetDeviceProperties(&device_properties, args.device));
+        const std::size_t shared_optin_bytes =
+            static_cast<std::size_t>(device_properties.sharedMemPerBlockOptin);
+
+        // Which matrix-powers configuration this binary was built on. The tile
+        // extents and the thread count are compile-time constants, so a solver
+        // timing cannot be attributed to a configuration from its command line;
+        // this line is how a run says which one it is.
+        {
+            // Reported at the requested block width, clamped to what the kernel
+            // instantiates. The staged volume and the shared request are
+            // properties of that width, so a width the dispatch would reject
+            // must not be used to describe the launch.
+            const int width = std::clamp(args.s, 1, kMpkMaxS);
+            // The family the dispatch resolves to at this grid, not the one
+            // requested: under auto they differ, and it is the resolved one
+            // that describes the launch a timing belongs to.
+            SolverOptions probe;
+            probe.family = args.family;
+            probe.stream_height = args.stream_height;
+            probe.shared_optin_bytes = shared_optin_bytes;
+            const bool streamed = use_streamed(
+                probe, args.n, width,
+                args.basis == PolynomialBasis::Chebyshev);
+            const int height = stream_height_for(probe, args.n);
+            const MpkLaunchRecord launch =
+                streamed
+                    ? mpk_stream_launch_record(
+                          args.n, width, height,
+                          args.basis == PolynomialBasis::Chebyshev)
+                    : mpk_launch_record(
+                          width, gpu_pde_matrix_powers_shared_bytes(width));
+            std::printf(
+                "MPK_LAUNCH configuration=%s requested_family=%s family=%s "
+                "tile_x=%d tile_y=%d "
+                "tile_z=%d stream_height=%d threads_per_block=%d shared_pad_x=%d "
+                "pitch_alignment=%d elide_basis_barrier=%d restrict=%d "
+                "interior_points=%lld staged_points=%lld "
+                "redundant_fraction=%.6f points_per_thread=%.6f "
+                "dynamic_shared_bytes=%zu\n",
+                CAKSM_MPK_CONFIGURATION, family_selection_name(args.family),
+                launch.family, launch.tile_x,
+                launch.tile_y, launch.tile_z, launch.stream_height,
+                launch.threads_per_block,
+                launch.shared_pad_x, launch.pitch_alignment,
+                launch.elide_basis_barrier, launch.use_restrict,
+                static_cast<long long>(launch.interior_points),
+                static_cast<long long>(launch.staged_points),
+                launch.redundant_fraction, launch.points_per_thread,
+                launch.dynamic_shared_bytes);
+        }
+
         // Resolve the arm and the matrix-powers dispatch it implies.
         SolverOptions options;
         options.exact_depth = args.arm == "exact-depth";
@@ -1318,6 +1525,9 @@ int main(int argc, char** argv)
                 : (args.mpk_chunk >= 0
                        ? args.mpk_chunk
                        : (options.exact_depth ? 0 : kMpkPreferredS));
+        options.family = args.family;
+        options.stream_height = args.stream_height;
+        options.shared_optin_bytes = shared_optin_bytes;
 
         if (args.memory_report) {
             if (contention.contended)
@@ -1339,7 +1549,16 @@ int main(int argc, char** argv)
                     model.alpha, args.rainbow);
         const GpuPdeOperator op =
             make_gpu_pde_operator(sys, model, args.rainbow);
-        const std::vector<double> face_b = make_gpu_face_b(sys, model);
+        std::vector<double> face_b = make_gpu_face_b(sys, model);
+        const bool scaled_augmentation =
+            args.arm == "scaled-augmentation";
+        ca_referee::AugmentationScaling augmentation_scaling;
+        if (scaled_augmentation) {
+            augmentation_scaling = ca_referee::make_augmentation_scaling(
+                ca_referee::face_forcing_1norm(face_b, args.n));
+            for (double& value : face_b)
+                value *= augmentation_scaling.eta;
+        }
         const int64_t ld = static_cast<int64_t>(sys.N) + 3;
         const double operator_scale =
             args.steps > 0
@@ -1369,7 +1588,11 @@ int main(int argc, char** argv)
         Eigen::VectorXd initial(ld);
         initial.setZero();
         initial.head(sys.N) = sys.u0;
-        if (!args.rainbow) initial.tail(3) = make_s_vec(0.0);
+        if (!args.rainbow) {
+            initial.tail(3) = make_s_vec(0.0);
+            if (scaled_augmentation)
+                initial.tail(3) *= augmentation_scaling.eta_inverse;
+        }
         Eigen::VectorXd start = initial;
         start.normalize();
 
@@ -1423,17 +1646,27 @@ int main(int argc, char** argv)
                 });
             const double solve_min_ms = runs.front().elapsed_ms;
             const double solve_max_ms = runs.back().elapsed_ms;
-            const IntegratorResult result =
+            IntegratorResult result =
                 runs[static_cast<std::size_t>(args.repeats / 2)];
+            // The solver advances the similarity-transformed state. Restore
+            // the three forcing coordinates before any validation or output so
+            // every reported quantity remains in the original representation.
+            if (scaled_augmentation)
+                result.state.tail(3) *= augmentation_scaling.eta;
             // Extract the price and the boundary tail. The tail has a known
             // closed form, so its error measures whether the augmentation was
             // propagated correctly rather than merely finitely.
             const Eigen::VectorXd solution = result.state.head(sys.N);
-            const double reference_price = args.rainbow ? 4.4450 : 13.2449;
+            // The four-decimal values published by Dang, Christara and Jackson.
+            // A historical comparison, not a reference: they carry no stated
+            // uncertainty. The accepted references, with theirs, are written by
+            // ./financial-reference into data/financial-validation.
+            const double historical_comparison_price =
+                args.rainbow ? 4.4450 : 13.2449;
             const double price = extract_price(solution, sys.grid, model.spot);
             const double literature_error =
                 model.expiry == 1.0
-                    ? std::abs(price - reference_price)
+                    ? std::abs(price - historical_comparison_price)
                     : std::numeric_limits<double>::quiet_NaN();
             const double tail_error = args.rainbow
                 ? result.state.tail(3).norm()
@@ -1482,6 +1715,15 @@ int main(int argc, char** argv)
             std::printf(
                 "  arm=%s | matrix-powers dispatch=%s\n",
                 args.arm.c_str(), dispatch.c_str());
+            if (scaled_augmentation)
+                std::printf(
+                    "  augmentation: exact power-of-two similarity | "
+                    "exponent=%d eta=%.17g | forcing 1-norm=%.17g "
+                    "scaled=%.17g\n",
+                    augmentation_scaling.exponent,
+                    augmentation_scaling.eta,
+                    augmentation_scaling.forcing_norm_1,
+                    augmentation_scaling.scaled_forcing_norm_1);
             if (args.basis == PolynomialBasis::Chebyshev)
                 std::printf(
                     "  spectral enclosure: [%.6e, %.6e] | center=%.6e | half-width=%.6e\n",
@@ -1531,11 +1773,11 @@ int main(int argc, char** argv)
                     host_syncs_per_step);
             if (std::isfinite(literature_error))
                 std::printf(
-                    "  price: %.8f | Niesen-Wright error: %.6e\n",
+                    "  price: %.8f | historical comparison error: %.6e\n",
                     price, literature_error);
             else
                 std::printf(
-                    "  price: %.8f | Niesen-Wright error: not defined for expiry=%.6g\n",
+                    "  price: %.8f | historical comparison error: not defined for expiry=%.6g\n",
                     price, model.expiry);
             std::printf("  boundary-state error: %.6e\n", tail_error);
             if (referee_requested) {

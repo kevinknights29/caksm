@@ -1,0 +1,44 @@
+\usection{Abstract}
+
+This thesis asks when two communication-avoiding (CA) mechanisms improve a
+Krylov exponential integrator for a three-asset Black--Scholes PDE.
+Matrix-powers tiling reduces data movement in sparse operator applications,
+while grouped orthogonalization reduces global reductions. Both mechanisms
+also add work, so they can lose when redundant arithmetic, halo exchanges, or
+local kernel costs outweigh the communication saved.
+
+A dimensionless regime map organizes this comparison. Its vertical coordinate
+$\Rv$ compares the Arnoldi working set with last-level-cache capacity, and its
+horizontal coordinate $\Rh$ compares reduction latency with useful computation
+between reductions. Both are computed before timing from the problem and
+independently calibrated machine constants. Their unit lines identify
+opportunities, not universal crossovers. Cache geometry, access efficiency,
+overlap, and topology still determine whether an implementation recovers the
+potential saving.
+
+Neither mechanism pays on the tested CPU. An 11--16$\times$ reduction-count
+decrease gives no wall-clock improvement at $\Rh=0.080$, and halo work and
+access geometry keep cache-blocked matrix powers below their traffic ceiling.
+On a V100, a plane-streamed schedule cuts executed instructions by
+2.88--3.45$\times$. A measured runtime rule retains full volume for $n<61$ and
+selects plane streaming from $n=61$ when shared memory permits. It improves the
+complete solver by 1.248$\times$ geometrically on four selection cases and
+1.239$\times$ on four active held-out cases, with worst cases of 1.204$\times$
+and 1.182$\times$; four fallback controls remain near parity.
+
+An equal-work distributed control removes an unused recurrence application
+from the $s=1$ path. The resulting algorithm-relative ratio is
+0.98--1.01$\times$ on one V100 and 1.78--1.80$\times$ on four V100s across two
+nodes. The gain is topology-specific: four V100s deliver only 0.89$\times$ the
+one-GPU performance at fixed width, and the best four-GPU configuration remains
+12--15\% slower than the best one-GPU configuration.
+
+The main contribution is a controlled framework for deciding when
+communication avoidance offers an opportunity and explaining why an
+implementation does or does not recover it. Independent Johnson and
+randomized quasi-Monte Carlo references establish total-price and Greek error,
+while measured orthogonality and an independent exponential-action referee
+provide the numerical acceptance evidence. The pricing application is used as
+a demanding case study; it is not presented as a state-of-the-art pricer.
+
+\textbf{Keywords:} Krylov subspace methods, communication avoidance, matrix exponential, option pricing, performance modeling

@@ -108,6 +108,72 @@ struct ScaledAugmentationResult {
     return norm;
 }
 
+/**
+ * Compute ||B||_1 directly from the matrix-free face-plane layout.
+ *
+ * The nine planes are stored as [direction][coefficient][n*n]. A physical
+ * boundary row can receive contributions from two or three upper faces, so
+ * summing the absolute values of the planes separately would not in general
+ * equal the norm of the assembled forcing matrix. The three disjoint loops
+ * below visit every upper-boundary row once and combine its active faces
+ * before taking the absolute value.
+ */
+[[nodiscard]] inline double face_forcing_1norm(
+    const std::vector<double>& face_forcing, int n)
+{
+    if (n < 1)
+        throw std::invalid_argument("face forcing grid must be positive");
+    const std::size_t n_size = static_cast<std::size_t>(n);
+    const std::size_t n2 = n_size * n_size;
+    if (face_forcing.size() != 9 * n2)
+        throw std::invalid_argument("face forcing has the wrong size");
+
+    double column_sums[3] = {0.0, 0.0, 0.0};
+    const auto value = [&](int direction, int coefficient, int i, int j, int k) {
+        const std::size_t face_index =
+            direction == 0
+                ? static_cast<std::size_t>(j) * n_size
+                    + static_cast<std::size_t>(k)
+                : (direction == 1
+                       ? static_cast<std::size_t>(i) * n_size
+                           + static_cast<std::size_t>(k)
+                       : static_cast<std::size_t>(i) * n_size
+                           + static_cast<std::size_t>(j));
+        return face_forcing[
+            static_cast<std::size_t>(direction * 3 + coefficient) * n2
+            + face_index];
+    };
+    const auto accumulate_row = [&](int i, int j, int k) {
+        for (int coefficient = 0; coefficient < 3; ++coefficient) {
+            double row_value = 0.0;
+            if (i == n - 1)
+                row_value += value(0, coefficient, i, j, k);
+            if (j == n - 1)
+                row_value += value(1, coefficient, i, j, k);
+            if (k == n - 1)
+                row_value += value(2, coefficient, i, j, k);
+            if (!std::isfinite(row_value))
+                throw std::runtime_error("non-finite Basket face forcing");
+            column_sums[coefficient] += std::abs(row_value);
+        }
+    };
+
+    // i-upper face, including its edges and corner.
+    for (int j = 0; j < n; ++j)
+        for (int k = 0; k < n; ++k)
+            accumulate_row(n - 1, j, k);
+    // Remaining j-upper rows (i-upper rows were already counted).
+    for (int i = 0; i < n - 1; ++i)
+        for (int k = 0; k < n; ++k)
+            accumulate_row(i, n - 1, k);
+    // Remaining k-upper rows (both earlier upper faces were already counted).
+    for (int i = 0; i < n - 1; ++i)
+        for (int j = 0; j < n - 1; ++j)
+            accumulate_row(i, j, n - 1);
+
+    return std::max({column_sums[0], column_sums[1], column_sums[2]});
+}
+
 [[nodiscard]] inline double augmented_forcing_1norm(
     const MatXd& forcing, double scale = 1.0)
 {
@@ -132,12 +198,14 @@ struct ScaledAugmentationResult {
  * below unit norm is left untouched rather than amplified.
  */
 [[nodiscard]] inline AugmentationScaling make_augmentation_scaling(
-    const MatXd& forcing)
+    double forcing_norm_1)
 {
     AugmentationScaling scaling;
-    scaling.forcing_norm_1 = forcing_1norm(forcing);
+    scaling.forcing_norm_1 = forcing_norm_1;
     if (scaling.forcing_norm_1 == 0.0)
         return scaling;
+    if (scaling.forcing_norm_1 < 0.0)
+        throw std::invalid_argument("Basket forcing 1-norm must be non-negative");
     if (!std::isfinite(scaling.forcing_norm_1))
         throw std::runtime_error("non-finite Basket forcing 1-norm");
 
@@ -156,6 +224,12 @@ struct ScaledAugmentationResult {
     scaling.scaled_forcing_norm_1 =
         scaling.eta * scaling.forcing_norm_1;
     return scaling;
+}
+
+[[nodiscard]] inline AugmentationScaling make_augmentation_scaling(
+    const MatXd& forcing)
+{
+    return make_augmentation_scaling(forcing_1norm(forcing));
 }
 
 /**

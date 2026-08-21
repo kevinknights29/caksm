@@ -33,13 +33,13 @@ DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-2gpu}"
 OUT_DIR="${OUT_DIR:-$ROOT/data/ca-integrator-strong}"
 REFEREE_ROOT="${REFEREE_ROOT:-$ROOT/data}"
 N="${N:-61}"
-M="${M:-24}"
+M="${M:-39}"
 STEPS="${STEPS:-100}"
 TOL="${TOL:-1e-8}"
 REPEATS="${REPEATS:-7}"
 ARMS="${ARMS:-as-measured exact-depth}"
 SRUN_MPI="${SRUN_MPI:-pmix}"
-STATE_ERROR_LIMIT="${STATE_ERROR_LIMIT:-6.13e-11}"
+STATE_RTOL="${STATE_RTOL:-1e-10}"
 
 for binary in "$SINGLE" "$DISTRIBUTED"; do
     if [[ ! -x "$binary" ]]; then
@@ -165,7 +165,7 @@ for arm in $ARMS; do
                 srun --nodes=1 --ntasks=1 --ntasks-per-node=1 --mpi=none \
                 "$DISTRIBUTED" --devices 0,1 "${common[@]}" \
                 --single-gpu-state "$state" \
-                --single-state-tol "$STATE_ERROR_LIMIT" \
+                --single-state-rtol "$STATE_RTOL" \
                 "${gate[@]+"${gate[@]}"}"
 
             run_rung "$arm" two_gpu_two_nodes "$option" "$width" \
@@ -173,7 +173,7 @@ for arm in $ARMS; do
                 --mpi="$SRUN_MPI" \
                 "$DISTRIBUTED" --require-mpi --devices 0 "${common[@]}" \
                 --single-gpu-state "$state" \
-                --single-state-tol "$STATE_ERROR_LIMIT" \
+                --single-state-rtol "$STATE_RTOL" \
                 "${gate[@]+"${gate[@]}"}"
 
             run_rung "$arm" four_gpu_two_nodes "$option" "$width" \
@@ -181,7 +181,7 @@ for arm in $ARMS; do
                 --mpi="$SRUN_MPI" \
                 "$DISTRIBUTED" --require-mpi --devices 0,1 "${common[@]}" \
                 --single-gpu-state "$state" \
-                --single-state-tol "$STATE_ERROR_LIMIT" \
+                --single-state-rtol "$STATE_RTOL" \
                 "${gate[@]+"${gate[@]}"}"
         done
     done
@@ -195,7 +195,7 @@ done
     echo "m=$M"
     echo "steps=$STEPS"
     echo "tol=$TOL"
-    echo "single_state_error_limit=$STATE_ERROR_LIMIT"
+    echo "single_state_rtol=$STATE_RTOL"
     echo "repeats=$REPEATS"
 } > "$OUT_DIR/settings.txt"
 
