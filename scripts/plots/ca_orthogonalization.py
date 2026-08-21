@@ -9,7 +9,7 @@ Cost and correctness are separate panels because they answer on different
 scales: cost as a bar chart, correctness as a strip against the solver's
 tolerance, which all three methods clear by five or more orders of magnitude.
 
-Source: data/ca-integrator-certificate/orthogonalization.csv, produced by
+Source: data/ca-integrator-certificate-m39/orthogonalization.csv, produced by
 scripts/regime/ca_certificate_sweep.sh.
 
   uv run scripts/plots/ca_orthogonalization.py
@@ -96,12 +96,6 @@ def draw() -> str | None:
             f"{len(incomplete) if grouped else len(expected_groups)} required "
             "identical-block group(s) lack all three idle seven-repeat method "
             f"measurements; {len(extra_groups)} unexpected group(s) are present")
-    records = [
-        grouped[key][method]
-        for key in sorted(expected_groups)
-        for method in ("cholqr2", "tsqr", "bgs2")
-    ]
-
     groups_in_order = sorted(expected_groups)
     rows = []
 
@@ -199,9 +193,6 @@ def draw() -> str | None:
 
     worst_ratio = max(r["cost_over_cheapest_on_block"] for r in rows)
     decades = math.log10(SOLVER_TOLERANCE / max(losses))
-    lib.title(
-        fig,
-        "CholQR2 has the lowest cost without compromising correctness")
     print(f"  alternatives cost up to {worst_ratio:.2f}x CholQR2; every loss "
           f"is at least {math.floor(decades):.0f} decades under the tolerance")
 

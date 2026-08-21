@@ -6,7 +6,8 @@ along the horizontal axis and the block width takes the hue. Columns are the two
 correction arms; rows are the two options, which differ by under a tenth of a
 millisecond at every rung.
 
-Source: data/ca-integrator-strong, produced by scripts/regime/ca_strong_scaling.sh.
+Source: data/ca-integrator-strong-m39, produced by
+scripts/regime/ca_strong_scaling.sh.
 
   uv run scripts/plots/ca_strong_scaling.py
 """
@@ -23,20 +24,12 @@ import ca_figlib as lib
 
 FIGURE = lib.Figure("strong_scaling")
 
-# What the two correction arms are, in words, for a reader who has not read the
-# correction spec. Both are the same solver on the same devices; they differ in
-# how deep the block build reaches.
+# The two correction arms. Both are the same solver on the same devices; they
+# differ in how deep the block build reaches, which the caption spells out.
 ARM_TITLE = {
     "as-measured": "As measured",
     "exact-depth": "Exact depth",
 }
-ARM_GLOSS = {
-    "as-measured": "the original build: one unused power, halos one plane deep "
-                   "too many",
-    "exact-depth": "the corrected build: every power consumed, halos no deeper "
-                   "than needed",
-}
-
 WIDTH_LABEL = {
     1: "s = 1 control: one reduction per step",
     4: "s = 4 avoiding: one reduction per four steps",
@@ -47,7 +40,7 @@ def draw() -> str | None:
     all_runs = lib.load_runs(lib.STRONG)
     if not all_runs:
         return FIGURE.blocked(
-            "data/ca-integrator-strong is absent; the report's strong-scaling "
+            "data/ca-integrator-strong-m39 is absent; the report's strong-scaling "
             "transcripts were never downloaded from Synge. Run "
             "scripts/regime/ca_strong_scaling.sh, or record section 3 of the "
             "final report as unreproduced.")
@@ -178,20 +171,20 @@ def draw() -> str | None:
             if row == 0 and column == 0 and len(narrow) == len(wide) == 4:
                 lib.label_series(
                     ax, ticks[2], narrow[2].cycle_ms, WIDTH_LABEL[1],
-                    ca.WIDTH_COLOR[1], dy=10.0, ha="center")
+                    ca.WIDTH_COLOR[1], dy=10.0, dx=-12.0, ha="right")
                 # Named at the rung where the s=4 curve is at its lowest and
                 # the band beneath it is empty. At the two-node rung the curve
                 # climbs away from its own label.
                 lib.label_series(
                     ax, ticks[1], wide[1].cycle_ms, WIDTH_LABEL[4],
-                    ca.WIDTH_COLOR[4], dy=-16.0, ha="center")
+                    ca.WIDTH_COLOR[4], dy=-16.0, dx=12.0, ha="left")
 
             ax.set_xticks(ticks)
             ax.set_xticklabels(
                 [label for _, label in lib.STRONG_TOPOLOGIES], fontsize=8.0)
             lib.style_axes(ax)
             if row == 0:
-                lib.panel_title(ax, ARM_TITLE[arm], ARM_GLOSS[arm])
+                lib.panel_title(ax, ARM_TITLE[arm])
             if row == len(options) - 1:
                 ax.set_xlabel("participating V100s")
             if column == 0:
@@ -221,9 +214,6 @@ def draw() -> str | None:
         return (f"{min(values):.2f}x" if max(values) - min(values) < 0.005
                 else f"{min(values):.2f}-{max(values):.2f}x")
 
-    lib.title(
-        fig,
-        "Communication avoiding pays only once the job spans participants")
     print(f"  one GPU {span((1, 1))}, four GPUs {span((4, 2))}; "
           f"options agree to {option_gap:.2f} ms/step")
 

@@ -6,11 +6,11 @@ same local volume. Dotted rules mark perfectly flat weak scaling. The second row
 carries the finding, that the s=1 control loses efficiency faster than s=4 as
 participants are added.
 
-An arm that left a Krylov cycle unconverged is drawn hollow and carries no
-efficiency.
+Only the final exact-depth arm is plotted. A stopped arm would be drawn hollow
+and carry no efficiency.
 
-Sources: data/ca-integrator-weak, and data/ca-integrator-strong for the
-efficiency denominator.
+Sources: data/ca-integrator-exact-depth-m39, and
+data/ca-integrator-strong-m39 for the efficiency denominator.
 
   uv run scripts/plots/ca_weak_scaling.py
 """
@@ -33,10 +33,13 @@ BAR = 0.28
 
 
 def draw() -> str | None:
-    runs = [r for r in lib.load_runs(lib.WEAK)
-            if r.cycle_ms is not None and r.world_gpus > 1]
+    runs = [r for r in lib.load_runs(lib.EXACT)
+            if r.cycle_ms is not None and r.world_gpus > 1
+            and r.arm == "exact-depth"]
     if not runs:
-        return FIGURE.blocked("data/ca-integrator-weak holds no transcripts")
+        return FIGURE.blocked(
+            "data/ca-integrator-exact-depth-m39 holds no distributed "
+            "exact-depth transcripts")
 
     # The horizontal axis is a ladder of participant counts, and each rung
     # carries the grid that keeps the local volume fixed. Naming the grid on the
@@ -62,7 +65,7 @@ def draw() -> str | None:
             run.world_gpus == 1
             and run.n == 61
             and run.cycle_ms is not None
-            and run.arm == "as-measured"
+            and run.arm == "exact-depth"
             and run.run_status == "passed"
             and run.recordable
             and run.repeats >= 7
@@ -77,7 +80,6 @@ def draw() -> str | None:
         else {}
     )
 
-    stopped_seen = False
     efficiency_by_width: dict[int, list[float]] = {1: [], 4: []}
 
     for column, option in enumerate(options):
@@ -119,7 +121,6 @@ def draw() -> str | None:
                     dy=8.0, size=7.8,
                     color=ca.C_STOPPED if run.stopped else ca.C_INK)
                 if run.stopped:
-                    stopped_seen = True
                     lib.label_value(
                         time_ax, x, run.cycle_ms, "stopped",
                         dy=19.0, size=7.2, color=ca.C_STOPPED)
@@ -181,7 +182,7 @@ def draw() -> str | None:
         else:
             efficiency_ax.text(
                 0.5, 0.5,
-                "blocked on data/ca-integrator-strong\n"
+                "blocked on data/ca-integrator-strong-m39\n"
                 "(the fixed-local-volume one-GPU baseline)",
                 ha="center", va="center", fontsize=9, color=ca.C_MUTED,
                 transform=efficiency_ax.transAxes)
@@ -206,10 +207,6 @@ def draw() -> str | None:
                 first.cycle_ms, WIDTH_LABEL[width], ca.WIDTH_COLOR[width],
                 dy=dy, ha="center", size=8.5)
 
-    lib.title(
-        fig,
-        "s=4 loses less weak-scaling efficiency than s=1 "
-        "as participants are added")
     if efficiency_by_width[1] and efficiency_by_width[4]:
         print(f"  across four participants: s=1 falls to "
               f"{min(efficiency_by_width[1]):.1f}%, "

@@ -346,8 +346,8 @@ def draw() -> str | None:
         tile_ax.bar(
             positions + offset, heights, bar, color=color,
             edgecolor="white", lw=0.6, zorder=3,
-            label=f"{tile}" + (" (production)" if tile == PRODUCTION_TILE
-                               else ""))
+            label=f"{tile}" + (
+                " (full-volume baseline)" if tile == PRODUCTION_TILE else ""))
         for x, height, redundancy in zip(
                 positions + offset, heights, redundancies):
             if height <= 0.0:
@@ -372,10 +372,7 @@ def draw() -> str | None:
             if (int(r["n"]), int(r["s"])) in probes))
     tile_ax.yaxis.set_major_formatter(
         ticker.FuncFormatter(lambda value, _: f"{value:.0%}"))
-    lib.panel_title(
-        tile_ax,
-        "No alternative geometry escapes: every tile stays under a tenth of "
-        "the DRAM roof at both probed points")
+    lib.panel_title(tile_ax, "Alternative tile geometries at the probed points")
     lib.style_axes(tile_ax, grid_axis="y")
     lib.legend(tile_ax, loc="upper left", ncol=len(tiles))
 
@@ -383,10 +380,6 @@ def draw() -> str | None:
     fractions = [
         float(r.get("nearest_roof_fraction") or 0.0) for r in production
     ] or [0.0]
-    lib.title(
-        fig,
-        "No tile geometry comes close to either roof: "
-        f"the matrix-powers kernel is {', '.join(verdicts)}")
     print(f"  production tile reaches {min(fractions):.1%} to "
           f"{max(fractions):.1%} of its nearest roof; alternatives reach "
           f"{min(rates(r)['dram'] for r in records if r['tile'] != PRODUCTION_TILE):.1%}"

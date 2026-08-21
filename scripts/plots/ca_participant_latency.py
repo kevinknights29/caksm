@@ -186,9 +186,6 @@ def draw() -> str | None:
         values = penalties.get(operation, [])
         return (f"{min(values):.2f}-{max(values):.2f}x" if values else "n/a")
 
-    lib.title(
-        fig,
-        "Adding participants taxes the all-reduce and leaves the halo alone")
     print(f"  doubling participants costs the all-reduce {band('allreduce')} "
           f"and the halo {band('halo')}")
 

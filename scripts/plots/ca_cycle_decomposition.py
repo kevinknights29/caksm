@@ -8,7 +8,7 @@ that account blocks the figure rather than being priced at the wrong depth.
 One panel per option, one bar per correction arm, each arm named under its own
 bar.
 
-Sources: data/ca-integrator-exact-depth and
+Sources: data/ca-integrator-exact-depth-m39 and
 data/ca-participant-calibration-quiet.
 
   uv run scripts/plots/ca_cycle_decomposition.py
@@ -232,10 +232,6 @@ def draw() -> str | None:
                 ax, loc="upper center", ncol=2,
                 handles=handles, labels=list(reversed(TERMS)))
 
-    lib.title(
-        fig,
-        "Communication takes a third of the s=1 cycle "
-        "and a tenth of the s=4 cycle")
     print(f"  communication share: s=1 {min(shares[1]):.0f}-"
           f"{max(shares[1]):.0f}%, s=4 {min(shares[4]):.0f}-"
           f"{max(shares[4]):.0f}%")
