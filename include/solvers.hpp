@@ -168,6 +168,144 @@
     return u;
 }
 
+// ADI Hundsdorfer-Verwer with start-up smoothing
+namespace adi_hv {
+
+/// The three directional LU factorizations for one (theta, step) pair.
+struct Factorization {
+    Eigen::SparseLU<SpMat> lu[3];
+    double theta = 0.0;
+    double step = 0.0;
+    bool ready = false;
+};
+
+/// Factorize I - theta*h*A_l for each direction l, in place.
+inline void factorize(Factorization& factors, const PDESystem& sys,
+                      const SpMat& identity, double theta, double h)
+{
+    for (int d = 0; d < 3; ++d) {
+        factors.lu[d].compute(identity - theta * h * sys.A_adi[d + 1]);
+        if (factors.lu[d].info() != Eigen::Success)
+            throw std::runtime_error("ADI-HV-S: sparse LU factorization failed");
+    }
+    factors.theta = theta;
+    factors.step = h;
+    factors.ready = true;
+}
+
+} // namespace adi_hv
+
+/**
+ * @brief Hundsdorfer-Verwer ADI with start-up smoothing (ADI-HV-S).
+ *
+ * The scheme is equations (14.1) to (14.5) of Dang, Christara and Jackson: an
+ * explicit predictor, three unidirectional implicit correctors, an explicit
+ * second-stage update, and three more unidirectional solves. Writing
+ * F(tau, v) = A v + b(tau) and F_l for its direction-l part,
+ *
+ *   v_0    = u + h F(tau_n, u),
+ *   v_l    = v_{l-1} + theta h (F_l(tau_{n+1}, v_l) - F_l(tau_n, u)),
+ *   w_0    = v_0 + (h/2) (F(tau_{n+1}, v_3) - F(tau_n, u)),
+ *   w_l    = w_{l-1} + theta h (F_l(tau_{n+1}, w_l) - F_l(tau_{n+1}, v_3)),
+ *   u_next = w_3.
+ *
+ * The boundary forcing enters the first stage as the difference
+ * b_l(tau_{n+1}) - b_l(tau_n) and cancels out of the second, where both terms
+ * sit at the same time level.
+ *
+ * theta is 1 for the first @p smoothing_steps steps and 0.5 afterwards. theta = 1
+ * damps the error the non-smooth payoff injects; theta = 0.5 is the more
+ * accurate choice once that transient is gone. Both HV stages are kept during
+ * start-up, so these steps are partially implicit rather than fully implicit.
+ * That is what distinguishes this from Rannacher smoothing, and it should not
+ * be described as Rannacher steps or as implicit Euler steps.
+ *
+ * The directional systems are factored once per distinct (theta, step) pair, so
+ * a uniform partition needs exactly two sets. The accumulated time can still
+ * leave the final step a rounding short of dt; that step is factored at its own
+ * size rather than solved with an operator built for a different one.
+ *
+ * @param smoothing_steps Start-up steps at theta = 1. Zero reproduces the
+ *                        unsmoothed solve_adi_hv, which is kept unchanged so
+ *                        historical ADI-HV results do not shift meaning.
+ */
+[[nodiscard]] inline VecXd solve_adi_hv_smoothed(const PDESystem& sys,
+                                                  const Config& cfg,
+                                                  int smoothing_steps)
+{
+    if (smoothing_steps < 0)
+        throw std::invalid_argument("ADI-HV-S: smoothing steps must not be negative");
+
+    const int N = sys.N;
+    const double dt = cfg.t_final / cfg.temporal_steps;
+    constexpr double sig_hv = 0.5;
+    constexpr double theta_startup = 1.0;
+    constexpr double theta_main = 0.5;
+
+    SpMat IN(N, N);
+    IN.setIdentity();
+
+    adi_hv::Factorization startup;
+    adi_hv::Factorization main_stage;
+    adi_hv::Factorization odd_step;
+    adi_hv::factorize(main_stage, sys, IN, theta_main, dt);
+    if (smoothing_steps > 0)
+        adi_hv::factorize(startup, sys, IN, theta_startup, dt);
+
+    const SpMat A_full = sys.A_adi[0] + sys.A_adi[1] + sys.A_adi[2] + sys.A_adi[3];
+
+    VecXd u = sys.u0;
+    double t_curr = 0.0;
+
+    for (int step = 0; step < cfg.temporal_steps; ++step) {
+        const double h        = std::min(dt, cfg.t_final - t_curr);
+        const double tau_curr = t_curr;
+        const double tau_next = tau_curr + h;
+        const double theta    = step < smoothing_steps ? theta_startup : theta_main;
+
+        adi_hv::Factorization* factors =
+            theta == theta_startup ? &startup : &main_stage;
+        if (h != dt) {
+            if (!odd_step.ready || odd_step.theta != theta || odd_step.step != h)
+                adi_hv::factorize(odd_step, sys, IN, theta, h);
+            factors = &odd_step;
+        }
+
+        const VecXd s_curr = make_s_vec(tau_curr);
+        const VecXd s_next = make_s_vec(tau_next);
+
+        // Stage 1: explicit predictor and three unidirectional correctors
+        VecXd F_curr = A_full * u + (sys.has_forcing ? VecXd(sys.B * s_curr)
+                                                      : VecXd::Zero(N));
+        VecXd Y = u + h * F_curr;
+        for (int l = 0; l < 3; ++l) {
+            VecXd rhs_l = Y - theta * h * (sys.A_adi[l + 1] * u);
+            if (sys.has_forcing)
+                rhs_l += theta * h * (sys.B_adi[l] * s_next - sys.B_adi[l] * s_curr);
+            Y = factors->lu[l].solve(rhs_l);
+        }
+        const VecXd u_stage1 = Y;
+
+        // Stage 2: HV correction, both forcing terms at the new time level
+        VecXd F_next = A_full * u_stage1 + (sys.has_forcing ? VecXd(sys.B * s_next)
+                                                             : VecXd::Zero(N));
+        VecXd Yt = (u + h * F_curr) + sig_hv * h * (F_next - F_curr);
+        for (int l = 0; l < 3; ++l) {
+            const VecXd rhs_l = Yt - theta * h * (sys.A_adi[l + 1] * u_stage1);
+            Yt = factors->lu[l].solve(rhs_l);
+        }
+        u = Yt;
+        t_curr += h;
+    }
+    return u;
+}
+
+/// The configured smoothed solver, for the benchmark and harness dispatch tables.
+[[nodiscard]] inline VecXd solve_adi_hv_s(const PDESystem& sys, const Config& cfg)
+{
+    return solve_adi_hv_smoothed(sys, cfg, cfg.hv_smoothing_steps);
+}
+
 // Matrix Exponential
 [[nodiscard]] inline VecXd solve_me(const PDESystem& sys, const Config& cfg)
 {

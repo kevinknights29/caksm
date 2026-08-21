@@ -193,7 +193,11 @@ struct GershgorinInterval {
 {
     GpuPdeOperator op;
     op.n = sys.grid.n;
-    op.N = sys.N;
+    // The physical field length, which equals sys.N in the packed layout and
+    // exceeds it when a padded row stride is compiled in. The augmented tail
+    // sits immediately after the field, so this is also the tail offset.
+    op.N = mpk_physical_length(sys.grid.n);
+    op.pitch_x = mpk_pitch_x(sys.grid.n);
     op.rainbow = rainbow ? 1 : 0;
     op.reaction = -model.rate;
     for (int d = 0; d < 3; ++d) {

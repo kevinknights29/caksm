@@ -91,6 +91,21 @@ enum class Precision { FP64, FP32 };
 }
 
 /**
+ * @brief Driver-reported capabilities that bound copy/compute overlap.
+ *
+ * These are queried by gpu-device-probe and transcribed only after the probe has run on the
+ * recorded device. A value of -1 is deliberately unknown; it must not be replaced by an
+ * architectural guess.
+ */
+struct GpuOverlapCapabilities {
+    int  async_engine_count;
+    int  concurrent_kernels;
+    int  device_overlap;
+    int  unified_addressing;
+    bool recorded;
+};
+
+/**
  * @brief A-priori hardware parameters for one GPU environment.
  *
  * @note The fields marked measured are not datasheet values and must not be guessed. Each comes
@@ -130,6 +145,7 @@ struct GpuMachine {
     int              node_count;           ///< nodes in the allocation
     std::string_view interconnect;         ///< "SYS", "NVLINK", "PIX", ... from nvidia-smi topo -m
     double           interconnect_bw_gbs;  ///< measured, p2p probe. 0 = not measured.
+    GpuOverlapCapabilities overlap;        ///< cudaGetDeviceProperties; -1 until recorded
 
     /**
      * Measured incremental cost of each rung [s]. Entry i is what rung i adds to rung i-1, not
@@ -193,6 +209,9 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
                         // GPU0 on NUMA 0 (CPU 0-19), GPU1 on NUMA 1 (CPU 20-39).
         7.3,            // measured, NCCL all-reduce bus bandwidth over SYS, 64 MiB payload
                         // (7.36 device-to-device, 7.00 across the fabric)
+        // Queried on both V100s of synge-n02 with gpu-device-probe; the devices agreed.
+        // These are capability flags, not evidence that a particular transfer overlapped.
+        {7, 1, 1, 1, true}, // async engines, concurrent kernels, overlap, unified addressing
         // Measured increments, which reduction_cost_s accumulates. WARP 0.422 us; BLOCK +0.368;
         // GRID +2.709 (from the two-kernel form at 5.54 us, which again beat cooperative
         // grid.sync() at 7.50 us); DEVICE_P2P +5.921 (11.46 us cumulative, minus the 5.539 us
@@ -246,6 +265,7 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         1,
         "NONE",         // single device: no P2P tier, no node tier
         0.0,            // interconnect: unreachable on one device
+        {-1, -1, -1, -1, false}, // gpu-device-probe has not yet been archived on Puffin
         // Measured increments, calibrate-gpu-reduction. WARP 2.834 us; BLOCK +3.839; GRID
         // +2.531 (from the two-kernel form at 11.59 us, which beat cooperative grid.sync() at
         // 18.8 us, so the model carries the form a real implementation would call).

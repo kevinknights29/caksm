@@ -21,6 +21,14 @@
 
 #include "gpu_pde_matrix_powers.cuh"
 
+// The slab layout is packed: a plane is n x n and a halo message is a whole
+// number of planes. A padded row stride would change what a neighbor exchange
+// sends and is not admitted here until the one-GPU pitched arm has passed its
+// numerical and profiling gates, so building this path pitched is an error
+// rather than a silently different message size.
+static_assert(kMpkPitchAlignment == 1,
+              "the distributed halo layout is packed; see the pitched arm gate");
+
 /**
  * @brief Build columns 0, ..., S of the local basis from one staged halo, S fixed at compile time.
  *
@@ -37,31 +45,39 @@
  */
 template <int S>
 __global__ void mpk_slab_kernel(
-    const double* halo_start, double* B, int64_t ld,
-    GpuPdeOperator op, const double* face_b, double scale,
-    int z_begin, int z_count)
+    const double* CAKSM_MPK_RESTRICT halo_start,
+    double* CAKSM_MPK_RESTRICT B, int64_t ld,
+    GpuPdeOperator op, const double* CAKSM_MPK_RESTRICT face_b,
+    double scale,
+    int z_begin, int z_count, int output_z_begin, int output_z_count)
 {
     static_assert(S >= 1 && S <= kMpkMaxS);
-    constexpr int ex = kMpkBlockX + 2 * S;
+    constexpr int logical_ex = kMpkBlockX + 2 * S;
+    constexpr int ex = logical_ex + kMpkSharedPadX;
     constexpr int ey = kMpkBlockY + 2 * S;
     constexpr int ez = kMpkBlockZ + 2 * S;
-    constexpr int volume = ex * ey * ez;
+    constexpr int logical_volume = logical_ex * ey * ez;
+    constexpr int shared_volume = ex * ey * ez;
 
     extern __shared__ double storage[];
     double* in = storage;
-    double* out = storage + volume;
+    double* out = storage + shared_volume;
 
     const int tid = static_cast<int>(threadIdx.x);
     const int ox = static_cast<int>(blockIdx.x) * kMpkBlockX;
     const int oy = static_cast<int>(blockIdx.y) * kMpkBlockY;
-    const int oz = static_cast<int>(blockIdx.z) * kMpkBlockZ;
+    const int oz = output_z_begin
+        + static_cast<int>(blockIdx.z) * kMpkBlockZ;
+    const int output_z_end = output_z_begin + output_z_count;
     const int n = op.n;
     const int64_t n2 = static_cast<int64_t>(n) * n;
 
-    for (int q = tid; q < volume; q += static_cast<int>(blockDim.x)) {
-        const int lx = q % ex;
-        const int ly = (q / ex) % ey;
-        const int lz = q / (ex * ey);
+    for (int q = tid; q < logical_volume;
+         q += static_cast<int>(blockDim.x)) {
+        const int lx = q % logical_ex;
+        const int ly = (q / logical_ex) % ey;
+        const int lz = q / (logical_ex * ey);
+        const int shared_q = mpk_index(lx, ly, lz, ex, ey);
         const int i = ox + lx - S;
         const int j = oy + ly - S;
         const int local_k = oz + lz - S;
@@ -70,11 +86,11 @@ __global__ void mpk_slab_kernel(
         if (i >= 0 && i < n && j >= 0 && j < n
             && global_k >= 0 && global_k < n
             && halo_k >= 0 && halo_k < z_count + 2 * S) {
-            in[q] =
+            in[shared_q] =
                 halo_start[static_cast<int64_t>(halo_k) * n2
                            + static_cast<int64_t>(j) * n + i];
         } else {
-            in[q] = 0.0;
+            in[shared_q] = 0.0;
         }
     }
     __syncthreads();
@@ -87,7 +103,8 @@ __global__ void mpk_slab_kernel(
         const int i = ox + tx;
         const int j = oy + ty;
         const int local_k = oz + tz;
-        if (i < n && j < n && local_k < z_count) {
+        if (i < n && j < n && local_k >= output_z_begin
+            && local_k < output_z_end && local_k < z_count) {
             const int64_t gid =
                 static_cast<int64_t>(local_k) * n2
                 + static_cast<int64_t>(j) * n + i;
@@ -98,16 +115,18 @@ __global__ void mpk_slab_kernel(
     const int64_t local_N = static_cast<int64_t>(z_count) * n2;
     for (int step = 1; step <= S; ++step) {
         const int lo = step;
-        const int hi_x = ex - step;
+        const int hi_x = logical_ex - step;
         const int hi_y = ey - step;
         const int hi_z = ez - step;
         const double* tail =
             B + static_cast<int64_t>(step - 1) * ld + local_N;
 
-        for (int q = tid; q < volume; q += static_cast<int>(blockDim.x)) {
-            const int lx = q % ex;
-            const int ly = (q / ex) % ey;
-            const int lz = q / (ex * ey);
+        for (int q = tid; q < logical_volume;
+             q += static_cast<int>(blockDim.x)) {
+            const int lx = q % logical_ex;
+            const int ly = (q / logical_ex) % ey;
+            const int lz = q / (logical_ex * ey);
+            const int shared_q = mpk_index(lx, ly, lz, ex, ey);
             if (lx < lo || lx >= hi_x || ly < lo || ly >= hi_y
                 || lz < lo || lz >= hi_z)
                 continue;
@@ -118,12 +137,12 @@ __global__ void mpk_slab_kernel(
             const int global_k = z_begin + local_k;
             if (i >= 0 && i < n && j >= 0 && j < n
                 && global_k >= 0 && global_k < n) {
-                out[q] =
+                out[shared_q] =
                     scale * mpk_apply(
                         in, lx, ly, lz, ex, ey,
                         i, j, global_k, op, face_b, tail);
             } else {
-                out[q] = 0.0;
+                out[shared_q] = 0.0;
             }
         }
         __syncthreads();
@@ -136,7 +155,8 @@ __global__ void mpk_slab_kernel(
             const int i = ox + tx;
             const int j = oy + ty;
             const int local_k = oz + tz;
-            if (i < n && j < n && local_k < z_count) {
+            if (i < n && j < n && local_k >= output_z_begin
+                && local_k < output_z_end && local_k < z_count) {
                 const int64_t gid =
                     static_cast<int64_t>(local_k) * n2
                     + static_cast<int64_t>(j) * n + i;
@@ -144,7 +164,7 @@ __global__ void mpk_slab_kernel(
                     out[mpk_index(tx + S, ty + S, tz + S, ex, ey)];
             }
         }
-        __syncthreads();
+        mpk_step_barrier();
 
         double* swap = in;
         in = out;
@@ -153,20 +173,26 @@ __global__ void mpk_slab_kernel(
 }
 
 /**
- * @brief Opt in to the shared memory the width needs, then launch the tail and the field.
+ * @brief Opt in to the shared memory the width needs and launch one field range.
  *
  * Two tiles of doubles exceed the 48 KiB default at these widths, so the dynamic limit is raised
- * per kernel before the first launch. The 3-component tail runs first, in its own single-thread
- * kernel, because mpk_apply reads column q-1 of the tail while producing column q of the field.
+ * per kernel before the launch. The caller builds the replicated tail before any field range,
+ * because mpk_apply reads tail column q-1 while producing field column q.
  */
 template <int S>
-[[nodiscard]] inline cudaError_t launch_mpk_slab(
-    const double* start, const double* halo_start, double* B, int64_t ld,
+[[nodiscard]] inline cudaError_t launch_mpk_slab_range(
+    const double* halo_start, double* B, int64_t ld,
     const GpuPdeOperator& op, const double* face_b, double scale,
-    int z_begin, int z_count, cudaStream_t stream)
+    int z_begin, int z_count, int output_z_begin, int output_z_count,
+    cudaStream_t stream, MpkSharedCarveout carveout)
 {
+    if (output_z_count <= 0) return cudaSuccess;
+#if defined(CAKSM_MPK_USE_RESTRICT)
+    if (halo_start == B || face_b == B)
+        return cudaErrorInvalidValue;
+#endif
     constexpr std::size_t volume =
-        static_cast<std::size_t>(kMpkBlockX + 2 * S)
+        static_cast<std::size_t>(kMpkBlockX + 2 * S + kMpkSharedPadX)
         * static_cast<std::size_t>(kMpkBlockY + 2 * S)
         * static_cast<std::size_t>(kMpkBlockZ + 2 * S);
     constexpr std::size_t shared_bytes = 2 * volume * sizeof(double);
@@ -175,20 +201,32 @@ template <int S>
         mpk_slab_kernel<S>, cudaFuncAttributeMaxDynamicSharedMemorySize,
         static_cast<int>(shared_bytes));
     if (error != cudaSuccess) return error;
-
-    const int64_t local_N =
-        static_cast<int64_t>(z_count) * op.n * op.n;
-    mpk_tail_powers<<<1, 1, 0, stream>>>(
-        start, B, local_N, ld, S, scale, nullptr, 1.0);
-    error = cudaGetLastError();
+    error = cudaFuncSetAttribute(
+        mpk_slab_kernel<S>, cudaFuncAttributePreferredSharedMemoryCarveout,
+        mpk_carveout_value(carveout));
     if (error != cudaSuccess) return error;
 
     const dim3 grid(
         static_cast<unsigned>((op.n + kMpkBlockX - 1) / kMpkBlockX),
         static_cast<unsigned>((op.n + kMpkBlockY - 1) / kMpkBlockY),
-        static_cast<unsigned>((z_count + kMpkBlockZ - 1) / kMpkBlockZ));
-    mpk_slab_kernel<S><<<grid, 128, shared_bytes, stream>>>(
-        halo_start, B, ld, op, face_b, scale, z_begin, z_count);
+        static_cast<unsigned>(
+            (output_z_count + kMpkBlockZ - 1) / kMpkBlockZ));
+    mpk_slab_kernel<S><<<grid, kMpkThreadsPerBlock, shared_bytes, stream>>>(
+        halo_start, B, ld, op, face_b, scale, z_begin, z_count,
+        output_z_begin, output_z_count);
+    return cudaGetLastError();
+}
+
+/// Build the replicated augmented tail once before field ranges consume it.
+[[nodiscard]] inline cudaError_t gpu_pde_slab_tail_powers(
+    const double* start, double* B, int64_t ld, int steps,
+    const GpuPdeOperator& op, double scale, int z_count,
+    cudaStream_t stream)
+{
+    const int64_t local_N =
+        static_cast<int64_t>(z_count) * op.n * op.n;
+    mpk_tail_powers<<<1, 1, 0, stream>>>(
+        start, B, local_N, ld, steps, scale, nullptr, 1.0);
     return cudaGetLastError();
 }
 
@@ -200,38 +238,61 @@ template <int S>
  * Widths past kMpkMaxS are rejected rather than clamped, since a silently narrowed recurrence
  * would return a shorter basis than the caller sized its workspace for.
  */
+[[nodiscard]] inline cudaError_t gpu_pde_slab_matrix_powers_range(
+    const double* halo_start,
+    double* B, int64_t ld, int steps,
+    const GpuPdeOperator& op, const double* face_b, double scale,
+    int z_begin, int z_count, int output_z_begin, int output_z_count,
+    cudaStream_t stream,
+    MpkSharedCarveout carveout = MpkSharedCarveout::Default)
+{
+    switch (steps) {
+        case 1:
+            return launch_mpk_slab_range<1>(
+                halo_start, B, ld, op, face_b, scale,
+                z_begin, z_count, output_z_begin, output_z_count, stream,
+                carveout);
+        case 2:
+            return launch_mpk_slab_range<2>(
+                halo_start, B, ld, op, face_b, scale,
+                z_begin, z_count, output_z_begin, output_z_count, stream,
+                carveout);
+        case 3:
+            return launch_mpk_slab_range<3>(
+                halo_start, B, ld, op, face_b, scale,
+                z_begin, z_count, output_z_begin, output_z_count, stream,
+                carveout);
+        case 4:
+            return launch_mpk_slab_range<4>(
+                halo_start, B, ld, op, face_b, scale,
+                z_begin, z_count, output_z_begin, output_z_count, stream,
+                carveout);
+        case 5:
+            return launch_mpk_slab_range<5>(
+                halo_start, B, ld, op, face_b, scale,
+                z_begin, z_count, output_z_begin, output_z_count, stream,
+                carveout);
+        case 6:
+            return launch_mpk_slab_range<6>(
+                halo_start, B, ld, op, face_b, scale,
+                z_begin, z_count, output_z_begin, output_z_count, stream,
+                carveout);
+        default:
+            return cudaErrorInvalidValue;
+    }
+}
+
 [[nodiscard]] inline cudaError_t gpu_pde_slab_matrix_powers(
     const double* start, const double* halo_start,
     double* B, int64_t ld, int steps,
     const GpuPdeOperator& op, const double* face_b, double scale,
-    int z_begin, int z_count, cudaStream_t stream)
+    int z_begin, int z_count, cudaStream_t stream,
+    MpkSharedCarveout carveout = MpkSharedCarveout::Default)
 {
-    switch (steps) {
-        case 1:
-            return launch_mpk_slab<1>(
-                start, halo_start, B, ld, op, face_b, scale,
-                z_begin, z_count, stream);
-        case 2:
-            return launch_mpk_slab<2>(
-                start, halo_start, B, ld, op, face_b, scale,
-                z_begin, z_count, stream);
-        case 3:
-            return launch_mpk_slab<3>(
-                start, halo_start, B, ld, op, face_b, scale,
-                z_begin, z_count, stream);
-        case 4:
-            return launch_mpk_slab<4>(
-                start, halo_start, B, ld, op, face_b, scale,
-                z_begin, z_count, stream);
-        case 5:
-            return launch_mpk_slab<5>(
-                start, halo_start, B, ld, op, face_b, scale,
-                z_begin, z_count, stream);
-        case 6:
-            return launch_mpk_slab<6>(
-                start, halo_start, B, ld, op, face_b, scale,
-                z_begin, z_count, stream);
-        default:
-            return cudaErrorInvalidValue;
-    }
+    cudaError_t error = gpu_pde_slab_tail_powers(
+        start, B, ld, steps, op, scale, z_count, stream);
+    if (error != cudaSuccess) return error;
+    return gpu_pde_slab_matrix_powers_range(
+        halo_start, B, ld, steps, op, face_b, scale,
+        z_begin, z_count, 0, z_count, stream, carveout);
 }

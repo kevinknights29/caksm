@@ -12,7 +12,8 @@
 #include <cmath>
 #include <cstdint>
 
-inline constexpr int kGpuCaMaxM = 24;
+#include "gpu_ca_config.hpp"
+
 inline constexpr int kGpuCaMaxS = 9;
 
 /// dst += src over an rows x cols column-major block. The two-pass block Gram-Schmidt
@@ -342,11 +343,10 @@ __global__ void ca_expm_action(const double* H, int ldh, int m, double* f,
 /**
  * @brief Adaptive m: walk first_m, ..., last_m and stop at the first that meets the tolerance.
  *
- * The stopping test is the standard a posteriori Krylov estimate, beta |h_{m+1,m}| |e_m^T f|,
- * which costs one already-computed subdiagonal entry and one component of f rather than a
- * residual vector. Sweeping the candidates inside one kernel is what keeps adaptivity off the
- * critical path: the alternative is a launch and a host round-trip per trial m, and the m that
- * is finally accepted would have been recomputed several times over.
+ * The stopping test is the endpoint defect indicator beta |h_{m+1,m}| |e_m^T f|.
+ * It costs one already-computed subdiagonal entry and one component of f rather
+ * than a residual vector. Sweeping the candidates inside one kernel keeps
+ * adaptivity off the critical path.
  */
 template <int MAX_M>
 __global__ void ca_expm_candidates(

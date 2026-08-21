@@ -1,9 +1,34 @@
 cmake_minimum_required(VERSION 3.25)
 project(caksm LANGUAGES CXX C)
 
+# CMake can ask the linker to emit a dependency file, but Synge's system ld does not
+# implement --dependency-file. Dependency tracking through the generated build graph is
+# sufficient here and keeps a CMake 4.x configuration compatible with that linker.
+set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
+
 option(CAKSM_REQUIRE_MPI
        "Fail configuration when the multi-node GPU executables cannot use MPI"
        OFF)
+
+# The projected exponential uses four statically allocated m-by-m binary64
+# arrays. CUDA limits static shared allocations to 48 KiB on both target GPUs,
+# so m=39 is the largest common value the current kernel can compile and launch:
+# four arrays plus its two shared integers use 48,680 bytes. Keep the value in
+# the cache because it changes CUDA code generation and therefore belongs to a
+# build configuration, not to a runtime configuration file.
+set(CAKSM_GPU_CA_MAX_M 39 CACHE STRING
+    "Compile-time maximum Krylov dimension for the GPU CA integrators (1..39)")
+if(NOT CAKSM_GPU_CA_MAX_M MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR
+        "CAKSM_GPU_CA_MAX_M must be a positive integer; got '${CAKSM_GPU_CA_MAX_M}'")
+endif()
+if(CAKSM_GPU_CA_MAX_M GREATER 39)
+    message(FATAL_ERROR
+        "CAKSM_GPU_CA_MAX_M=${CAKSM_GPU_CA_MAX_M} exceeds the current static-shared "
+        "kernel limit of 39. A larger value requires a dynamic-shared-memory refactor.")
+endif()
+message(STATUS
+    "GPU CA-Arnoldi compile-time maximum m: ${CAKSM_GPU_CA_MAX_M}")
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 23)
@@ -40,6 +65,8 @@ FetchContent_MakeAvailable(Eigen3)
 add_library(caksm INTERFACE)
 target_include_directories(caksm INTERFACE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(caksm INTERFACE Eigen3::Eigen)
+target_compile_definitions(caksm INTERFACE
+        CAKSM_GPU_CA_MAX_M=${CAKSM_GPU_CA_MAX_M})
 
 # Source revision stamped into every referee sidecar, so a stored checksum can
 # be traced back to the build that produced it.
@@ -98,6 +125,37 @@ target_link_libraries(regime-control PRIVATE caksm)
 target_compile_options(regime-control PRIVATE -march=native -O3)
 target_compile_definitions(regime-control PRIVATE EIGEN_ENABLE_AVX512)
 
+# Endpoint defect calibration against dense exponential actions on small pricing systems.
+add_executable(krylov-indicator-calibration src/krylov_indicator_calibration.cpp)
+target_link_libraries(krylov-indicator-calibration PRIVATE caksm)
+target_compile_options(krylov-indicator-calibration PRIVATE -O2)
+
+# Financial Reference (the independent terminal-distribution references)
+#
+# The Johnson formula for the Rainbow price, randomized quasi-Monte Carlo for the
+# Basket price and for both payoffs' Delta and diagonal Gamma, and the uncertainty
+# each of them carries.
+#
+# Deliberately does not link caksm: include/financial_reference.hpp reaches no PDE
+# assembly, boundary closure, interpolation, Krylov, or ADI code, and pulls in no
+# Eigen. A reference that shared the discretization would not be independent of the
+# method it is used to judge, and the linker is the cheapest place to enforce that.
+# The one shared header is config.hpp, which carries the model parameters and no
+# numerics, so both sides price the same contract by construction.
+add_executable(financial-reference src/financial_reference.cpp)
+target_include_directories(financial-reference PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_options(financial-reference PRIVATE -O2)
+
+# Financial Validation (the PDE-side refinement, Greeks, and equal-accuracy table)
+#
+# Domain, spatial, temporal, and bump refinement for both payoffs, prices and Greeks
+# read through trilinear interpolation from one solved field per configuration, and
+# the equal-accuracy comparison of CPU KSM-EI against smoothed CPU HV-ADI. Reads the
+# accepted reference row and refuses to run against a mismatched contract.
+add_executable(financial-validation src/financial_validation.cpp)
+target_link_libraries(financial-validation PRIVATE caksm)
+target_compile_options(financial-validation PRIVATE -O2)
+
 # Regime Sweep (the vertical crossover, theta_v)
 #
 # Times baseline SpMV (m applications) against the cache-blocked matrix-powers kernel
@@ -130,8 +188,8 @@ target_compile_options(calibrate-alpha PRIVATE -march=native -O3)
 # Regime GPU Place (the GPU map's predictor)
 #
 # Places points on the GPU (R_v, R_h) plane, evaluates the roofline gate that must pass
-# before either coordinate means anything, and regenerates docs/regime_gpu_phase0.md's
-# tables from whatever constants the calibration has recorded.
+# before either coordinate means anything, and regenerates the predictor tables from the
+# recorded calibration constants.
 #
 # Host-only and CUDA-free by design: it links neither a solver nor a timer, so every
 # number it prints is an a-priori coordinate. It builds and runs on a login node or a
@@ -193,7 +251,7 @@ if(CMAKE_CUDA_COMPILER)
     # control, not convenience: the two cards are a controlled pair differing only in FP64
     # rate, and two different nvcc versions would put code generation and default FMA
     # contraction into that comparison, both of which land on the measured FP64 peak the
-    # roofline gate divides by. See docs/regime_gpu_phase0.md.
+    # roofline gate divides by.
     #   cmake -B build -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc ...
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
         set(CMAKE_CUDA_ARCHITECTURES 70 86)
@@ -220,6 +278,11 @@ if(CMAKE_CUDA_COMPILER)
     target_include_directories(gpu-stream PRIVATE ${CMAKE_SOURCE_DIR}/include)
     target_link_libraries(gpu-stream PRIVATE CUDA::nvml)
     target_compile_options(gpu-stream PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # Static copy/compute-overlap capabilities from cudaGetDeviceProperties. Unlike the
+    # calibrated roofs, these require no timed kernel and are safe to collect in gpu_probe.sh.
+    add_executable(gpu-device-probe src/gpu_device_probe.cu)
+    target_compile_options(gpu-device-probe PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O2>)
 
     # No -use_fast_math and no -ffast-math analogue: the FMA chain must stay exactly the
     # dependent sequence written, or what is measured is whatever ptxas contracted it into.
@@ -268,48 +331,254 @@ if(CMAKE_CUDA_COMPILER)
     # The first solver component: a matrix-free pricing stencil that builds a block of
     # powers in one shared-memory tile. The harness validates every vector against the
     # assembled CPU operator before reporting traffic.
+    #
+    # Built on every default, so this one binary is the baseline of both kernel
+    # families at once: full-volume on the production tile, and plane-streamed on
+    # the streamed header's default tile. The generated variant list therefore
+    # emits neither baseline again.
     add_executable(ca-matrix-powers src/ca_matrix_powers.cu)
     target_include_directories(ca-matrix-powers PRIVATE ${CMAKE_SOURCE_DIR}/include)
     target_link_libraries(ca-matrix-powers PRIVATE caksm CUDA::nvml)
-    target_compile_options(ca-matrix-powers PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+    target_compile_definitions(ca-matrix-powers PRIVATE
+            CAKSM_MPK_CONFIGURATION="baseline"
+            CAKSM_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+    target_compile_options(ca-matrix-powers PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:-O3>
+            $<$<COMPILE_LANGUAGE:CUDA>:--resource-usage>)
 
-    # The tile geometry sets the ghost redundancy of a launch, so sweeping it needs
-    # separate binaries rather than a run-time flag: the tile extents are template
-    # and shared-memory sizes. Same source, same numerics gate, one geometry each.
+    # One function builds every swept matrix-powers configuration, so the sweep
+    # widens by regenerating a table rather than by hand-writing targets. The
+    # tile extents, thread count and layout are compile-time constants in the
+    # kernel, which is why a configuration is a binary and not a flag.
+    #
+    #   NAME              suffix for ca-matrix-powers-<name>, and the string the
+    #                     result row carries as its configuration
+    #   FAMILY            full-volume or plane-streamed
+    #   TILE_X/Y/Z        interior extents; TILE_Z is unused when streamed
+    #   THREADS           threads per block, swept independently of the tile
+    #   STREAM_HEIGHT     compile-time default z segment; the runner overrides it
+    #   SHARED_PAD_X      shared-memory row padding, in doubles
+    #   PITCH_ALIGN       physical row stride, in doubles; 1 is the packed layout
+    #   REGISTER_CAP      --maxrregcount value, 0 for none
+    #   CACHE_POLICY      ca or cg for -Xptxas=-dlcm, empty for the default
+    #   FAST_MATH         adds --use_fast_math; a numerics arm, never a default
+    #   VECTORIZATION     adds --extra-device-vectorization
+    #   ELIDE_BARRIER     drops the barrier after the basis write
+    #   USE_RESTRICT      qualifies the kernel pointers
+    #   SOLVER            also build ca-integrator-<name> on the same settings
+    function(caksm_add_matrix_powers_variant)
+        set(options FAST_MATH VECTORIZATION ELIDE_BARRIER USE_RESTRICT SOLVER)
+        set(values NAME FAMILY TILE_X TILE_Y TILE_Z THREADS STREAM_HEIGHT
+                SHARED_PAD_X PITCH_ALIGN REGISTER_CAP CACHE_POLICY)
+        cmake_parse_arguments(MPKV "${options}" "${values}" "" ${ARGN})
+        if(NOT MPKV_NAME)
+            message(FATAL_ERROR "caksm_add_matrix_powers_variant needs a NAME")
+        endif()
+        if(NOT MPKV_FAMILY)
+            set(MPKV_FAMILY "full-volume")
+        endif()
+
+        set(definitions CAKSM_MPK_CONFIGURATION="${MPKV_NAME}")
+        if(MPKV_FAMILY STREQUAL "plane-streamed")
+            if(MPKV_TILE_X)
+                list(APPEND definitions CAKSM_MPK_STREAM_TILE_X=${MPKV_TILE_X})
+            endif()
+            if(MPKV_TILE_Y)
+                list(APPEND definitions CAKSM_MPK_STREAM_TILE_Y=${MPKV_TILE_Y})
+            endif()
+            if(MPKV_STREAM_HEIGHT)
+                list(APPEND definitions
+                        CAKSM_MPK_STREAM_HEIGHT=${MPKV_STREAM_HEIGHT})
+            endif()
+            if(MPKV_THREADS)
+                list(APPEND definitions CAKSM_MPK_STREAM_THREADS=${MPKV_THREADS})
+            endif()
+            if(MPKV_SHARED_PAD_X)
+                list(APPEND definitions
+                        CAKSM_MPK_STREAM_SHARED_PAD_X=${MPKV_SHARED_PAD_X})
+            endif()
+        else()
+            if(MPKV_TILE_X)
+                list(APPEND definitions CAKSM_MPK_BLOCK_X=${MPKV_TILE_X})
+            endif()
+            if(MPKV_TILE_Y)
+                list(APPEND definitions CAKSM_MPK_BLOCK_Y=${MPKV_TILE_Y})
+            endif()
+            if(MPKV_TILE_Z)
+                list(APPEND definitions CAKSM_MPK_BLOCK_Z=${MPKV_TILE_Z})
+            endif()
+            if(MPKV_THREADS)
+                list(APPEND definitions CAKSM_MPK_THREADS=${MPKV_THREADS})
+            endif()
+            if(MPKV_SHARED_PAD_X)
+                list(APPEND definitions
+                        CAKSM_MPK_SHARED_PAD_X=${MPKV_SHARED_PAD_X})
+            endif()
+        endif()
+        if(MPKV_PITCH_ALIGN)
+            list(APPEND definitions CAKSM_MPK_PITCH_ALIGN=${MPKV_PITCH_ALIGN})
+        endif()
+        if(MPKV_ELIDE_BARRIER)
+            list(APPEND definitions CAKSM_MPK_ELIDE_BASIS_BARRIER)
+        endif()
+        if(MPKV_USE_RESTRICT)
+            list(APPEND definitions CAKSM_MPK_USE_RESTRICT)
+        endif()
+
+        # --resource-usage is what makes registers, spills and code size part of
+        # the record instead of something the profiler has to be asked for later.
+        set(flags $<$<COMPILE_LANGUAGE:CUDA>:-O3>
+                  $<$<COMPILE_LANGUAGE:CUDA>:--resource-usage>)
+        if(MPKV_REGISTER_CAP)
+            list(APPEND flags
+                    $<$<COMPILE_LANGUAGE:CUDA>:--maxrregcount=${MPKV_REGISTER_CAP}>)
+            list(APPEND definitions
+                    CAKSM_MPK_REGISTER_CAP=${MPKV_REGISTER_CAP})
+        endif()
+        if(MPKV_CACHE_POLICY)
+            list(APPEND flags
+                    $<$<COMPILE_LANGUAGE:CUDA>:-Xptxas=-dlcm=${MPKV_CACHE_POLICY}>)
+        endif()
+        if(MPKV_VECTORIZATION)
+            list(APPEND flags
+                    $<$<COMPILE_LANGUAGE:CUDA>:--extra-device-vectorization>)
+        endif()
+        if(MPKV_FAST_MATH)
+            list(APPEND flags $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
+        endif()
+
+        set_property(GLOBAL APPEND PROPERTY CAKSM_MPK_VARIANTS "${MPKV_NAME}")
+        set(harness ca-matrix-powers-${MPKV_NAME})
+        # Sweep and diagnostic binaries remain reproducible by explicit target
+        # name, but failed or superseded experiments must not inflate the
+        # production `all` build after the tuning study closes.
+        add_executable(${harness} EXCLUDE_FROM_ALL src/ca_matrix_powers.cu)
+        target_include_directories(${harness}
+                PRIVATE ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(${harness} PRIVATE caksm CUDA::nvml)
+        target_compile_definitions(${harness} PRIVATE
+                ${definitions}
+                CAKSM_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+        target_compile_options(${harness} PRIVATE ${flags})
+
+        # A kernel-level win has to be re-reported end to end, and the tile is a
+        # compile-time extent, so the solver needs rebuilding on the same
+        # settings rather than being told about them at run time. Only requested
+        # configurations get one: the kernel screen is much wider than the set
+        # worth carrying through a full solver run.
+        if(MPKV_SOLVER)
+            set(solver ca-integrator-${MPKV_NAME})
+            add_executable(${solver} EXCLUDE_FROM_ALL src/ca_arnoldi_gpu.cu)
+            target_include_directories(${solver}
+                    PRIVATE ${CMAKE_SOURCE_DIR}/include)
+            target_link_libraries(${solver}
+                    PRIVATE caksm CUDA::nvml CUDA::cublas CUDA::cusolver)
+            target_compile_definitions(${solver} PRIVATE
+                    ${definitions}
+                    CAKSM_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+            target_compile_options(${solver} PRIVATE
+                    $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+        endif()
+    endfunction()
+
+    # Compile-time experiment arms. Pointer qualification, shared-row padding
+    # and the barrier elision cannot be switched at run time, so each keeps its
+    # own executable and passes the same assembled-operator gate as the baseline.
+    caksm_add_matrix_powers_variant(NAME restrict USE_RESTRICT SOLVER)
+    caksm_add_matrix_powers_variant(NAME padded SHARED_PAD_X 1)
+    caksm_add_matrix_powers_variant(NAME elide-barrier ELIDE_BARRIER SOLVER)
+
+    # The pitched-layout arm. Kernel-level only: the solver indexes the state
+    # logically in several places and refuses to build padded until this arm has
+    # cleared its profiling gate, which is deliberate and asserted in the source.
+    foreach(pitch_align 4 8 16)
+        caksm_add_matrix_powers_variant(
+                NAME pitch${pitch_align} PITCH_ALIGN ${pitch_align})
+    endforeach()
+
+    # Compilation-flag arms, screened on the baseline geometry so a timing
+    # difference is attributable to the flag and not to a shape. Each is built
+    # unconditionally and screened by device-code comparison before it is timed:
+    # a flag that leaves the cubin unchanged is a recorded no-op, not a result.
+    #
+    # --use_fast_math is a diagnostic arm only. It relaxes FP64 semantics this
+    # stencil depends on, so it is never a promotion candidate and is kept here
+    # to answer whether it changes device code at all.
+    #
+    # Absent on purpose: a global --restrict, because the Chebyshev chunk
+    # transition passes one address as both input and output; --allow-expensive
+    # -optimizations, already implied at -O3; and -fmad=false, which is a
+    # numerics control rather than an optimization. Device LTO is absent because
+    # each executable here is a single translation unit over header-only code,
+    # so there is no cross-file device optimization for it to perform.
+    caksm_add_matrix_powers_variant(NAME vectorized VECTORIZATION)
+    caksm_add_matrix_powers_variant(NAME cache-ca CACHE_POLICY ca)
+    caksm_add_matrix_powers_variant(NAME cache-cg CACHE_POLICY cg)
+    caksm_add_matrix_powers_variant(NAME fastmath FAST_MATH)
+    foreach(register_cap 96 80 72 64)
+        caksm_add_matrix_powers_variant(
+                NAME regcap${register_cap} REGISTER_CAP ${register_cap})
+    endforeach()
+
+    # The swept geometry and thread configurations. Generated with
+    #   python3 scripts/regime/ca_matrix_powers_configurations.py
+    # which also writes data/ca-matrix-powers-tuning/configurations.csv, where
+    # every rejected shape keeps the reason it was excluded.
+    #
+    # The generated list is a configure-time input, so it is registered as a
+    # configure dependency: regenerating it re-runs cmake rather than leaving a
+    # build directory quietly describing the previous sweep.
+    set(CAKSM_MPK_VARIANT_FILE
+            ${CMAKE_SOURCE_DIR}/cmake/matrix_powers_variants.cmake)
+    if(EXISTS ${CAKSM_MPK_VARIANT_FILE})
+        set_property(DIRECTORY APPEND PROPERTY
+                CMAKE_CONFIGURE_DEPENDS ${CAKSM_MPK_VARIANT_FILE})
+        include(${CAKSM_MPK_VARIANT_FILE})
+        get_property(CAKSM_MPK_VARIANTS GLOBAL PROPERTY CAKSM_MPK_VARIANTS)
+        list(LENGTH CAKSM_MPK_VARIANTS CAKSM_MPK_VARIANT_COUNT)
+        message(STATUS
+            "matrix-powers tuning: ${CAKSM_MPK_VARIANT_COUNT} swept variants")
+    else()
+        # A warning rather than a status line. Without this file the sweep
+        # targets do not exist, and the failure surfaces much later as a missing
+        # binary in a runner, by which point the cause is several steps back.
+        # It is generated rather than committed because the same script writes
+        # the configuration table beside it, under a gitignored data directory,
+        # and the two have to be produced together to agree.
+        message(WARNING
+            "No matrix-powers variant list at ${CAKSM_MPK_VARIANT_FILE}. "
+            "Only the hand-declared arms will be built, and the tuning and gate "
+            "runners will report missing binaries. Generate it with:\n"
+            "  python3 scripts/regime/ca_matrix_powers_configurations.py\n"
+            "then configure again.")
+    endif()
+
+    # The three geometries the earlier tile sweep recorded results under also
+    # need a solver binary, because that sweep's kernel win has to be re-reported
+    # end to end. They are built by the generated list above; this adds only the
+    # solver side, which the wider screen does not need.
     foreach(tile "16x8x8" "8x8x8" "16x8x4")
-        string(REPLACE "x" ";" tile_extents "${tile}")
-        list(GET tile_extents 0 tile_x)
-        list(GET tile_extents 1 tile_y)
-        list(GET tile_extents 2 tile_z)
-        add_executable(ca-matrix-powers-${tile} src/ca_matrix_powers.cu)
-        target_include_directories(ca-matrix-powers-${tile}
-                PRIVATE ${CMAKE_SOURCE_DIR}/include)
-        target_link_libraries(ca-matrix-powers-${tile} PRIVATE caksm CUDA::nvml)
-        target_compile_definitions(ca-matrix-powers-${tile} PRIVATE
-                CAKSM_MPK_BLOCK_X=${tile_x}
-                CAKSM_MPK_BLOCK_Y=${tile_y}
-                CAKSM_MPK_BLOCK_Z=${tile_z})
-        target_compile_options(ca-matrix-powers-${tile}
-                PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
-
-        # The tile sweep found a geometry worth 1.28x to 1.39x over the
-        # production 8x4x4 at both production points, so the single-GPU result
-        # has to be re-reported at the better geometry rather than left as a
-        # kernel-level observation. That needs the solver itself rebuilt on each
-        # tile, which is a compile-time extent, so it is one binary per geometry
-        # exactly as the kernel harness is. The production default is unchanged
-        # and these are additional targets.
-        add_executable(ca-integrator-${tile} src/ca_arnoldi_gpu.cu)
-        target_include_directories(ca-integrator-${tile}
-                PRIVATE ${CMAKE_SOURCE_DIR}/include)
-        target_link_libraries(ca-integrator-${tile}
-                PRIVATE caksm CUDA::nvml CUDA::cublas CUDA::cusolver)
-        target_compile_definitions(ca-integrator-${tile} PRIVATE
-                CAKSM_MPK_BLOCK_X=${tile_x}
-                CAKSM_MPK_BLOCK_Y=${tile_y}
-                CAKSM_MPK_BLOCK_Z=${tile_z})
-        target_compile_options(ca-integrator-${tile}
-                PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+        if(TARGET ca-matrix-powers-${tile} AND NOT TARGET ca-integrator-${tile})
+            string(REPLACE "x" ";" tile_extents "${tile}")
+            list(GET tile_extents 0 tile_x)
+            list(GET tile_extents 1 tile_y)
+            list(GET tile_extents 2 tile_z)
+            add_executable(
+                    ca-integrator-${tile} EXCLUDE_FROM_ALL
+                    src/ca_arnoldi_gpu.cu)
+            target_include_directories(ca-integrator-${tile}
+                    PRIVATE ${CMAKE_SOURCE_DIR}/include)
+            target_link_libraries(ca-integrator-${tile}
+                    PRIVATE caksm CUDA::nvml CUDA::cublas CUDA::cusolver)
+            target_compile_definitions(ca-integrator-${tile} PRIVATE
+                    CAKSM_MPK_BLOCK_X=${tile_x}
+                    CAKSM_MPK_BLOCK_Y=${tile_y}
+                    CAKSM_MPK_BLOCK_Z=${tile_z}
+                    CAKSM_MPK_CONFIGURATION="${tile}"
+                    CAKSM_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+            target_compile_options(ca-integrator-${tile}
+                    PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+        endif()
     endforeach()
 
     # One-GPU CA-Arnoldi: the numerical gate at --steps 0, where block Gram-Schmidt
@@ -320,7 +589,13 @@ if(CMAKE_CUDA_COMPILER)
     target_include_directories(ca-integrator PRIVATE ${CMAKE_SOURCE_DIR}/include)
     target_link_libraries(ca-integrator
             PRIVATE caksm CUDA::nvml CUDA::cublas CUDA::cusolver)
+    target_compile_definitions(ca-integrator PRIVATE
+            CAKSM_MPK_CONFIGURATION="baseline"
+            CAKSM_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
     target_compile_options(ca-integrator PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+
+    # ca-integrator-restrict is built by caksm_add_matrix_powers_variant above,
+    # from the same arm definition as its kernel harness.
 
     # Independent full-accuracy referee: the assembled pricing operator is uploaded as CSR
     # and applied with cuSPARSE, keeping this path separate from the production stencil.
@@ -410,6 +685,25 @@ if(CMAKE_CUDA_COMPILER)
                 "ca-integrator-2gpu: NCCL only, no MPI; the multi-node path is disabled")
         endif()
 
+        # Retained only to reproduce the closed pointer-qualification arm.
+        add_executable(
+                ca-integrator-2gpu-restrict EXCLUDE_FROM_ALL
+                src/ca_integrator_2gpu.cu)
+        target_include_directories(ca-integrator-2gpu-restrict
+                PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(ca-integrator-2gpu-restrict
+                PRIVATE caksm ${NCCL_LIBRARY} CUDA::nvml CUDA::cublas
+                        CUDA::cusolver CUDA::nvToolsExt)
+        target_compile_definitions(ca-integrator-2gpu-restrict
+                PRIVATE CAKSM_MPK_USE_RESTRICT)
+        target_compile_options(ca-integrator-2gpu-restrict
+                PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+        if(MPI_C_FOUND)
+            target_link_libraries(ca-integrator-2gpu-restrict PRIVATE MPI::MPI_C)
+            target_compile_definitions(ca-integrator-2gpu-restrict
+                    PRIVATE CAKSM_HAVE_MPI)
+        endif()
+
         if(MPI_C_FOUND)
             target_link_libraries(calibrate-gpu-p2p PRIVATE MPI::MPI_C)
             target_compile_definitions(calibrate-gpu-p2p PRIVATE CAKSM_HAVE_MPI)
@@ -492,6 +786,13 @@ add_executable(ca_referee_tests tests/test_ca_referee_scaled.cpp)
 target_link_libraries(
         ca_referee_tests PRIVATE caksm Catch2::Catch2WithMain)
 
+# Financial-validation tests: the analytical Rainbow reference, the QMC limiting
+# cases, trilinear log-grid interpolation, and the HV start-up smoothing.
+add_executable(financial_validation_tests tests/test_financial_validation.cpp)
+target_link_libraries(
+        financial_validation_tests PRIVATE caksm Catch2::Catch2WithMain)
+target_compile_options(financial_validation_tests PRIVATE -O2)
+
 # Regime-instrument tests: the invariants the map rests on (permutation similarity,
 # R_v's aggregate accounting frame, MGS/s-step reduction counts, CholQR breakdown).
 #
@@ -513,6 +814,7 @@ include(CTest)
 include(Catch)
 catch_discover_tests(arnoldi_tests)
 catch_discover_tests(ca_referee_tests TEST_PREFIX "ca-referee.")
+catch_discover_tests(financial_validation_tests TEST_PREFIX "financial.")
 # Prefix the regime-instrument tests so `ctest -R regime` selects them: ctest filters on
 # test name, and Catch2 registers each test case under its description, not its [regime]
 # tag or target name.

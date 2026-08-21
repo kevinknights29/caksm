@@ -241,6 +241,9 @@ struct CaArnoldiResult {
     double  ortho_loss  = 0.0;       ///< ||I - V^T V||_F, the measured outcome
     bool    broke_down  = false;     ///< a CholeskyQR block failed
     int     broke_at_s  = 0;         ///< block size at which it failed
+    int     blocks      = 0;         ///< CholeskyQR blocks attempted this cycle
+    int     chol_failed = 0;         ///< blocks whose Gram matrix lost definiteness
+    double  max_block_residual = 0.0; ///< worst ||B - QR||_F / ||B||_F over blocks
 };
 
 /**
@@ -254,17 +257,22 @@ struct CaArnoldiResult {
  * A B(:,j) = B(:,j+1) recursively determines the remaining columns by triangular
  * substitution. This does not form V^T A V or add a projection reduction.
  * One extra vector is orthogonalized to supply the residual row used by the
- * a-posteriori exponential error estimate.
+ * endpoint defect indicator.
  *
  * @param reorth  a second BGS pass and CholeskyQR2: one extra reduction per block,
  *                restoring orthogonality to O(u).
+ * @param record_block_residual  also form ||B - QR||_F / ||B||_F per block. Off by
+ *                default: it is an extra n x s by s x s product, small beside the
+ *                BGS pass but not free, and the published regime timings were taken
+ *                without it. The block-stability table turns it on deliberately.
  */
 [[nodiscard]] inline CaArnoldiResult ca_arnoldi(const SpMatS& A, const Eigen::VectorXd& v0,
                                                 int m, int s, bool reorth = false,
                                                 CaPolynomialBasis basis =
                                                     CaPolynomialBasis::Monomial,
                                                 double center = 0.0,
-                                                double half_width = 1.0)
+                                                double half_width = 1.0,
+                                                bool record_block_residual = false)
 {
     if (m <= 0 || s <= 0) throw std::invalid_argument("ca_arnoldi: require m > 0 and s > 0");
     if (basis == CaPolynomialBasis::Chebyshev && !(half_width > 0.0))
@@ -310,10 +318,18 @@ struct CaArnoldiResult {
         // Intra-block orthogonality is set by CholeskyQR, not by the BGS pass above.
         const CholQrResult qr = reorth ? cholesky_qr2(B) : cholesky_qr(B);
         r.max_kappa = std::max(r.max_kappa, qr.kappa);
+        ++r.blocks;
         if (qr.llt_failed) {
+            ++r.chol_failed;
             r.broke_down = true;
             r.broke_at_s = blk;
             break;
+        }
+        if (record_block_residual) {
+            const double scale = B.norm();
+            if (scale > 0.0)
+                r.max_block_residual = std::max(
+                    r.max_block_residual, (B - qr.Q * qr.R).norm() / scale);
         }
 
         V.middleCols(filled, blk) = qr.Q;
@@ -363,11 +379,11 @@ struct CaArnoldiResult {
 
 // Measured Krylov dimension
 /**
- * @brief Smallest m at which the Arnoldi approximation to exp(h A) v0 meets `tol`.
+ * @brief Smallest m at which the endpoint defect indicator meets `tol`.
  *
- * Grows m and watches the a-posteriori residual beta * h_{m+1,m} * |e_m^T exp(h H_m) e_1|.
- * The same absolute residual solve_ksm_ei (solvers.hpp) converges on, so this m matches
- * the application's and is the one predict_krylov_dim() must reproduce.
+ * Grows m and watches beta * h_{m+1,m} * |e_m^T exp(h H_m) e_1|. This is the
+ * same absolute endpoint defect indicator solve_ksm_ei (solvers.hpp) uses, so
+ * this m matches the application's and is the one predict_krylov_dim() must reproduce.
  *
  * @note Not shift-invariant: under a shift A - mu I, the estimate picks up a factor
  *       e^{h mu}, so a large h*mu can shift m by a step. This mirrors the solver's

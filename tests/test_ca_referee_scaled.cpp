@@ -84,6 +84,61 @@ TEST_CASE(
     REQUIRE(scaling.scaled_forcing_norm_1 > 0.5);
 }
 
+/// The production integrator stores B as nine face planes rather than as an
+/// N-by-3 dense matrix. Edges and the upper corner receive more than one face
+/// contribution, including values with different signs, so their entries must
+/// be combined before the absolute value is taken.
+TEST_CASE(
+    "face-plane forcing norm equals the assembled forcing norm",
+    "[referee][scaled-augmentation][matrix-free]")
+{
+    constexpr int n = 3;
+    constexpr int n2 = n * n;
+    constexpr int rows = n * n * n;
+    std::vector<double> faces(9 * n2, 0.0);
+    Eigen::MatrixXd assembled = Eigen::MatrixXd::Zero(rows, 3);
+
+    for (int direction = 0; direction < 3; ++direction) {
+        int free_axis[2];
+        int next = 0;
+        for (int axis = 0; axis < 3; ++axis)
+            if (axis != direction) free_axis[next++] = axis;
+        for (int coefficient = 0; coefficient < 3; ++coefficient) {
+            for (int u = 0; u < n; ++u) {
+                for (int v = 0; v < n; ++v) {
+                    const int face = u * n + v;
+                    const int parity =
+                        (direction + coefficient + u + v) % 2 == 0 ? 1 : -1;
+                    const double value = parity * (
+                        1 + 100 * direction + 10 * coefficient + face);
+                    faces[static_cast<std::size_t>(
+                        (direction * 3 + coefficient) * n2 + face)] = value;
+
+                    int ijk[3] = {0, 0, 0};
+                    ijk[direction] = n - 1;
+                    ijk[free_axis[0]] = u;
+                    ijk[free_axis[1]] = v;
+                    const int row = (ijk[0] * n + ijk[1]) * n + ijk[2];
+                    assembled(row, coefficient) += value;
+                }
+            }
+        }
+    }
+
+    const double dense_norm = ca_referee::forcing_1norm(assembled);
+    REQUIRE_THAT(
+        ca_referee::face_forcing_1norm(faces, n),
+        WithinAbs(dense_norm, 0.0));
+
+    const auto from_dense = ca_referee::make_augmentation_scaling(assembled);
+    const auto from_norm = ca_referee::make_augmentation_scaling(dense_norm);
+    REQUIRE(from_norm.exponent == from_dense.exponent);
+    REQUIRE_THAT(from_norm.eta, WithinAbs(from_dense.eta, 0.0));
+    REQUIRE_THAT(
+        from_norm.scaled_forcing_norm_1,
+        WithinAbs(from_dense.scaled_forcing_norm_1, 0.0));
+}
+
 /// The stopping test must see the vector the unscaled method would have seen.
 ///
 /// Expected: weighting the transformed tail by eta reproduces the plain

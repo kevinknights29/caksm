@@ -33,6 +33,7 @@
 #include "ca_pricing_gpu.hpp"
 #include "gpu_contention.cuh"
 #include "gpu_machine.hpp"
+#include "gpu_pde_matrix_powers_streamed.cuh"
 #include "regime.hpp"
 
 #define CUDA_CHECK(call) do {                                                     \
@@ -43,6 +44,20 @@
         std::exit(EXIT_FAILURE);                                                  \
     }                                                                             \
 } while (0)
+
+// Build identity a result row carries, so a configuration can be recovered from
+// the record alone. The register cap and the configuration name are supplied by
+// the build definition of each swept variant; the defaults describe an ordinary
+// hand-built binary rather than pretending one was not built.
+#ifndef CAKSM_MPK_REGISTER_CAP
+#define CAKSM_MPK_REGISTER_CAP 0
+#endif
+#ifndef CAKSM_BUILD_TYPE
+#define CAKSM_BUILD_TYPE "unspecified"
+#endif
+#ifndef CAKSM_MPK_CONFIGURATION
+#define CAKSM_MPK_CONFIGURATION "default"
+#endif
 
 namespace {
 
@@ -65,6 +80,20 @@ enum class PolynomialBasis {
     return "unknown";
 }
 
+[[nodiscard]] const char* carveout_name(MpkSharedCarveout carveout)
+{
+    return carveout == MpkSharedCarveout::Maximum ? "max" : "default";
+}
+
+/// The interior extents one block owns, whichever family staged them. Both
+/// families stage (x+2s)(y+2s)(z+2s) around it, so one geometry drives the
+/// traffic model and the grid count for either.
+struct TileGeometry {
+    int x = kMpkBlockX;
+    int y = kMpkBlockY;
+    int z = kMpkBlockZ;
+};
+
 /// Command line, already validated by parse_args.
 struct Args {
     int n = 31;
@@ -76,6 +105,13 @@ struct Args {
     bool certificate_block_width_set = false;
     bool rainbow = false;
     PolynomialBasis basis = PolynomialBasis::Monomial;
+    MpkSharedCarveout shared_carveout = MpkSharedCarveout::Default;
+    /// Which kernel family builds the basis. The plane-streamed family is a
+    /// separate implementation under test, not a mode of the accepted one.
+    MpkKernelFamily family = MpkKernelFamily::FullVolume;
+    /// z planes one streamed block owns. Zero streams the whole extent. Ignored
+    /// by the full-volume family, whose z extent is a compile-time tile bound.
+    int stream_height = kMpkStreamHeight;
     /// DRAM bytes from an ncu sector capture of the same point. Negative means the
     /// run is diagnostic: no vertical verdict is assigned without a measurement.
     double ncu_dram_bytes = -1.0;
@@ -153,6 +189,33 @@ enum class VerticalVerdict {
             a.ncu_dram_bytes = std::stod(next());
         else if (arg == "--profile-only")
             a.profile_only = true;
+        else if (arg == "--stream-height")
+            a.stream_height = std::stoi(next());
+        else if (arg == "--kernel-family") {
+            const std::string family = next();
+            if (family == "full-volume")
+                a.family = MpkKernelFamily::FullVolume;
+            else if (family == "plane-streamed")
+                a.family = MpkKernelFamily::PlaneStreamed;
+            else {
+                std::fprintf(
+                    stderr,
+                    "--kernel-family must be full-volume or plane-streamed\n");
+                std::exit(EXIT_FAILURE);
+            }
+        }
+        else if (arg == "--shared-carveout") {
+            const std::string carveout = next();
+            if (carveout == "default")
+                a.shared_carveout = MpkSharedCarveout::Default;
+            else if (carveout == "max")
+                a.shared_carveout = MpkSharedCarveout::Maximum;
+            else {
+                std::fprintf(
+                    stderr, "--shared-carveout must be default or max\n");
+                std::exit(EXIT_FAILURE);
+            }
+        }
         else if (arg == "--basis") {
             const std::string basis = next();
             if      (basis == "monomial")  a.basis = PolynomialBasis::Monomial;
@@ -181,6 +244,9 @@ enum class VerticalVerdict {
                 "                           [--scale H] [--repeats K]\n"
                 "                           [--certificate-block-width W]\n"
                 "                           [--ncu-dram-bytes B]\n"
+                "                           [--shared-carveout default|max]\n"
+                "                           [--kernel-family full-volume|plane-streamed]\n"
+                "                           [--stream-height H]\n"
                 "                           [--profile-only]\n");
             std::exit(EXIT_SUCCESS);
         } else {
@@ -207,6 +273,11 @@ enum class VerticalVerdict {
     }
     if (a.repeats < 1) {
         std::fprintf(stderr, "--repeats must be >= 1\n");
+        std::exit(EXIT_FAILURE);
+    }
+    if (a.stream_height < 0) {
+        std::fprintf(
+            stderr, "--stream-height must be >= 0 (0 streams the full z)\n");
         std::exit(EXIT_FAILURE);
     }
     return a;
@@ -277,23 +348,26 @@ struct TrafficModel {
 /// tiles read, charged per recurrence step because the valid region shrinks as
 /// the step index rises.
 void add_chunk_traffic(
-    TrafficModel& traffic, int n, int chunk, bool chebyshev,
-    bool has_previous, bool basket)
+    TrafficModel& traffic, int n, const TileGeometry& tile, int chunk,
+    bool chebyshev, bool has_previous, bool basket)
 {
     const int64_t N =
         static_cast<int64_t>(n) * static_cast<int64_t>(n)
         * static_cast<int64_t>(n);
-    const int64_t x_values = valid_extent_sum(n, kMpkBlockX, chunk);
-    const int64_t y_values = valid_extent_sum(n, kMpkBlockY, chunk);
-    const int64_t z_values = valid_extent_sum(n, kMpkBlockZ, chunk);
+    const int64_t x_values = valid_extent_sum(n, tile.x, chunk);
+    const int64_t y_values = valid_extent_sum(n, tile.y, chunk);
+    const int64_t z_values = valid_extent_sum(n, tile.z, chunk);
     const int64_t valid_tile_values = x_values * y_values * z_values;
+    const int64_t staged =
+        static_cast<int64_t>(tile.x + 2 * chunk)
+        * static_cast<int64_t>(tile.y + 2 * chunk)
+        * static_cast<int64_t>(tile.z + 2 * chunk);
 
     ++traffic.chunks;
     ++traffic.pde_launches;
     ++traffic.tail_launches;
     traffic.max_chunk = std::max(traffic.max_chunk, chunk);
-    traffic.tile_values =
-        std::max(traffic.tile_values, mpk_tile_volume(chunk));
+    traffic.tile_values = std::max(traffic.tile_values, staged);
     traffic.input_values += valid_tile_values;
     if (chebyshev && has_previous)
         traffic.input_values += valid_tile_values;
@@ -304,15 +378,12 @@ void add_chunk_traffic(
     if (basket) {
         for (int step = 1; step <= chunk; ++step) {
             const int halo = chunk - step;
-            const int64_t vx = valid_extent_sum(n, kMpkBlockX, halo);
-            const int64_t vy = valid_extent_sum(n, kMpkBlockY, halo);
-            const int64_t vz = valid_extent_sum(n, kMpkBlockZ, halo);
-            const int64_t bx =
-                upper_face_tile_count(n, kMpkBlockX, halo);
-            const int64_t by =
-                upper_face_tile_count(n, kMpkBlockY, halo);
-            const int64_t bz =
-                upper_face_tile_count(n, kMpkBlockZ, halo);
+            const int64_t vx = valid_extent_sum(n, tile.x, halo);
+            const int64_t vy = valid_extent_sum(n, tile.y, halo);
+            const int64_t vz = valid_extent_sum(n, tile.z, halo);
+            const int64_t bx = upper_face_tile_count(n, tile.x, halo);
+            const int64_t by = upper_face_tile_count(n, tile.y, halo);
+            const int64_t bz = upper_face_tile_count(n, tile.z, halo);
             const int64_t face_visits =
                 bx * vy * vz + by * vx * vz + bz * vx * vy;
             // Each visited upper face reads three coefficients and the three
@@ -331,26 +402,33 @@ void add_chunk_traffic(
 
 /// The whole basis evaluation's traffic, launch by launch.
 ///
-/// Monomial and Newton run one launch for the full width. Chebyshev needs two
-/// predecessors live, so its shared tile holds three buffers and the width is
-/// walked in chunks, which is why it alone can report more than one launch.
+/// In the full-volume family, monomial and Newton run one launch for the full
+/// width, while Chebyshev needs two predecessors live, so its shared tile holds
+/// three buffers and the width is walked in chunks. The plane-streamed family
+/// pays a third predecessor as one more plane per level rather than a third
+/// volume, so it is never chunked and Chebyshev costs it one launch too.
 [[nodiscard]] TrafficModel traffic_model(
-    int n, int steps, PolynomialBasis basis, bool basket)
+    int n, const TileGeometry& tile, int steps, PolynomialBasis basis,
+    bool basket, bool chunked)
 {
     TrafficModel traffic;
     const bool chebyshev = basis == PolynomialBasis::Chebyshev;
     traffic.shared_buffers = chebyshev ? 3 : 2;
-    if (chebyshev) {
+    if (chebyshev && chunked) {
         int offset = 0;
         while (offset < steps) {
             const int chunk =
                 std::min(kMpkPreferredS, steps - offset);
             add_chunk_traffic(
-                traffic, n, chunk, true, offset > 0, basket);
+                traffic, n, tile, chunk, true, offset > 0, basket);
             offset += chunk;
         }
-    } else {
-        add_chunk_traffic(traffic, n, steps, false, false, basket);
+        return traffic;
+    }
+    // add_chunk_traffic already charges the Chebyshev tail, which is the same
+    // accounting whether or not the width was walked in chunks.
+    add_chunk_traffic(traffic, n, tile, steps, chebyshev, false, basket);
+    if (!chebyshev) {
         // start tail + column-zero tail write, then one read/write pair per
         // recurrence.  Newton additionally reads one scalar shift per step.
         traffic.tail_kernel_values =
@@ -360,6 +438,102 @@ void add_chunk_traffic(
     return traffic;
 }
 
+/// A device name with its spaces closed up, for a whitespace-delimited record.
+///
+/// The marker lines are parsed field by field on whitespace, so a value that
+/// contains a space would silently become two fields and shift every column
+/// after it. Substituting rather than quoting keeps the parsers unchanged.
+[[nodiscard]] std::string record_token(const char* text)
+{
+    std::string token = text != nullptr ? text : "";
+    if (token.empty()) return "unspecified";
+    for (char& character : token)
+        if (character == ' ' || character == ',') character = '_';
+    return token;
+}
+
+/// The tile the selected family stages around each interior point.
+[[nodiscard]] TileGeometry tile_geometry(const Args& args)
+{
+    if (args.family == MpkKernelFamily::PlaneStreamed) {
+        return TileGeometry{
+            kMpkStreamTileX, kMpkStreamTileY,
+            mpk_stream_effective_height(args.n, args.stream_height)};
+    }
+    return TileGeometry{kMpkBlockX, kMpkBlockY, kMpkBlockZ};
+}
+
+/// Thread blocks one PDE launch dispatches over an n-cubed grid.
+[[nodiscard]] int64_t grid_blocks_for(int n, const TileGeometry& tile)
+{
+    return static_cast<int64_t>((n + tile.x - 1) / tile.x)
+         * static_cast<int64_t>((n + tile.y - 1) / tile.y)
+         * static_cast<int64_t>((n + tile.z - 1) / tile.z);
+}
+
+/**
+ * Scatter a logically indexed column into the physical layout the kernel reads.
+ *
+ * The two coincide unless a padded row stride is compiled in, in which case the
+ * physical column is longer and carries gaps between rows. Those gaps are
+ * written zero here and never written again by any kernel, which is the
+ * precondition under which a whole-column dot product or norm still reduces over
+ * the logical field alone. padding_residual below is what checks it held.
+ */
+void scatter_to_physical(
+    const Eigen::VectorXd& logical, int n, int64_t physical_ld,
+    std::vector<double>& physical)
+{
+    physical.assign(static_cast<std::size_t>(physical_ld), 0.0);
+    const int pitch = mpk_pitch_x(n);
+    const int64_t logical_N =
+        static_cast<int64_t>(n) * static_cast<int64_t>(n)
+        * static_cast<int64_t>(n);
+    for (int k = 0; k < n; ++k)
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i)
+                physical[static_cast<std::size_t>(
+                    mpk_field_index(i, j, k, n, pitch))] =
+                        logical[(static_cast<int64_t>(k) * n + j) * n + i];
+    for (int c = 0; c < 3; ++c)
+        physical[static_cast<std::size_t>(mpk_physical_length(n) + c)] =
+            logical[logical_N + c];
+}
+
+/// The inverse, so a physical column can be compared with a logical reference.
+void gather_to_logical(const double* physical, int n, Eigen::VectorXd& logical)
+{
+    const int pitch = mpk_pitch_x(n);
+    const int64_t logical_N =
+        static_cast<int64_t>(n) * static_cast<int64_t>(n)
+        * static_cast<int64_t>(n);
+    for (int k = 0; k < n; ++k)
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i)
+                logical[(static_cast<int64_t>(k) * n + j) * n + i] =
+                    physical[mpk_field_index(i, j, k, n, pitch)];
+    for (int c = 0; c < 3; ++c)
+        logical[logical_N + c] = physical[mpk_physical_length(n) + c];
+}
+
+/// Largest magnitude anywhere in the padded gaps of a physical column.
+///
+/// Reported rather than tolerated. A padded layout may only share the solver's
+/// whole-column reductions while this is exactly zero; anything else means the
+/// reductions have to be rewritten to walk logical rows.
+[[nodiscard]] double padding_residual(const double* physical, int n)
+{
+    if (mpk_pad_length(n) == 0) return 0.0;
+    const int pitch = mpk_pitch_x(n);
+    double worst = 0.0;
+    for (int k = 0; k < n; ++k)
+        for (int j = 0; j < n; ++j)
+            for (int i = n; i < pitch; ++i)
+                worst = std::max(
+                    worst, std::fabs(physical[mpk_field_index(i, j, k, n, pitch)]));
+    return worst;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -367,6 +541,13 @@ int main(int argc, char** argv)
     try {
         const Args args = parse_args(argc, argv);
         const CaPricingModel model;
+        // The full-volume Chebyshev kernel is excluded from the qualifier
+        // because a chunk boundary passes the same address as input and output.
+        // The streamed family never chunks, so its Chebyshev path carries it.
+        const bool restricted_kernel =
+            kMpkRestrictEnabled
+            && (args.family == MpkKernelFamily::PlaneStreamed
+                || args.basis != PolynomialBasis::Chebyshev);
 
         CUDA_CHECK(cudaSetDevice(args.device));
         const DeviceContention contention = check_device_contention();
@@ -376,21 +557,28 @@ int main(int argc, char** argv)
         cudaDeviceProp prop{};
         CUDA_CHECK(cudaGetDeviceProperties(&prop, args.device));
 
+        const bool streamed = args.family == MpkKernelFamily::PlaneStreamed;
+        const bool chebyshev = args.basis == PolynomialBasis::Chebyshev;
+        const TileGeometry tile = tile_geometry(args);
+
         // A swept tile geometry can ask for more shared memory than the device
         // will opt into. That is a property of the geometry, not a failure of the
         // run, so it is reported and separated from a numerical failure by its
         // exit code rather than crashing inside cudaFuncSetAttribute.
         const std::size_t requested_shared =
-            args.basis == PolynomialBasis::Chebyshev
-                ? gpu_pde_chebyshev_shared_bytes(args.s)
-                : gpu_pde_matrix_powers_shared_bytes(args.s);
+            streamed
+                ? mpk_stream_shared_bytes(args.s, chebyshev)
+                : (chebyshev
+                       ? gpu_pde_chebyshev_shared_bytes(args.s)
+                       : gpu_pde_matrix_powers_shared_bytes(args.s));
         if (requested_shared > prop.sharedMemPerBlockOptin) {
             std::printf(
                 "CA polynomial basis\n"
                 "  device: %s\n"
-                "  tile %dx%dx%d at s=%d needs %.1f KiB shared, above the %.1f KiB opt-in limit\n"
+                "  %s tile %dx%dx%d at s=%d needs %.1f KiB shared, above the %.1f KiB opt-in limit\n"
                 "  verdict: geometry not admissible at this width\n",
-                prop.name, kMpkBlockX, kMpkBlockY, kMpkBlockZ, args.s,
+                prop.name, mpk_family_name(args.family),
+                tile.x, tile.y, tile.z, args.s,
                 static_cast<double>(requested_shared) / 1024.0,
                 static_cast<double>(prop.sharedMemPerBlockOptin) / 1024.0);
             return 2;
@@ -401,10 +589,15 @@ int main(int argc, char** argv)
             model.sigma, model.rho, model.weight, model.spot,
             model.alpha, args.rainbow);
         const GpuPdeOperator op = make_gpu_pde_operator(sys, model, args.rainbow);
-        const int64_t ld = static_cast<int64_t>(sys.N) + 3;
+        // Two leading dimensions, because the reference and the device need not
+        // agree on the layout. The assembled operator is logical by construction,
+        // so every Eigen quantity below is sized logically; ld is what the device
+        // columns actually occupy, which is longer under a padded row stride.
+        const int64_t logical_ld = static_cast<int64_t>(sys.N) + 3;
+        const int64_t ld = mpk_column_length(args.n);
 
         const SpMat A = args.rainbow ? sys.A : build_A_tilde(sys.A, sys.B, sys.N);
-        Eigen::VectorXd start(ld);
+        Eigen::VectorXd start(logical_ld);
         start.setZero();
         start.head(sys.N) = sys.u0;
         if (!args.rainbow) start.tail(3) = make_s_vec(0.0);
@@ -427,14 +620,14 @@ int main(int argc, char** argv)
         if (!(newton_normalization > 0.0))
             throw std::runtime_error("spectral enclosure has zero width");
 
-        Eigen::MatrixXd monomial_reference(ld, args.s + 1);
-        Eigen::MatrixXd newton_reference(ld, args.s + 1);
-        Eigen::MatrixXd chebyshev_reference(ld, args.s + 1);
+        Eigen::MatrixXd monomial_reference(logical_ld, args.s + 1);
+        Eigen::MatrixXd newton_reference(logical_ld, args.s + 1);
+        Eigen::MatrixXd chebyshev_reference(logical_ld, args.s + 1);
         monomial_reference.col(0) = start;
         newton_reference.col(0) = start;
         chebyshev_reference.col(0) = start;
         auto apply_scaled = [&](const Eigen::Ref<const Eigen::VectorXd>& x) {
-            Eigen::VectorXd y = Eigen::VectorXd::Zero(ld);
+            Eigen::VectorXd y = Eigen::VectorXd::Zero(logical_ld);
             if (args.rainbow)
                 y.head(sys.N).noalias() = args.scale * (A * x.head(sys.N));
             else
@@ -573,14 +766,27 @@ int main(int argc, char** argv)
             std::min(kMpkMaxS, reference_s_max + 1);
 
         const std::vector<double> face_b = make_gpu_face_b(sys, model);
+        // The start vector in the layout the kernel reads. Under a padded row
+        // stride this also establishes the invariant the padded arm depends on:
+        // every gap starts at exactly zero and no kernel writes one afterwards.
+        std::vector<double> physical_start;
+        scatter_to_physical(start, args.n, ld, physical_start);
+
         double *d_start = nullptr, *d_B = nullptr;
         double *d_face_b = nullptr, *d_shifts = nullptr;
         CUDA_CHECK(cudaMalloc(&d_start, static_cast<std::size_t>(ld) * sizeof(double)));
         CUDA_CHECK(cudaMalloc(
             &d_B, static_cast<std::size_t>(ld) * static_cast<std::size_t>(args.s + 1)
                 * sizeof(double)));
+        // Basis columns start zeroed so a padded gap the kernel never writes
+        // reads back as zero rather than as whatever the allocator returned.
+        CUDA_CHECK(cudaMemset(
+            d_B, 0,
+            static_cast<std::size_t>(ld)
+                * static_cast<std::size_t>(args.s + 1) * sizeof(double)));
         CUDA_CHECK(cudaMemcpy(
-            d_start, start.data(), static_cast<std::size_t>(ld) * sizeof(double),
+            d_start, physical_start.data(),
+            static_cast<std::size_t>(ld) * sizeof(double),
             cudaMemcpyHostToDevice));
         if (!args.rainbow) {
             CUDA_CHECK(cudaMalloc(&d_face_b, face_b.size() * sizeof(double)));
@@ -597,21 +803,41 @@ int main(int argc, char** argv)
                 cudaMemcpyHostToDevice));
         }
 
-        const TrafficModel traffic =
-            traffic_model(args.n, args.s, args.basis, !args.rainbow);
+        const TrafficModel traffic = traffic_model(
+            args.n, tile, args.s, args.basis, !args.rainbow, !streamed);
         auto launch_basis = [&]() {
+            if (streamed) {
+                if (args.basis == PolynomialBasis::Newton) {
+                    return gpu_pde_stream_newton_basis(
+                        d_start, d_B, ld, args.s, op, d_face_b, args.scale,
+                        d_shifts, newton_normalization, args.stream_height,
+                        nullptr, args.shared_carveout);
+                }
+                if (chebyshev) {
+                    return gpu_pde_stream_chebyshev_basis(
+                        d_start, d_B, ld, args.s, op, d_face_b, args.scale,
+                        chebyshev_center, chebyshev_half_width,
+                        args.stream_height, nullptr, args.shared_carveout);
+                }
+                return gpu_pde_stream_matrix_powers(
+                    d_start, d_B, ld, args.s, op, d_face_b, args.scale,
+                    args.stream_height, nullptr, args.shared_carveout);
+            }
             if (args.basis == PolynomialBasis::Newton) {
                 return gpu_pde_newton_basis(
                     d_start, d_B, ld, args.s, op, d_face_b, args.scale,
-                    d_shifts, newton_normalization);
+                    d_shifts, newton_normalization, nullptr,
+                    args.shared_carveout);
             }
-            if (args.basis == PolynomialBasis::Chebyshev) {
+            if (chebyshev) {
                 return gpu_pde_chebyshev_basis(
                     d_start, d_B, ld, args.s, op, d_face_b, args.scale,
-                    chebyshev_center, chebyshev_half_width);
+                    chebyshev_center, chebyshev_half_width, nullptr,
+                    args.shared_carveout);
             }
             return gpu_pde_matrix_powers(
-                d_start, d_B, ld, args.s, op, d_face_b, args.scale);
+                d_start, d_B, ld, args.s, op, d_face_b, args.scale,
+                nullptr, args.shared_carveout);
         };
         auto release_device = [&]() {
             CUDA_CHECK(cudaFree(d_start));
@@ -637,9 +863,15 @@ int main(int argc, char** argv)
             CUDA_CHECK(cudaDeviceSynchronize());
             std::printf(
                 "MPK_PROFILE basis_evaluations=1 basis=%s n=%d s=%d "
-                "chunks=%d pde_launches=%d tail_launches=%d contended=%d\n",
+                "chunks=%d pde_launches=%d tail_launches=%d "
+                "shared_carveout=%s shared_pad_x=%d family=%s "
+                "tile=%dx%dx%d threads=%d stream_height=%d contended=%d\n",
                 basis_name(args.basis), args.n, args.s, traffic.chunks,
                 traffic.pde_launches, traffic.tail_launches,
+                carveout_name(args.shared_carveout), kMpkSharedPadX,
+                mpk_family_name(args.family), tile.x, tile.y, tile.z,
+                streamed ? kMpkStreamThreads : kMpkThreadsPerBlock,
+                streamed ? tile.z : 0,
                 contention.contended ? 1 : 0);
             release_device();
             return EXIT_SUCCESS;
@@ -654,10 +886,11 @@ int main(int argc, char** argv)
             std::printf(
                 "CA polynomial basis\n"
                 "  device: %s\n"
-                "  tile %dx%dx%d at s=%d requested %.1f KiB shared and the device "
+                "  %s tile %dx%dx%d at s=%d requested %.1f KiB shared and the device "
                 "refused it, against a reported %.1f KiB opt-in limit\n"
                 "  verdict: geometry not admissible at this width\n",
-                prop.name, kMpkBlockX, kMpkBlockY, kMpkBlockZ, args.s,
+                prop.name, mpk_family_name(args.family),
+                tile.x, tile.y, tile.z, args.s,
                 static_cast<double>(requested_shared) / 1024.0,
                 static_cast<double>(prop.sharedMemPerBlockOptin) / 1024.0);
             return 2;
@@ -674,12 +907,30 @@ int main(int argc, char** argv)
 
         double worst_abs = 0.0;
         double worst_rel = 0.0;
+        double worst_padding = 0.0;
         int worst_power = 0;
         bool finite_errors = true;
+        // Kept per column rather than only as a maximum, because the operator
+        // gate is stated per column: an error that grows with the power is a
+        // different failure from one that appears at a single boundary row.
+        std::vector<double> column_abs;
+        std::vector<double> column_rel;
+        column_abs.reserve(static_cast<std::size_t>(args.s + 1));
+        column_rel.reserve(static_cast<std::size_t>(args.s + 1));
+        // The device columns are physical and the reference is logical, so each
+        // column is packed before it is compared. The two coincide unless a
+        // padded row stride is compiled in.
+        Eigen::VectorXd packed(logical_ld);
         for (int q = 0; q <= args.s; ++q) {
-            const double abs_err = (measured.col(q) - reference.col(q)).lpNorm<Eigen::Infinity>();
+            gather_to_logical(measured.col(q).data(), args.n, packed);
+            worst_padding = std::max(
+                worst_padding, padding_residual(measured.col(q).data(), args.n));
+            const double abs_err =
+                (packed - reference.col(q)).lpNorm<Eigen::Infinity>();
             const double denom = reference.col(q).lpNorm<Eigen::Infinity>();
             const double rel_err = denom > 0.0 ? abs_err / denom : abs_err;
+            column_abs.push_back(abs_err);
+            column_rel.push_back(rel_err);
             if (!std::isfinite(abs_err) || !std::isfinite(rel_err)) {
                 finite_errors = false;
                 worst_abs = abs_err;
@@ -694,16 +945,33 @@ int main(int argc, char** argv)
             }
         }
 
+        // The per-column record the operator gate is stated in. Emitted before
+        // the verdict so a failing run still shows which power the error entered
+        // at, which is what distinguishes a boundary-row mistake from an error
+        // that compounds through the recurrence.
+        for (std::size_t q = 0; q < column_abs.size(); ++q) {
+            std::printf(
+                "MPK_COLUMN family=%s option=%s basis=%s n=%d s=%d column=%zu "
+                "abs=%.9e rel=%.9e\n",
+                mpk_family_name(args.family),
+                args.rainbow ? "rainbow" : "basket", basis_name(args.basis),
+                args.n, args.s, q, column_abs[q], column_rel[q]);
+        }
+
         // A geometry that alters numerics is never timed: the comparison against
-        // the assembled operator gates the timing loop, not the exit code.
+        // the assembled operator gates the timing loop, not the exit code. A
+        // padded layout carries one further condition, that its gaps stayed
+        // exactly zero, because that is what lets a reduction ignore them.
         const bool correct =
-            finite_errors && (worst_rel <= 5e-11 || worst_abs <= 5e-13);
+            finite_errors && (worst_rel <= 5e-11 || worst_abs <= 5e-13)
+            && worst_padding == 0.0;
         if (!correct) {
             std::fprintf(
                 stderr,
-                "FAIL: matrix-powers mismatch at tile %dx%dx%d, s=%d: abs=%.6e rel=%.6e at column %d\n",
-                kMpkBlockX, kMpkBlockY, kMpkBlockZ, args.s,
-                worst_abs, worst_rel, worst_power);
+                "FAIL: matrix-powers mismatch at %s tile %dx%dx%d, s=%d: "
+                "abs=%.6e rel=%.6e at column %d, padding residual %.6e\n",
+                mpk_family_name(args.family), tile.x, tile.y, tile.z, args.s,
+                worst_abs, worst_rel, worst_power, worst_padding);
             return EXIT_FAILURE;
         }
 
@@ -735,10 +1003,12 @@ int main(int argc, char** argv)
         // old full-tile estimate, this excludes out-of-domain locations that the
         // kernel fills with zero and includes Basket face/tail reads.  Chebyshev
         // is modeled chunk by chunk, including its second input after chunk zero.
-        const int64_t grid_blocks = mpk_grid_blocks(args.n);
+        const int64_t grid_blocks = grid_blocks_for(args.n, tile);
+        const int64_t interior_points =
+            static_cast<int64_t>(tile.x) * tile.y * tile.z;
         const double redundancy =
             static_cast<double>(traffic.tile_values)
-            / static_cast<double>(kMpkInteriorPoints);
+            / static_cast<double>(interior_points);
         const double effective_read_redundancy =
             static_cast<double>(traffic.input_values)
             / static_cast<double>(sys.N);
@@ -785,13 +1055,55 @@ int main(int argc, char** argv)
                     / seconds
                 : 0.0;
 
+        const int threads_per_block =
+            streamed ? kMpkStreamThreads : kMpkThreadsPerBlock;
         int active_blocks = 0;
-        CUDA_CHECK(gpu_pde_basis_occupancy(
-            args.s, args.basis == PolynomialBasis::Chebyshev,
-            &active_blocks));
+        cudaFuncAttributes function_attributes{};
+        if (streamed) {
+            CUDA_CHECK(gpu_pde_stream_occupancy(
+                args.s, chebyshev, &active_blocks, args.shared_carveout));
+            CUDA_CHECK(gpu_pde_stream_function_attributes(
+                args.s, chebyshev, &function_attributes,
+                args.shared_carveout));
+        } else {
+            CUDA_CHECK(gpu_pde_basis_occupancy(
+                args.s, chebyshev, &active_blocks, args.shared_carveout));
+            CUDA_CHECK(gpu_pde_basis_function_attributes(
+                args.s, chebyshev, &function_attributes,
+                args.shared_carveout));
+        }
         const double occupancy =
-            static_cast<double>(active_blocks * 128)
+            static_cast<double>(active_blocks * threads_per_block)
             / static_cast<double>(prop.maxThreadsPerMultiProcessor);
+        // Times the grid covers the device at this residency. Below one the
+        // launch cannot fill it however high the occupancy per block is, which
+        // is the term a long streamed segment trades redundancy against.
+        const double waves =
+            active_blocks > 0 && prop.multiProcessorCount > 0
+                ? static_cast<double>(grid_blocks)
+                    / static_cast<double>(
+                          static_cast<int64_t>(active_blocks)
+                          * prop.multiProcessorCount)
+                : 0.0;
+        const double points_per_thread =
+            static_cast<double>(interior_points)
+            / static_cast<double>(threads_per_block);
+        // Block-wide barriers per block. The streamed family synchronizes once
+        // per pipeline step rather than twice per recurrence step, so the two
+        // families are not comparable per launch and the count is reported as
+        // its own quantity rather than folded into a rate.
+        // Counted at the chunk width rather than the requested width, because a
+        // chunked Chebyshev launch runs its own shorter recurrence.
+        const int64_t barriers_per_block =
+            streamed
+                ? mpk_stream_barriers_per_block(traffic.max_chunk, tile.z)
+                    * static_cast<int64_t>(traffic.pde_launches)
+                : mpk_barriers_per_block(traffic.max_chunk)
+                    * static_cast<int64_t>(traffic.pde_launches);
+        const int64_t staged_points = traffic.tile_values;
+        const double redundant_fraction =
+            static_cast<double>(staged_points - interior_points)
+            / static_cast<double>(interior_points);
 
         // A modeled byte count is useful for a smoke test, but it cannot close
         // the vertical coordinate, so a causal verdict needs a measured DRAM
@@ -846,8 +1158,25 @@ int main(int argc, char** argv)
                     static_cast<double>(requested_shared) / 1024.0,
                     static_cast<double>(prop.sharedMemPerBlockOptin) / 1024.0);
         std::printf(
-            "  occupancy: %d blocks/SM | %.1f%% resident threads\n",
-            active_blocks, 100.0 * occupancy);
+            "  kernel arm: family=%s | restrict=%s | shared pad x=%d | "
+            "carveout requested=%s reported=%d | barrier elision=%s | "
+            "pitch alignment=%d doubles\n",
+            mpk_family_name(args.family),
+            restricted_kernel ? "on" : "off", kMpkSharedPadX,
+            carveout_name(args.shared_carveout),
+            function_attributes.preferredShmemCarveout,
+            kMpkElideBasisBarrier ? "on" : "off", kMpkPitchAlignment);
+        std::printf(
+            "  launch: %d threads/block | %.2f interior points/thread | "
+            "%d registers/thread | %d B local frame | %zu B static shared\n",
+            threads_per_block, points_per_thread, function_attributes.numRegs,
+            static_cast<int>(function_attributes.localSizeBytes),
+            function_attributes.sharedSizeBytes);
+        std::printf(
+            "  occupancy: %d blocks/SM | %.1f%% resident threads | "
+            "%.2f waves over %d SMs\n",
+            active_blocks, 100.0 * occupancy, waves,
+            prop.multiProcessorCount);
         std::printf("  basis kappa: %.6e\n", basis_kappa);
         std::printf(
             "  comparison kappa: monomial=%.6e newton=%.6e chebyshev=%.6e\n",
@@ -890,14 +1219,16 @@ int main(int argc, char** argv)
             predicted_chebyshev_block_width_max,
             block_basis_kappa, block_monomial_kappa,
             block_newton_kappa, block_chebyshev_kappa);
-        std::printf("  worst error: abs=%.6e rel=%.6e at column %d\n",
-                    worst_abs, worst_rel, worst_power);
         std::printf(
-            "  tile: %dx%dx%d = %d interior points | largest shared tile %lld doubles | "
-            "nominal redundancy %.2fx | %lld blocks/PDE launch\n",
-            kMpkBlockX, kMpkBlockY, kMpkBlockZ, kMpkInteriorPoints,
-            static_cast<long long>(traffic.tile_values), redundancy,
-            static_cast<long long>(grid_blocks));
+            "  worst error: abs=%.6e rel=%.6e at column %d | "
+            "padding residual %.6e\n",
+            worst_abs, worst_rel, worst_power, worst_padding);
+        std::printf(
+            "  tile: %dx%dx%d = %lld interior points | largest staged tile %lld doubles | "
+            "nominal redundancy %.2fx (%.2f ghost/interior) | %lld blocks/PDE launch\n",
+            tile.x, tile.y, tile.z, static_cast<long long>(interior_points),
+            static_cast<long long>(staged_points), redundancy,
+            redundant_fraction, static_cast<long long>(grid_blocks));
         std::printf(
             "  execution: chunks=%d | chunk width max=%d | PDE launches=%d | "
             "tail launches=%d | shared buffers=%d\n",
@@ -965,13 +1296,15 @@ int main(int argc, char** argv)
             "dram_bytes=%.0f dram_source=%s compulsory_gbs=%.6f tiled_gbs=%.6f "
             "dram_roof_gbs=%.6f l2_roof_gbs=%.6f dram_fraction=%.6f "
             "l2_fraction=%.6f launch_fraction=%.6f occupancy=%.6f "
+            "restrict=%d shared_pad_x=%d shared_carveout=%s "
+            "reported_carveout=%d "
             "measured_over_modeled=%.6f nearest_roof=%s "
             "nearest_roof_fraction=%.6f verdict=%s "
             "contended=%d\n",
             std::string(machine.key).c_str(),
             args.rainbow ? "rainbow" : "basket", basis_name(args.basis),
             args.n, sys.N, args.s,
-            kMpkBlockX, kMpkBlockY, kMpkBlockZ, kMpkInteriorPoints,
+            tile.x, tile.y, tile.z, static_cast<int>(interior_points),
             static_cast<long long>(traffic.tile_values), redundancy,
             effective_read_redundancy,
             static_cast<long long>(grid_blocks),
@@ -986,8 +1319,63 @@ int main(int argc, char** argv)
             measured_dram ? "ncu" : "modeled",
             compulsory_gbs, tiled_gbs, dram_roof_gbs, l2_roof_gbs,
             dram_fraction, l2_fraction, launch_fraction, occupancy,
+            restricted_kernel ? 1 : 0, kMpkSharedPadX,
+            carveout_name(args.shared_carveout),
+            function_attributes.preferredShmemCarveout,
             measured_over_modeled, nearest_roof, nearest_roof_fraction,
             verdict_name(verdict), contention.contended ? 1 : 0);
+
+        // The tuning record. Separate from MPK_VERTICAL because it answers a
+        // different question: that record is about which roof the kernel is
+        // near, this one is about which configuration produced the time, and a
+        // sweep has to be able to attribute a row to a build without consulting
+        // the runner's memory of which executable it invoked. Spill loads and
+        // stores are not runtime-visible and come from the ptxas resource
+        // report, so the local frame size stands in for them here.
+        int runtime_version = 0;
+        CUDA_CHECK(cudaRuntimeGetVersion(&runtime_version));
+        std::printf(
+            "MPK_TUNING configuration=%s family=%s tile_x=%d tile_y=%d tile_z=%d "
+            "stream_height=%d threads_per_block=%d shared_pad_x=%d "
+            "pitch_alignment=%d register_cap=%d elide_basis_barrier=%d "
+            "restrict=%d option=%s basis=%s n=%d s=%d "
+            "cuda_runtime=%d gpu_name=%s build_type=%s sm=%d%d "
+            "registers_per_thread=%d local_frame_bytes=%d "
+            "static_shared_bytes=%zu dynamic_shared_bytes=%zu "
+            "shared_optin_bytes=%zu "
+            "median_ms=%.6f min_ms=%.6f max_ms=%.6f repetitions=%zu "
+            "useful_points=%lld staged_points=%lld redundant_fraction=%.6f "
+            "points_per_thread=%.6f blocks=%lld active_blocks_per_sm=%d "
+            "occupancy=%.6f waves=%.6f multiprocessors=%d "
+            "pde_launches=%d tail_launches=%d chunks=%d "
+            "barriers_per_block=%lld "
+            "worst_rel=%.6e worst_abs=%.6e padding_residual=%.6e "
+            "correctness_status=%s contended=%d\n",
+            CAKSM_MPK_CONFIGURATION,
+            mpk_family_name(args.family), tile.x, tile.y, tile.z,
+            streamed ? tile.z : 0, threads_per_block, kMpkSharedPadX,
+            kMpkPitchAlignment, CAKSM_MPK_REGISTER_CAP,
+            kMpkElideBasisBarrier ? 1 : 0, restricted_kernel ? 1 : 0,
+            args.rainbow ? "rainbow" : "basket", basis_name(args.basis),
+            args.n, args.s, runtime_version,
+            record_token(prop.name).c_str(),
+            record_token(CAKSM_BUILD_TYPE).c_str(),
+            prop.major, prop.minor,
+            function_attributes.numRegs,
+            static_cast<int>(function_attributes.localSizeBytes),
+            function_attributes.sharedSizeBytes, requested_shared,
+            static_cast<std::size_t>(prop.sharedMemPerBlockOptin),
+            seconds * 1e3, seconds_min * 1e3, seconds_max * 1e3,
+            timings.size(),
+            static_cast<long long>(
+                static_cast<int64_t>(sys.N) * (args.s + 1)),
+            static_cast<long long>(staged_points), redundant_fraction,
+            points_per_thread, static_cast<long long>(grid_blocks),
+            active_blocks, occupancy, waves, prop.multiProcessorCount,
+            traffic.pde_launches, traffic.tail_launches, traffic.chunks,
+            static_cast<long long>(barriers_per_block),
+            worst_rel, worst_abs, worst_padding, "pass",
+            contention.contended ? 1 : 0);
 
         CUDA_CHECK(cudaEventDestroy(begin));
         CUDA_CHECK(cudaEventDestroy(end));
