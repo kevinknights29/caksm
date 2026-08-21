@@ -36,7 +36,11 @@ MACHINE="${MACHINE:-amd-3960x}"
 M="${M:-8}"
 DIM="${DIM:-2}"
 REPEATS="${REPEATS:-5}"
-S_CEIL="${S_CEIL:-24}"
+# Match the common unchanged-kernel production ceiling by default.  This is a
+# sweep limit, not a claim that every degree is numerically admissible; the CSV
+# records the conditioning and capacity stops independently.  Override it when
+# studying a build with a different configured ceiling.
+S_CEIL="${S_CEIL:-39}"
 # Spilled grids: N = n1^2 well past the ~127k where a 16 MiB slice overflows.
 N1_LIST=(${N1_LIST:-420 480 560})
 

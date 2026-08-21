@@ -57,7 +57,7 @@ if [[ ${#export_csvs[@]} -eq 0 ]]; then
     exit 1
 fi
 
-echo "option_type,n,temporal_steps,ei_steps,tol_ei,method,price,pde_err,ode_err,time_ms" > "$COMBINED"
+echo "option_type,n,temporal_steps,ei_steps,tol_ei,method,price,historical_err,ode_err,time_ms" > "$COMBINED"
 for f in "${export_csvs[@]}"; do
     if [[ ! -s "$f" ]]; then
         echo "  WARNING: skipping empty file $f"

@@ -25,6 +25,12 @@
 #
 #   salloc -N 2 -n 20 -p compute -t 01:00:00 --nodelist=synge-n01,synge-n02
 #   SLURM_OVERLAP=1 ./scripts/regime/ca_nsight_profile.sh
+#
+# A one-node allocation can capture the two-GPU peer-copy path:
+#
+#   SINGLE_NODE=1 N=61 WIDTHS=3 ARMS=exact-depth CERTIFICATE=deferred \
+#   OVERLAPS="off on" \
+#   ./scripts/regime/ca_nsight_profile.sh
 
 set -uo pipefail
 
@@ -34,13 +40,15 @@ DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-2gpu}"
 OUT_DIR="${OUT_DIR:-$ROOT/data/ca-integrator-nsight}"
 NSYS="${NSYS:-/usr/local/cuda-12.8/nsight-systems-2024.6.2/bin/nsys}"
 N="${N:-97}"
-M="${M:-24}"
+M="${M:-39}"
 STEPS="${STEPS:-100}"
 TOL="${TOL:-1e-8}"
 OPTION="${OPTION:-rainbow}"
 WIDTHS="${WIDTHS:-1 4}"
 ARMS="${ARMS:-as-measured exact-depth}"
+CERTIFICATE="${CERTIFICATE:-deferred}"
 AGREEMENT="${AGREEMENT:-step}"
+OVERLAPS="${OVERLAPS:-off}"
 PROFILE_START="${PROFILE_START:-50}"
 PROFILE_STEPS="${PROFILE_STEPS:-3}"
 SRUN_MPI="${SRUN_MPI:-pmix}"
@@ -104,8 +112,8 @@ HEADER
 }
 
 capture() {
-    local arm="$1" width="$2"
-    local stem="$OUT_DIR/${arm}_n${N}_${OPTION}_s${width}"
+    local arm="$1" width="$2" overlap="$3"
+    local stem="$OUT_DIR/${arm}_n${N}_${OPTION}_s${width}_overlap_${overlap}"
     local log="${stem}.txt"
 
     local solver=(
@@ -113,7 +121,9 @@ capture() {
         --n "$N" --m "$M" --s "$width" --steps "$STEPS" --tol "$TOL"
         --repeats 1 --option "$OPTION"
         --basis monomial --orth cholqr2 --arm "$arm"
+        --certificate "$CERTIFICATE"
         --agreement-check "$AGREEMENT"
+        --halo-overlap "$overlap"
         --profile-start "$PROFILE_START" --profile-steps "$PROFILE_STEPS"
     )
     local profiler=(
@@ -121,12 +131,16 @@ capture() {
         -o "${stem}_%q{SLURM_PROCID}" --force-overwrite true
     )
 
-    echo "### nsight arm=$arm n=$N option=$OPTION s=$width agreement=$AGREEMENT"
+    printf '### nsight arm=%s n=%s option=%s s=%s overlap=%s ' \
+        "$arm" "$N" "$OPTION" "$width" "$overlap"
+    printf 'certificate=%s agreement=%s\n' "$CERTIFICATE" "$AGREEMENT"
     {
         not_a_timing_header
         echo "arm=$arm"
         echo "n=$N option=$OPTION s=$width steps=$STEPS m=$M tol=$TOL"
         echo "agreement=$AGREEMENT"
+        echo "certificate=$CERTIFICATE"
+        echo "halo_overlap=$overlap"
         echo "profile_window=steps ${PROFILE_START}..$((PROFILE_START + PROFILE_STEPS - 1))"
         echo
     } > "$log"
@@ -161,7 +175,9 @@ summarize() {
 
 for arm in $ARMS; do
     for width in $WIDTHS; do
-        capture "$arm" "$width"
+        for overlap in $OVERLAPS; do
+            capture "$arm" "$width" "$overlap"
+        done
     done
 done
 
@@ -182,6 +198,8 @@ done < <(find "$OUT_DIR" -maxdepth 1 -name '*.nsys-rep' -print | sort)
     echo "steps=$STEPS"
     echo "tol=$TOL"
     echo "agreement=$AGREEMENT"
+    echo "certificate=$CERTIFICATE"
+    echo "overlaps=$OVERLAPS"
     echo "profile_start=$PROFILE_START"
     echo "profile_steps=$PROFILE_STEPS"
     echo "single_node=$SINGLE_NODE"

@@ -36,12 +36,12 @@ SINGLE="${SINGLE:-$BUILD_DIR/ca-integrator}"
 OUT_DIR="${OUT_DIR:-$ROOT/data/ca-integrator-exact-depth}"
 VALIDATION_DIR="${VALIDATION_DIR:-$ROOT/data/ca-integrator-validation}"
 REFEREE_ROOT="${REFEREE_ROOT:-$ROOT/data}"
-M="${M:-24}"
+M="${M:-39}"
 STEPS="${STEPS:-100}"
 TOL="${TOL:-1e-8}"
 REPEATS="${REPEATS:-7}"
 SRUN_MPI="${SRUN_MPI:-pmix}"
-STATE_ERROR_LIMIT="${STATE_ERROR_LIMIT:-6.13e-11}"
+STATE_RTOL="${STATE_RTOL:-1e-10}"
 
 for binary in "$DISTRIBUTED" "$SINGLE"; do
     if [[ ! -x "$binary" ]]; then
@@ -195,7 +195,7 @@ run_point() {
     local single_state="$VALIDATION_DIR/single_n${n}_${option}.bin"
     local gate=(
         --single-gpu-state "$single_state"
-        --single-state-tol "$STATE_ERROR_LIMIT"
+        --single-state-rtol "$STATE_RTOL"
         --referee-dir "$REFEREE_ROOT/n${n}"
     )
 
@@ -265,7 +265,7 @@ done
     echo "m=$M"
     echo "steps=$STEPS"
     echo "tol=$TOL"
-    echo "single_state_error_limit=$STATE_ERROR_LIMIT"
+    echo "single_state_rtol=$STATE_RTOL"
     echo "repeats=$REPEATS"
     echo "stopped_points=$STOPPED_POINTS"
     echo "acceptance_failures=$ACCEPTANCE_FAILURES"
