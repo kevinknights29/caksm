@@ -198,6 +198,14 @@ add_executable(regime-gpu-place src/regime_gpu_place.cpp)
 target_link_libraries(regime-gpu-place PRIVATE caksm)
 target_compile_options(regime-gpu-place PRIVATE -O2)
 
+# Sweeps the participant and node topology instead of the rung, and writes the canonical CSV
+# behind the poster's trajectory figure. Host-only for the same reason as its sibling above:
+# it reads the accepted placement table and the calibrated preset and adds only the
+# predeclared byte model, so no timer is in the loop.
+add_executable(regime-gpu-trajectory src/regime_gpu_trajectory.cpp)
+target_link_libraries(regime-gpu-trajectory PRIVATE caksm)
+target_compile_options(regime-gpu-trajectory PRIVATE -O2)
+
 # GPU instruments (optional: built only where a CUDA toolkit is present)
 #
 # The GPU analogues of calibrate-alpha and stream. Everything they measure is an offline

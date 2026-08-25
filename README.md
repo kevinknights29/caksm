@@ -16,6 +16,12 @@ The [thesis source](docs/thesis/main.tex) and [compiled thesis](docs/thesis/main
 authoritative account. This README gives a shorter path through the implementation, the accepted
 results, and the commands used to reproduce them.
 
+## Poster
+
+> Poster submitted for the [IMS 2026](https://www.maths.tcd.ie/IMS2026/) Poster competition.
+
+![Communication-avoiding Krylov exponential integration poster](docs/poster/poster.png)
+
 ## Main results
 
 - The financial references are a randomized QMC Basket price of `13.2448993` with a 95% half-width
@@ -46,6 +52,7 @@ experiments; they are not universal performance crossovers.
 
 ## Contents
 
+- [Poster](#poster)
 - [Platforms](#platforms)
 - [Build and test](#build-and-test)
 - [Pricing model and methods](#pricing-model-and-methods)
@@ -536,6 +543,7 @@ figure tied to the corresponding CSV or transcript.
 | `scripts/plots/` | figure scripts and their generated PNGs |
 | `data/` | measured CSVs, reports, profiler manifests, decisions, and provenance records |
 | `docs/thesis/` | thesis source, bibliography, figures, template files, and compiled PDF |
+| `docs/poster/` | the IMS 2026 competition poster, as submitted |
 
 The repository records both successful results and stopped gates. That distinction is intentional:
 an opportunity coordinate says what is worth testing, while a validated result still depends on the
