@@ -34,6 +34,7 @@
 #include "ca_integrator_memory.hpp"
 #include "ca_integrator_slab.cuh"
 #include "ca_pricing_gpu.hpp"
+#include "gpu_allocation.hpp"
 #include "gpu_ca_arnoldi.cuh"
 #include "gpu_contention.cuh"
 #include "gpu_pde_slab.cuh"
@@ -1779,9 +1780,13 @@ int main(int argc, char** argv)
         CUDA_CHECK(cudaGetDeviceProperties(&model_prop, slabs.front().device));
         const GpuMachine& machine =
             lookup_gpu_machine_for_device(model_prop.name);
-        const ReductionTier collective_tier =
-            collective_tier_for_topology(world_gpus, distinct_hosts);
-        if (!tier_cost_available(machine, collective_tier))
+        // The allocation this launch actually received, not a shape the preset assumed.
+        // It decides which rungs exist here, and therefore whether the cost about to be
+        // published describes a link this run crosses.
+        const GpuAllocation observed =
+            allocation_from_world(world_gpus, distinct_hosts);
+        const ReductionTier collective_tier = ::collective_tier(observed);
+        if (!tier_cost_available(machine, observed, collective_tier))
             throw std::runtime_error(
                 "the " + std::string(tier_name(collective_tier))
                 + " collective tier required by " + std::to_string(world_gpus)

@@ -19,6 +19,7 @@
 
 #include "test_regime_helpers.hpp"
 
+#include "gpu_allocation.hpp"
 #include "gpu_machine.hpp"
 #include "gpu_regime.hpp"
 
@@ -41,6 +42,13 @@ namespace {
     gm.roofline_gated = true;
     return gm;
 }
+
+/// The allocations these tests price against. Reachability is a property of the launch, not
+/// of the preset, so a test that asks which rungs exist has to say which shape it means.
+constexpr GpuAllocation kOneDevice {1, 1};   ///< a single-GPU host: no link rung at all
+constexpr GpuAllocation kSyngeNode {1, 2};   ///< one synge node, both V100s
+constexpr GpuAllocation kSyngeFull {2, 2};   ///< both nodes, both GPUs each
+constexpr GpuAllocation kH200Node  {1, 8};   ///< gpu03, the full eight-device node
 
 /// 3D 7-point stencil on an n1^3 grid, exact at the boundary.
 [[nodiscard]] int64_t stencil_nnz_3d(int n1)
@@ -66,7 +74,7 @@ TEST_CASE("the calibrated rtx-3090 preset is self-consistent", "[regime][gpu][pr
     // be true while an unreachable rung is falsely marked, nor while a reachable one is unset.
     REQUIRE(gm.reduction_calibrated);
     REQUIRE(gm.roofline_gated);
-    REQUIRE(all_reachable_tiers_calibrated(gm));
+    REQUIRE(all_reachable_tiers_calibrated(gm, kOneDevice));
     REQUIRE(gm.tier_calibrated[tier_index(ReductionTier::GRID)]);
     REQUIRE_FALSE(gm.tier_calibrated[tier_index(ReductionTier::DEVICE_P2P)]);
 
@@ -129,9 +137,13 @@ TEST_CASE("the two-card contrast discriminates on measured constants", "[regime]
     REQUIRE(v100.fp32_flops_peak / v100.fp64_flops_peak < 4.0);
     REQUIRE(c3090.fp32_flops_peak / c3090.fp64_flops_peak > 32.0);
 
-    const GpuRegimePoint a = place_gpu(v100, v100.sm_count, highest_calibrated_tier(v100),
+    // Each card at the top rung its own cluster reaches: the whole synge allocation for the
+    // V100, a single workstation device for the 3090.
+    const GpuRegimePoint a = place_gpu(v100, v100.sm_count,
+                                       highest_calibrated_tier(v100, kSyngeFull),
                                        nnz, N, m, 1.0, Precision::FP64, s);
-    const GpuRegimePoint b = place_gpu(c3090, c3090.sm_count, highest_calibrated_tier(c3090),
+    const GpuRegimePoint b = place_gpu(c3090, c3090.sm_count,
+                                       highest_calibrated_tier(c3090, kOneDevice),
                                        nnz, N, m, 1.0, Precision::FP64, s);
 
     // Both reach Upper-Right at production resolution, the corner puffin's CPU could not.
@@ -156,9 +168,9 @@ TEST_CASE("the V100 ladder is complete and every rung is a real step",
 
     // All five rungs measured, so placement may use the hardware's full reach.
     REQUIRE(v100.reduction_calibrated);
-    REQUIRE(all_reachable_tiers_calibrated(v100));
-    REQUIRE(highest_calibrated_tier(v100) == highest_reachable_tier(v100));
-    REQUIRE(highest_calibrated_tier(v100) == ReductionTier::NODE);
+    REQUIRE(all_reachable_tiers_calibrated(v100, kSyngeFull));
+    REQUIRE(highest_calibrated_tier(v100, kSyngeFull) == highest_reachable_tier(kSyngeFull));
+    REQUIRE(highest_calibrated_tier(v100, kSyngeFull) == ReductionTier::NODE);
 
     // Each rung must cost strictly more than the one below, or it is not a distinct point on
     // the swept horizontal axis and the ladder has fewer rungs than it claims.
@@ -194,16 +206,16 @@ TEST_CASE("an uncalibrated rung is never placed on", "[regime][gpu][preset]")
     gm.t_reduce_s[tier_index(ReductionTier::NODE)]      = 0.0;
     gm.tier_calibrated[tier_index(ReductionTier::NODE)] = false;
 
-    REQUIRE(highest_reachable_tier(gm) == ReductionTier::NODE);
-    REQUIRE(highest_calibrated_tier(gm) == ReductionTier::DEVICE_P2P);
+    REQUIRE(highest_reachable_tier(kSyngeFull) == ReductionTier::NODE);
+    REQUIRE(highest_calibrated_tier(gm, kSyngeFull) == ReductionTier::DEVICE_P2P);
     REQUIRE_THAT(reduction_cost_s(gm, ReductionTier::NODE),
                  WithinRel(reduction_cost_s(gm, ReductionTier::DEVICE_P2P), 1e-12));
-    REQUIRE_FALSE(all_reachable_tiers_calibrated(gm));
+    REQUIRE_FALSE(all_reachable_tiers_calibrated(gm, kSyngeFull));
 
     // The 3090 is complete by a different route: its unreachable rungs need no measurement.
     const GpuMachine& c3090 = lookup_gpu_machine("rtx-3090");
-    REQUIRE(highest_calibrated_tier(c3090) == highest_reachable_tier(c3090));
-    REQUIRE(highest_calibrated_tier(c3090) == ReductionTier::GRID);
+    REQUIRE(highest_calibrated_tier(c3090, kOneDevice) == highest_reachable_tier(kOneDevice));
+    REQUIRE(highest_calibrated_tier(c3090, kOneDevice) == ReductionTier::GRID);
 }
 
 // The structural break: L2 does not grow with the team
@@ -401,16 +413,21 @@ TEST_CASE("launch_share flags a ladder hidden behind launch cost", "[regime][gpu
 
 /// A host with one GPU has no device-to-device or node rung to measure.
 /// Expected: those tiers report unreachable rather than returning a cost.
-TEST_CASE("a single-device preset cannot reach the interconnect rungs", "[regime][gpu][rh]")
+TEST_CASE("a one-device allocation cannot reach the interconnect rungs", "[regime][gpu][rh]")
 {
-    const GpuMachine& g3090 = lookup_gpu_machine("rtx-3090");
-    REQUIRE(tier_reachable(g3090, ReductionTier::GRID));
-    REQUIRE_FALSE(tier_reachable(g3090, ReductionTier::DEVICE_P2P));
-    REQUIRE_FALSE(tier_reachable(g3090, ReductionTier::NODE));
-    REQUIRE(highest_reachable_tier(g3090) == ReductionTier::GRID);
+    REQUIRE(tier_reachable(kOneDevice, ReductionTier::GRID));
+    REQUIRE_FALSE(tier_reachable(kOneDevice, ReductionTier::DEVICE_P2P));
+    REQUIRE_FALSE(tier_reachable(kOneDevice, ReductionTier::NODE));
+    REQUIRE(highest_reachable_tier(kOneDevice) == ReductionTier::GRID);
 
-    const GpuMachine& v100 = lookup_gpu_machine("v100-pcie-16gb");
-    REQUIRE(highest_reachable_tier(v100) == ReductionTier::NODE);
+    // One node of several devices reaches the link but not the fabric. This is the case the
+    // old preset-stored cluster shape could not express: the same hardware, allocated two
+    // ways, reaches two different top rungs.
+    REQUIRE(tier_reachable(kSyngeNode, ReductionTier::DEVICE_P2P));
+    REQUIRE_FALSE(tier_reachable(kSyngeNode, ReductionTier::NODE));
+    REQUIRE(highest_reachable_tier(kSyngeNode) == ReductionTier::DEVICE_P2P);
+    REQUIRE(highest_reachable_tier(kSyngeFull) == ReductionTier::NODE);
+    REQUIRE(highest_reachable_tier(kH200Node) == ReductionTier::DEVICE_P2P);
 }
 
 /// The rung a collective actually crosses is set by the topology, not by how
@@ -430,19 +447,24 @@ TEST_CASE("the solver reduction tier follows GPUs and nodes, not process count",
     REQUIRE_THROWS_AS(collective_tier_for_topology(1, 2),
                       std::invalid_argument);
 
+    // An asymmetric world is refused rather than rounded to a per-node figure.
+    REQUIRE_THROWS_AS(collective_tier_for_topology(3, 2), std::invalid_argument);
+
     const GpuMachine& v100 = lookup_gpu_machine("v100-pcie-16gb");
-    REQUIRE(tier_cost_available(v100, ReductionTier::GRID));
-    REQUIRE(tier_cost_available(v100, ReductionTier::DEVICE_P2P));
-    REQUIRE(tier_cost_available(v100, ReductionTier::NODE));
+    REQUIRE(tier_cost_available(v100, kSyngeFull, ReductionTier::GRID));
+    REQUIRE(tier_cost_available(v100, kSyngeFull, ReductionTier::DEVICE_P2P));
+    REQUIRE(tier_cost_available(v100, kSyngeFull, ReductionTier::NODE));
+    // The same preset, allocated one node: the fabric rung is simply not there to price.
+    REQUIRE_FALSE(tier_cost_available(v100, kSyngeNode, ReductionTier::NODE));
     GpuMachine incomplete = v100;
     incomplete.tier_calibrated[tier_index(ReductionTier::NODE)] = false;
-    REQUIRE_FALSE(tier_cost_available(incomplete, ReductionTier::NODE));
-    REQUIRE(tier_cost_available(incomplete, ReductionTier::DEVICE_P2P));
+    REQUIRE_FALSE(tier_cost_available(incomplete, kSyngeFull, ReductionTier::NODE));
+    REQUIRE(tier_cost_available(incomplete, kSyngeFull, ReductionTier::DEVICE_P2P));
 
     const GpuMachine& g3090 = lookup_gpu_machine("rtx-3090");
-    REQUIRE(tier_cost_available(g3090, ReductionTier::GRID));
-    REQUIRE_FALSE(tier_cost_available(g3090, ReductionTier::DEVICE_P2P));
-    REQUIRE_FALSE(tier_cost_available(g3090, ReductionTier::NODE));
+    REQUIRE(tier_cost_available(g3090, kOneDevice, ReductionTier::GRID));
+    REQUIRE_FALSE(tier_cost_available(g3090, kOneDevice, ReductionTier::DEVICE_P2P));
+    REQUIRE_FALSE(tier_cost_available(g3090, kOneDevice, ReductionTier::NODE));
 }
 
 // The gate, per kernel

@@ -38,6 +38,7 @@
 #include <string_view>
 #include <vector>
 
+#include "gpu_allocation.hpp"
 #include "gpu_machine.hpp"
 #include "gpu_regime.hpp"
 
@@ -77,6 +78,17 @@ struct Args {
     int    dim = 3;
     int    s   = 8;
     int    sm  = 0;          ///< 0 = all SMs
+    /**
+     * The allocation to price the ladder against. It decides which rungs exist, which used to
+     * be read off the preset and is not a property of a device: the same H200 preset serves a
+     * one-GPU development shell and the full eight-GPU node, and only the launch knows which.
+     *
+     * Defaults to one device, the shape that reaches no link at all. That is deliberately the
+     * conservative end: an unstated allocation cannot conjure a DEVICE_P2P row. A caller that
+     * has two nodes of two GPUs says so, as scripts/regime/regime_gpu_place.sh does for synge.
+     */
+    int    nodes      = 1;
+    int    local_gpus = 1;
     double budget_frac = 0.8;
     std::vector<int> n1_list{31, 45, 61, 74, 89};
     double assume_us[kTierCount] = {0.0, 0.0, 0.0, 0.0, 0.0};
@@ -109,6 +121,8 @@ struct Args {
         else if (arg == "--dim")         a.dim = std::stoi(std::string(next()));
         else if (arg == "--s")           a.s   = std::stoi(std::string(next()));
         else if (arg == "--sm")          a.sm  = std::stoi(std::string(next()));
+        else if (arg == "--nodes")       a.nodes = std::stoi(std::string(next()));
+        else if (arg == "--local-gpus")  a.local_gpus = std::stoi(std::string(next()));
         else if (arg == "--budget-frac") a.budget_frac = std::stod(std::string(next()));
         else if (arg == "--n1-list")     a.n1_list = parse_int_list(next());
         else if (arg == "--assume-warp-us")
@@ -126,11 +140,19 @@ struct Args {
         else if (arg == "--help") {
             std::println("Usage: ./regime-gpu-place [--machine KEY] [--m M] [--dim D] [--s S]");
             std::println("                          [--n1-list \"31 61 74\"] [--sm N]");
+            std::println("                          [--nodes N] [--local-gpus G]");
             std::println("                          [--assume-{{warp,block,grid,p2p,node}}-us X]");
             std::println("                          [--assume-bw-gbs X] [--budget-frac F]");
             std::println("                          [--csv PATH]");
             std::println("");
-            std::println("  --machine KEY  v100-pcie-16gb (synge) or rtx-3090 (puffin).");
+            std::println("  --machine KEY  v100-pcie-16gb (synge), rtx-3090 (puffin) or h200");
+            std::println("                 (gpu03).");
+            std::println("  --nodes N      hosts in the allocation (default 1).");
+            std::println("  --local-gpus G GPUs per host (default 1). Together these decide");
+            std::println("                 which reduction rungs exist at all: one device");
+            std::println("                 reaches only the grid rung, several on one host reach");
+            std::println("                 device-p2p, several hosts reach node. Say what the");
+            std::println("                 allocation actually is; the preset does not know.");
             std::println("  --m M          Krylov dimension per cycle (default 12, production).");
             std::println("  --dim D        spatial dimensions; sets the stencil (default 3).");
             std::println("  --s S          certified block width, for the Gram-matrix gate only.");
@@ -211,6 +233,7 @@ int main(int argc, char* argv[])
             std::span<const char* const>(argv, static_cast<std::size_t>(argc)));
         GpuMachine gm = lookup_gpu_machine(a.machine);
         const Assumed as = apply_assumptions(gm, a);
+        const GpuAllocation alloc = make_allocation(a.nodes, a.local_gpus);
 
         const int P = a.sm > 0 ? a.sm : gm.sm_count;
         const double bw = achieved_or_peak_bw_gbs(gm);
@@ -221,11 +244,14 @@ int main(int argc, char* argv[])
         std::println("Phase 0 answers recomputed from the preset's current constants.");
         std::println("");
         std::println("  machine = {} ({})", gm.key, gm.name);
-        std::println("  SMs={} (P={})  L2={:.1f} MiB  memory={:.0f} GiB  interconnect={} x{}",
+        std::println("  SMs={} (P={})  L2={:.1f} MiB  memory={:.0f} GiB  link={}",
                      gm.sm_count, P,
                      static_cast<double>(gm.l2_bytes) / (1024.0 * 1024.0),
                      static_cast<double>(gm.device_memory_bytes) / (1024.0 * 1024.0 * 1024.0),
-                     gm.interconnect, gm.gpu_count);
+                     gm.interconnect);
+        std::println("  allocation = {} ({} GPU(s) per host x {} host(s)), top rung reachable: {}",
+                     allocation_key(alloc), alloc.local_gpus, alloc.nodes,
+                     tier_name(highest_reachable_tier(alloc)));
         std::println("  FP64 peak={:.2f} TFLOP/s   BW={:.0f} GB/s{}   FP64 ridge={:.2f} FLOP/B",
                      gm.fp64_flops_peak * 1e-12, bw,
                      gm.hbm_bw_gbs_achieved > 0.0 ? (as.bandwidth ? " (ASSUMED)" : " (measured)")
@@ -260,7 +286,7 @@ int main(int argc, char* argv[])
         std::vector<std::pair<ReductionTier, RegimeInvariant>> invariants;
         for (int i = 0; i < kTierCount; ++i) {
             const auto t = static_cast<ReductionTier>(i);
-            if (!tier_reachable(gm, t)) continue;
+            if (!tier_reachable(alloc, t)) continue;
             const RegimeInvariant ri =
                 regime_invariant(gm, t, nnz_ref, N_ref, a.m, 1.0, bw);
             invariants.emplace_back(t, ri);
@@ -292,7 +318,7 @@ int main(int argc, char* argv[])
         std::vector<std::pair<ReductionTier, UpperRightWindow>> windows;
         for (int i = 0; i < kTierCount; ++i) {
             const auto t = static_cast<ReductionTier>(i);
-            if (!tier_reachable(gm, t)) continue;
+            if (!tier_reachable(alloc, t)) continue;
             const UpperRightWindow w =
                 upper_right_window(gm, t, a.m, nu, a.dim, 1.0, bw, budget);
             windows.emplace_back(t, w);
@@ -319,7 +345,7 @@ int main(int argc, char* argv[])
                      gram_ridge_s(gm, Precision::FP64));
         std::println("");
         {
-            const GpuRegimePoint pt = place_gpu(gm, P, highest_reachable_tier(gm),
+            const GpuRegimePoint pt = place_gpu(gm, P, highest_reachable_tier(alloc),
                                                 nnz_ref, N_ref, a.m, 1.0, Precision::FP64, a.s);
             std::println("  at n1={} (N={}), FP64:", n1_ref, N_ref);
             auto gate_row = [](const char* k, const RooflineVerdict& v) {
@@ -348,8 +374,8 @@ int main(int argc, char* argv[])
         // The most expensive rung with a measurement behind it, not merely the most expensive
         // the hardware reaches. An uncalibrated rung has a zero increment, so placing on it
         // would report the cost of the rung below under the higher rung's name.
-        const ReductionTier top       = highest_calibrated_tier(gm);
-        const ReductionTier reachable = highest_reachable_tier(gm);
+        const ReductionTier top       = highest_calibrated_tier(gm, alloc);
+        const ReductionTier reachable = highest_reachable_tier(alloc);
         std::println("  placed on the '{}' rung (the most expensive one that is CALIBRATED)",
                      tier_name(top));
         if (top != reachable)

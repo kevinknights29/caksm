@@ -32,6 +32,14 @@ DIM="${DIM:-3}"
 S="${S:-8}"             # certified block width; the Gram gate reads it, the coordinates do not
 N1_LIST="${N1_LIST:-31 45 61 74 89}"
 
+# The allocation the ladder is priced against. It decides which rungs exist at all, and it is a
+# property of the launch rather than of the card: the same preset serves a one-GPU shell and a
+# full node, so it has to be stated rather than assumed. The defaults describe synge, two GPUs
+# on each of two nodes, which is what reproduces the published V100 tables. On a machine whose
+# allocation varies, say what the scheduler actually granted.
+NODES="${NODES:-2}"
+LOCAL_GPUS="${LOCAL_GPUS:-2}"
+
 # Stated priors, used only where the preset is uncalibrated. Cumulative microseconds.
 # Sources: kernel-launch and grid-combine costs are the usual few-microsecond figures for a
 # CUDA launch; the SYS rung is a PCIe + cross-socket hop; the node rung assumes a mid-range
@@ -51,11 +59,13 @@ mkdir -p "$DATA_DIR"
 
 echo "==============================================================================="
 echo " GPU regime placement   machine=$MACHINE  m=$M  dim=$DIM  s=$S"
+echo " allocation: $LOCAL_GPUS GPU(s) per host x $NODES host(s)"
 echo "==============================================================================="
 echo
 
 "$PLACE" --machine "$MACHINE" --m "$M" --dim "$DIM" --s "$S" \
          --n1-list "$N1_LIST" \
+         --nodes "$NODES" --local-gpus "$LOCAL_GPUS" \
          --assume-grid-us "$ASSUME_GRID_US" \
          --assume-p2p-us "$ASSUME_P2P_US" \
          --assume-node-us "$ASSUME_NODE_US" \
@@ -73,8 +83,10 @@ if [[ "$MACHINE" == "v100-pcie-16gb" ]]; then
     echo " Negative arm: the same operator on puffin's RTX 3090"
     echo "==============================================================================="
     echo
+    # Puffin is one workstation device, so it reaches no link rung whatever synge was given.
     "$PLACE" --machine rtx-3090 --m "$M" --dim "$DIM" --s "$S" \
              --n1-list "$N1_LIST" \
+             --nodes 1 --local-gpus 1 \
              --assume-grid-us "$ASSUME_GRID_US" \
              --assume-bw-gbs "$ASSUME_BW_GBS" \
              --csv "$DATA_DIR/regime_gpu_rtx-3090.csv"

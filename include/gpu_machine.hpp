@@ -117,6 +117,13 @@ struct GpuOverlapCapabilities {
  *       and gpu_contention.cuh makes them refuse to emit a constant from a contended device.
  *       A preset whose tiers are unmeasured carries reduction_calibrated = false, which every
  *       consumer of R_h checks before printing a magnitude.
+ *
+ * @note Nothing here describes the cluster. How many devices and nodes a launch received is a
+ *       property of the allocation (gpu_allocation.hpp), and the collective cost at an exact
+ *       participant count is a property of a measured arrangement (gpu_topology.hpp). A preset
+ *       may carry an off-device increment only where its cluster offers exactly one
+ *       participant count, as synge does; on a node that can present one, two, four or eight
+ *       devices those entries stay zero.
  */
 struct GpuMachine {
     std::string_view key;
@@ -140,11 +147,16 @@ struct GpuMachine {
     double hbm_bw_gbs_achieved;       ///< measured, gpu-stream triad. 0 = not measured.
     double l2_bw_gbs_achieved;        ///< measured, gpu-stream at an L2-resident size.
 
-    // Topology
-    int              gpu_count;            ///< devices per node
-    int              node_count;           ///< nodes in the allocation
-    std::string_view interconnect;         ///< "SYS", "NVLINK", "PIX", ... from nvidia-smi topo -m
-    double           interconnect_bw_gbs;  ///< measured, p2p probe. 0 = not measured.
+    // The link this device sits on
+    /// The label `nvidia-smi topo -m` prints for a pair of these devices: "SYS", "NV18",
+    /// "PIX", ... A device property only where the matrix is uniform, which it is on both
+    /// calibrated clusters; where it is not, the authority is the per-arrangement
+    /// `link_signature` in gpu_topology.hpp and this field must read "MIXED".
+    std::string_view interconnect;
+    /// Measured all-reduce bus bandwidth over that link [GB/s]. 0 = not measured, which is
+    /// the correct entry whenever the figure is participant-keyed rather than a property of
+    /// the link: see the H200 preset. Never a datasheet number.
+    double           interconnect_bw_gbs;
     GpuOverlapCapabilities overlap;        ///< cudaGetDeviceProperties; -1 until recorded
 
     /**
@@ -161,8 +173,14 @@ struct GpuMachine {
     double t_kernel_launch_s;                    ///< measured; added once for tier >= GRID
     std::array<bool, kTierCount> tier_calibrated; ///< per-rung provenance
 
-    /// True only when every reachable tier has been measured on this host. Suppresses R_h
-    /// magnitudes otherwise, exactly as Machine::reduction_calibrated does on the CPU side.
+    /// True when this device's own ladder, the WARP, BLOCK and GRID rungs and the launch
+    /// term, has been measured on this host. Suppresses R_h magnitudes otherwise, exactly as
+    /// Machine::reduction_calibrated does on the CPU side.
+    ///
+    /// It is deliberately NOT a statement about the link rungs. Those are reachable only in
+    /// some allocations and priced per participant count, so the question "is the whole ladder
+    /// this launch needs measured?" belongs to all_reachable_tiers_calibrated() in
+    /// gpu_allocation.hpp, which takes the allocation and can answer it.
     bool reduction_calibrated;
     /// True when an achieved bandwidth has been measured, so the roofline gate has a real
     /// denominator. A gate evaluated against a theoretical roof over-states the memory side
@@ -171,14 +189,20 @@ struct GpuMachine {
 };
 
 /**
- * The two presets. Hardware fields are datasheet transcription, confirmed against
+ * The presets. Hardware fields are datasheet transcription, confirmed against
  * cudaGetDeviceProperties; every t_reduce entry and every achieved roof is a measurement.
  *
- * The cards are a near-controlled pair: same 6 MiB L2, same ~900 GB/s bandwidth class, FP64
- * differing by 12x. They hold the vertical axis fixed and vary only the compute roof, which
- * is the lever that tests the roofline precondition.
+ * The V100 and the 3090 are a near-controlled pair: same 6 MiB L2, same ~900 GB/s bandwidth
+ * class, FP64 differing by 12x. They hold the vertical axis fixed and vary only the compute
+ * roof, which is the lever that tests the roofline precondition.
+ *
+ * The H200 is not part of that pair and must not be drawn as a third point on its axis. It
+ * changes the L2 by 10x and the bandwidth by 5x at the same time, so it varies the vertical
+ * mechanism rather than controlling it. What it contributes is the participant axis: eight
+ * devices of one node, where the V100 cluster offered two. Keep the machines in separate
+ * panels; replacing hardware is not a step along any of the map's coordinates.
  */
-inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
+inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
     {
         "v100-pcie-16gb",
         "NVIDIA Tesla V100-PCIE-16GB (synge)",
@@ -201,14 +225,16 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         818.3,          // hbm_bw_gbs_achieved
         3624.8,         // l2_bw_gbs_achieved  (cache/DRAM ratio 4.43x)
         // Confirmed by scripts/regime/gpu_probe.sh: both V100s on one node, 16384 MiB each,
-        // no MIG, no MPS daemon, no resident processes. The DEVICE_P2P rung is therefore
-        // reachable in a one-node allocation and does not need -N 2.
-        2,              // GPUs per node
-        2,              // synge-n01, synge-n02
+        // no MIG, no MPS daemon, no resident processes. Whether the DEVICE_P2P rung is
+        // reachable is a question about the allocation, not about this preset; see
+        // gpu_allocation.hpp.
         "SYS",          // `nvidia-smi topo -m`: PCIe + cross-socket UPI, no NVLink.
-                        // GPU0 on NUMA 0 (CPU 0-19), GPU1 on NUMA 1 (CPU 20-39).
+                        // GPU0 on NUMA 0 (CPU 0-19), GPU1 on NUMA 1 (CPU 20-39). Uniform:
+                        // there is only the one pair.
         7.3,            // measured, NCCL all-reduce bus bandwidth over SYS, 64 MiB payload
-                        // (7.36 device-to-device, 7.00 across the fabric)
+                        // (7.36 device-to-device, 7.00 across the fabric). Two participants;
+                        // synge never offers another count, which is the only reason a single
+                        // figure can sit on a preset here at all.
         // Queried on both V100s of synge-n02 with gpu-device-probe; the devices agreed.
         // These are capability flags, not evidence that a particular transfer overlapped.
         {7, 1, 1, 1, true}, // async engines, concurrent kernels, overlap, unified addressing
@@ -261,10 +287,8 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         // exceeds L2 (6 MiB) on GA102, so this is an L1+L2 figure. See gpu_stream.cu.
         821.1,          // hbm_bw_gbs_achieved
         5184.8,         // l2_bw_gbs_achieved
-        1,              // one device
-        1,
-        "NONE",         // single device: no P2P tier, no node tier
-        0.0,            // interconnect: unreachable on one device
+        "NONE",         // a single-device workstation: no pair to label
+        0.0,            // interconnect: nothing to measure
         {-1, -1, -1, -1, false}, // gpu-device-probe has not yet been archived on Puffin
         // Measured increments, calibrate-gpu-reduction. WARP 2.834 us; BLOCK +3.839; GRID
         // +2.531 (from the two-kernel form at 11.59 us, which beat cooperative grid.sync() at
@@ -278,6 +302,87 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         true,           // reduction_calibrated
         true,           // roofline_gated
     },
+    {
+        // Calibrated on gpu03 of Jose's H200 installation, Slurm job 20170, 2026-08-26, with
+        // all eight devices visible and NVML reporting zero foreign processes at every stage.
+        // Built by the Spack CUDA 12.8.1 nvcc for sm_90 in Release; the 12.9 nvcc later on
+        // PATH did not compile these binaries and each one says so in its own banner.
+        //
+        // REPLICATE POLICY, declared before the constants were chosen. The single-device
+        // calibrator ran three independent times on this host: 2026-08-25 (transcript only,
+        // inside a four-GPU allocation) and twice on 2026-08-26, seven minutes apart. The
+        // compute and DRAM roofs reproduce to within 0.06%, but the short launch/reduction
+        // path does not: the two-kernel grid total spans 5.2086 to 5.5528 us, a 1.066x spread,
+        // and the grid increment behind it spans 1.128x. Seven back-to-back repeats cannot see
+        // that, so the within-run interquartile range must not be read as repeatability.
+        //
+        // The whole preset is therefore transcribed from ONE invocation, the median of the
+        // three by two-kernel grid total, rather than from per-rung medians. Per-rung medians
+        // accumulate to 5.2888 us, a grid cost no invocation ever produced; taking one run
+        // keeps reduction_cost_s() reproducing a total that was actually measured. The chosen
+        // run is the 10:57 set, which is also the one carrying the eight-participant P2P CSV,
+        // the topology matrix, the device UUIDs and the build configuration.
+        //
+        // The spread itself is not discarded. It is published as the 1gpu-1node quartiles in
+        // the H200 topology manifest, which records three invocations rather than one.
+        "h200",
+        "NVIDIA H200 (gpu03)",
+        "h200",
+        132,            // SMs (GH100), driver-reported
+        64,             // CC 9.0: 2048 resident threads / SM. Confirm with gpu-device-probe.
+        60L << 20,      // 60 MiB device-wide L2, driver-reported (62914560 B)
+        228L << 10,     // 228 KiB shared per SM (CC 9.0)
+        // The calibrator reports 139.8 GiB from cudaDeviceProp::totalGlobalMem, against the
+        // 143771 MiB nvidia-smi shows. Rounded DOWN to a whole GiB so the footprint ceiling
+        // stays conservative; the exact byte count needs gpu-device-probe and is not guessed.
+        139L << 30,
+        // Measured, gpu-fma-loop on an idle device: 30.743 TFLOP/s FP64, 61.409 FP32, a
+        // 2.0:1 ratio confirming dedicated FP64 units. The positive arm, as the V100 is, but
+        // 4.8x its FP64 rate against 5.0x its bandwidth, so the ridge barely moves.
+        3.0743e13,      // FP64 peak
+        6.1409e13,      // FP32 peak
+        4814.0,         // theoretical HBM3e, as gpu-stream computes it from the driver's
+                        // memory clock and bus width (datasheet class 4.8 TB/s)
+        // Measured, gpu-stream, idle device. DRAM is the median of DRAM-clean sizes (>= 4x the
+        // 89.4 MiB L2+L1 hierarchy), 84% of theoretical. Aggregate L1 is 29.4 MiB against a
+        // 60 MiB L2, so unlike GA102 and GV100 the resident figure is L2-dominated.
+        4054.6,         // hbm_bw_gbs_achieved
+        13014.5,        // l2_bw_gbs_achieved  (cache/DRAM ratio 3.21x, against the V100's 4.43)
+        // `nvidia-smi topo -m` on gpu03: NV18 between every one of the 28 GPU pairs, so the
+        // local link graph is uniform and the label is a device-level fact here. CPU and NIC
+        // placement is NOT uniform: GPUs 0-3 sit on NUMA 0 (CPU 0-47, 96-143) with mlx5_0..3
+        // closest, GPUs 4-7 on NUMA 1 (CPU 48-95, 144-191) with mlx5_4..7. That asymmetry is
+        // recorded in the topology manifest's link signature, where a subset can name it.
+        "NV18",
+        // Deliberately not measured on this preset. The all-reduce bus bandwidth over NV18 is
+        // keyed to the participant count, not to the link: 314.4 GB/s at four participants and
+        // 373.8 at eight, an 18.9% difference. Recording either here would let a four-GPU run
+        // borrow the eight-GPU figure, which is the exact substitution this port exists to
+        // prevent. Both live in the topology manifest instead.
+        0.0,
+        {-1, -1, -1, -1, false}, // gpu-device-probe has not yet run on gpu03
+        // Measured increments, calibrate-gpu-reduction, 10:57 invocation. WARP 0.4017 us;
+        // BLOCK +0.3989; GRID +2.5412 (from the two-kernel form at 5.2567 us, which again beat
+        // cooperative grid.sync() at 7.4079 us, so the model carries the two-kernel form).
+        //
+        // DEVICE_P2P and NODE are deliberately zero and uncalibrated. Eight H200s on one node
+        // reduce at the same DEVICE_P2P rung as four and cost 2.011x as much (32.850 us
+        // against 16.336), so no single increment can serve both and this array, indexed by
+        // rung alone, cannot hold them. The measured totals live in the topology manifest,
+        // keyed by participant count. Leaving these zero is what makes a launch that asks for
+        // a link cost here fail loudly instead of pricing the grid rung under a link name.
+        {{4.0167e-7, 3.9894e-7, 2.5412e-6, 0.0, 0.0}},
+        // Launch is 36% of a grid reduction here, the widest margin of the three presets, so
+        // the ladder's rungs stay clearly separable (grid/block = 6.6x).
+        1.9150e-6,      // t_kernel_launch_s
+        {{true, true, true, false, false}},   // the on-device rungs are measured
+        // The on-device ladder is complete. Whether that is the whole ladder depends on the
+        // allocation, which this preset does not know and must not assume: on a one-GPU shell
+        // it is, and on the eight-GPU node all_reachable_tiers_calibrated() returns false
+        // until a topology record supplies the link cost.
+        true,           // reduction_calibrated
+        true,           // roofline_gated
+    },
 }};
 
 [[nodiscard]] inline const GpuMachine& lookup_gpu_machine(std::string_view key)
@@ -285,7 +390,7 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
     for (const auto& g : kGpuMachines)
         if (g.key == key) return g;
     throw std::invalid_argument("Unknown GPU machine: " + std::string(key)
-        + ".  Valid keys: v100-pcie-16gb, rtx-3090");
+        + ".  Valid keys: v100-pcie-16gb, rtx-3090, h200");
 }
 
 /**
@@ -307,98 +412,15 @@ inline constexpr std::array<GpuMachine, 2> kGpuMachines {{
         if (lowered.find(g.device_match) != std::string::npos) return g;
     throw std::invalid_argument(
         "No calibrated GPU machine for device: " + std::string(device_name)
-        + ".  Calibrated devices: v100-pcie-16gb, rtx-3090.  Calibrate this "
+        + ".  Calibrated devices: v100-pcie-16gb, rtx-3090, h200.  Calibrate this "
           "device with scripts/regime/calibrate_gpu.sh before predicting on it.");
 }
 
-// Tier reachability
-/**
- * @brief Whether this machine can exercise a rung at all.
- *
- * A single-device preset has no device-to-device or node rung, so a calibration that reports
- * one is reporting a bug. reduction_calibrated is checked against reachable rungs only.
- */
-[[nodiscard]] inline constexpr bool tier_reachable(const GpuMachine& gm, ReductionTier t) noexcept
-{
-    switch (t) {
-        case ReductionTier::WARP:
-        case ReductionTier::BLOCK:
-        case ReductionTier::GRID:       return true;
-        case ReductionTier::DEVICE_P2P: return gm.gpu_count > 1;
-        case ReductionTier::NODE:       return gm.node_count > 1;
-    }
-    return false;
-}
-
-/**
- * @brief The reduction rung exercised by an observed solver topology.
- *
- * A single GPU still performs a device-wide reduction, so its highest mechanism is
- * GRID. Multiple GPUs on one host cross DEVICE_P2P, more than one host crosses NODE.
- * Keeping this decision independent of the MPI process count matters because one
- * process may own two GPUs, while a one-GPU process is not a P2P topology.
- */
-[[nodiscard]] inline ReductionTier collective_tier_for_topology(
-    int world_gpus, int node_count)
-{
-    if (world_gpus < 1 || node_count < 1 || node_count > world_gpus)
-        throw std::invalid_argument(
-            "collective topology requires 1 <= nodes <= GPUs");
-    if (node_count > 1) return ReductionTier::NODE;
-    if (world_gpus > 1) return ReductionTier::DEVICE_P2P;
-    return ReductionTier::GRID;
-}
-
-/// A cost may be published only when the requested mechanism exists and was measured.
-[[nodiscard]] inline constexpr bool tier_cost_available(
-    const GpuMachine& gm, ReductionTier tier) noexcept
-{
-    return tier_reachable(gm, tier)
-        && gm.tier_calibrated[tier_index(tier)];
-}
-
-/// The most expensive rung this machine can place a point on: the right-hand end of the
-/// swept horizontal axis.
-[[nodiscard]] inline constexpr ReductionTier highest_reachable_tier(const GpuMachine& gm) noexcept
-{
-    ReductionTier top = ReductionTier::WARP;
-    for (int i = 0; i < kTierCount; ++i) {
-        const auto t = static_cast<ReductionTier>(i);
-        if (tier_reachable(gm, t)) top = t;
-    }
-    return top;
-}
-
-/**
- * @brief The most expensive rung that is both reachable and measured.
- *
- * Distinct from highest_reachable_tier(). An uncalibrated rung carries a zero increment, so
- * reduction_cost_s() returns the cost of the rung below it while the caller believes it asked
- * for the higher one: a plausible number attached to the wrong hardware.
- *
- * Placement uses this, and reports the gap when it is lower than the reachable top, rather
- * than labeling a DEVICE_P2P measurement as a NODE one.
- */
-[[nodiscard]] inline constexpr ReductionTier highest_calibrated_tier(const GpuMachine& gm) noexcept
-{
-    ReductionTier top = ReductionTier::WARP;
-    for (int i = 0; i < kTierCount; ++i) {
-        const auto t = static_cast<ReductionTier>(i);
-        if (tier_reachable(gm, t) && gm.tier_calibrated[tier_index(t)]) top = t;
-    }
-    return top;
-}
-
-/// Whether every reachable rung carries a measured cost. The honest precondition for
-/// `reduction_calibrated`; check this rather than trusting the flag when editing a preset.
-[[nodiscard]] inline constexpr bool all_reachable_tiers_calibrated(const GpuMachine& gm) noexcept
-{
-    for (int i = 0; i < kTierCount; ++i) {
-        const auto t = static_cast<ReductionTier>(i);
-        if (tier_reachable(gm, t) && !gm.tier_calibrated[tier_index(t)]) return false;
-    }
-    return true;
-}
+// Tier reachability lives in gpu_allocation.hpp.
+//
+// It moved because it is not a question about a device. Which rungs a launch can reach is
+// set by the nodes and local GPUs the scheduler handed it, and the same preset has to serve
+// a one-GPU shell and a full eight-GPU node without claiming the link rungs in the first.
 
 // The memory hierarchy
 /**
