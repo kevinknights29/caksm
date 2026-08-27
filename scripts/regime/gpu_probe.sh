@@ -34,7 +34,7 @@ if [[ ! -f "$WORK_DIR/CMakeLists.txt" || ! -d "$WORK_DIR/scripts/regime" ]]; the
     echo "Submit from the repository root or export ROOT=/absolute/path/to/caksm." >&2
     exit 1
 fi
-DATA_DIR="$WORK_DIR/data/regime"
+DATA_DIR="${DATA_DIR:-$WORK_DIR/data/regime}"
 BUILD_DIR="${BUILD_DIR:-$WORK_DIR/build}"
 DEVICE_PROBE="${GPU_DEVICE_PROBE:-$BUILD_DIR/gpu-device-probe}"
 mkdir -p "$DATA_DIR"

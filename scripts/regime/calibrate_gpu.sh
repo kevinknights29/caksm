@@ -35,7 +35,10 @@ WORK_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 RED="$WORK_DIR/build/calibrate-gpu-reduction"
 STREAM="$WORK_DIR/build/gpu-stream"
 FMA="$WORK_DIR/build/gpu-fma-loop"
-DATA_DIR="$WORK_DIR/data/regime"
+# Overridable so independent invocations can be kept apart. The replicate policy needs
+# several runs of this script on one host, and a fixed path would have each overwrite the
+# last: see the h200 preset comment in include/gpu_machine.hpp.
+DATA_DIR="${DATA_DIR:-$WORK_DIR/data/regime}"
 
 MACHINE="${MACHINE:-v100-pcie-16gb}"
 DEVICE="${DEVICE:-0}"
