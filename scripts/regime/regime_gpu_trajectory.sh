@@ -88,6 +88,10 @@ PROVENANCE="$OUT_DIR/provenance.txt"
 MACHINE="${MACHINE:-v100-pcie-16gb}"
 POLICY="${POLICY:-both}"
 PLACEMENT_CSV="${PLACEMENT_CSV:-$DATA_DIR/regime_placement.csv}"
+# The arrangements to place, in order, e.g. TOPOLOGIES="1gpu-1node 8gpu-1node". Empty places
+# every record the manifest carries. Name them for a publication run, so it repeats the same
+# arrangements rather than whatever the manifest has grown since.
+TOPOLOGIES="${TOPOLOGIES:-}"
 # The common global grid sequence, predeclared. Every value is a grid the placement table
 # measured, so no Krylov dimension on the figure is interpolated.
 N1_LIST="${N1_LIST:-25 30 40 50 61 74 90 120}"
@@ -151,9 +155,6 @@ PLACEMENT="${PLACEMENT:-auto}"
 PLACEMENT_SOURCES=(
     "$PLACEMENT_CSV"
     "$DATA_DIR/calibrate_gpu_reduction.csv"
-    "$DATA_DIR/calibrate_gpu_p2p_device.csv"
-    "$WORK_DIR/data/ca-participant-calibration-quiet/node_2participants.csv"
-    "$WORK_DIR/data/ca-participant-calibration-quiet/node_4participants.csv"
     "$WORK_DIR/include/gpu_topology.hpp"
     "$WORK_DIR/include/gpu_machine.hpp"
     "$WORK_DIR/src/regime_gpu_trajectory.cpp"
@@ -397,6 +398,7 @@ echo "### Placement"
 "$TRAJ" --machine "$MACHINE" \
         --policy "$POLICY" \
         --placement-csv "$PLACEMENT_CSV" \
+        ${TOPOLOGIES:+--topologies "$TOPOLOGIES"} \
         --n1-list "$N1_LIST" \
         --local-ref "$LOCAL_REF" \
         ${MEASURED_ARG:+--measured-csv "$MEASURED_CSV"} \

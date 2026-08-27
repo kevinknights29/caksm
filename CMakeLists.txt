@@ -812,6 +812,7 @@ add_executable(regime_tests
         tests/test_regime_nonnormal.cpp
         tests/test_regime_kernels.cpp
         tests/test_gpu_regime.cpp
+        tests/test_gpu_topology.cpp
         tests/test_ca_integrator_memory.cpp
 )
 target_link_libraries(regime_tests PRIVATE caksm Catch2::Catch2WithMain)

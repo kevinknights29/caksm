@@ -29,9 +29,16 @@
  * table: that check is what establishes that the placement measurement and this model describe
  * one operator.
  *
+ * The arrangements come from kGpuTopologies, keyed by machine, so one tool serves a two-GPU
+ * cluster and an eight-GPU node without an edit. Selecting a subset by name is what a
+ * publication run does, so it repeats the same arrangements rather than whatever the table has
+ * since grown.
+ *
  * Usage:
  *   ./regime-gpu-trajectory [--machine v100-pcie-16gb] [--policy both|fixed-global|fixed-local]
- *                           [--placement-csv PATH] [--n1-list "25 30 40 ..."]
+ *                           [--placement-csv PATH]
+ *                           [--topologies "1gpu-1node 8gpu-1node"]
+ *                           [--n1-list "25 30 40 ..."]
  *                           [--local-ref 40] [--s 8] [--x-reuse 1.0] [--csv PATH]
  *
  * @author Kevin Knights
@@ -86,6 +93,10 @@ struct Args {
     std::string_view machine = "v100-pcie-16gb";
     std::string policy = "both";
     std::string placement_csv = "data/regime/regime_placement.csv";
+    /// Topology keys to place, in the order given. Empty places every arrangement the table
+    /// carries for this machine. Naming them is what makes a publication run repeat the same
+    /// arrangements rather than whatever the table has grown since.
+    std::vector<std::string> topologies;
     std::vector<int> n1_list;     ///< empty = every accepted grid in the table
     int    local_ref = 40;        ///< single-GPU grid the fixed-local arm is sized against
     std::string measured_csv;     ///< optional per-topology solver measurements
@@ -113,6 +124,16 @@ struct Args {
     return out;
 }
 
+[[nodiscard]] std::vector<std::string> parse_word_list(std::string_view s)
+{
+    std::vector<std::string> out;
+    std::istringstream in{std::string(s)};
+    std::string w;
+    while (in >> w) out.push_back(w);
+    if (out.empty()) throw std::invalid_argument("Empty topology list");
+    return out;
+}
+
 [[nodiscard]] Args parse_args(std::span<const char* const> argv)
 {
     Args a;
@@ -126,6 +147,7 @@ struct Args {
         if      (arg == "--machine")       a.machine = next();
         else if (arg == "--policy")        a.policy = std::string(next());
         else if (arg == "--placement-csv") a.placement_csv = std::string(next());
+        else if (arg == "--topologies")    a.topologies = parse_word_list(next());
         else if (arg == "--n1-list")       a.n1_list = parse_int_list(next());
         else if (arg == "--local-ref")     a.local_ref = std::stoi(std::string(next()));
         else if (arg == "--measured-csv")  a.measured_csv = std::string(next());
@@ -142,8 +164,15 @@ struct Args {
             std::println("                               [--n1-list \"25 30 40\"] [--local-ref N]");
             std::println("                               [--s S] [--x-reuse F] [--csv PATH]");
             std::println("");
-            std::println("  --machine KEY   v100-pcie-16gb (synge). The preset must carry a");
-            std::println("                  measured ladder and a measured bandwidth.");
+            std::println("  --machine KEY   v100-pcie-16gb (synge) or h200 (gpu03). The preset");
+            std::println("                  must carry a measured ladder and a measured");
+            std::println("                  bandwidth.");
+            std::println("  --topologies    a quoted list of topology keys, in the order to place");
+            std::println("                  them, e.g. \"1gpu-1node 8gpu-1node\". Default: every");
+            std::println("                  arrangement kGpuTopologies carries for this machine.");
+            std::println("                  Name them for a publication run, so it repeats the");
+            std::println("                  same arrangements rather than whatever the table has");
+            std::println("                  since grown.");
             std::println("  --policy P      fixed-global, fixed-local, or both (default).");
             std::println("  --placement-csv the accepted placement table. Supplies the measured");
             std::println("                  Krylov dimension and the operator's N and nnz, which");
@@ -410,8 +439,8 @@ void write_ladder(const std::string& path, const GpuMachine& gm, int n1, int m,
         // interquartile range travels with it; the on-device rungs have none of
         // their own, so the columns repeat the median rather than invent a spread.
         const GpuTopology* owner = nullptr;
-        for (const auto& top : kSyngeTopologies)
-            if (top.tier == tier
+        for (const auto& top : kGpuTopologies)
+            if (top.machine == gm.key && top.tier == tier
                 && std::abs(top.t_reduce_s / t - 1.0) < 0.02) { owner = &top; break; }
         std::println(out, "{},{},{:.6e},{:.6e},{:.6e},{:.6g},{:.6g},{:.6e},{},{},{},{},{},{}",
                      tier_name(tier), csv_quote(label), t,
@@ -480,6 +509,49 @@ int main(int argc, char** argv)
         std::println(" GPU regime trajectory   machine={}  s={}  x_reuse={}",
                      gm.key, a.s, a.x_reuse);
         std::println("===============================================================================");
+        std::println("");
+
+        // The arrangements this machine has been measured on. An explicitly named list is
+        // placed in the order given, and a key it names that the table does not carry is an
+        // error rather than a silent omission: a publication run asking for 8gpu-1node must
+        // fail if that arrangement is unmeasured, not quietly draw one point fewer.
+        std::size_t available = 0;
+        for (const auto& t : kGpuTopologies) if (t.machine == gm.key) ++available;
+        if (available == 0)
+            throw std::runtime_error(
+                "No arrangement in kGpuTopologies is recorded for machine '"
+                + std::string(gm.key) + "'. Calibrate one with "
+                  "scripts/regime/calibrate_gpu_p2p.sh and record it in "
+                  "include/gpu_topology.hpp before placing a trajectory on it.");
+
+        std::vector<const GpuTopology*> selected;
+        if (a.topologies.empty()) {
+            for (const auto& t : kGpuTopologies)
+                if (t.machine == gm.key) selected.push_back(&t);
+        } else {
+            for (const std::string& key : a.topologies) {
+                const GpuTopology* t = lookup_topology(gm.key, key);
+                if (!t)
+                    throw std::runtime_error(
+                        "Topology '" + key + "' is not recorded for machine '"
+                        + std::string(gm.key) + "'. Calibrate that arrangement before asking "
+                          "for it; an unmeasured one is absent on purpose and must not be "
+                          "interpolated.");
+                selected.push_back(t);
+            }
+        }
+
+        std::println("Topologies: {} selected of {} recorded for {}",
+                     selected.size(), available, gm.key);
+        for (const GpuTopology* t : selected)
+            std::println("            {:<16} {:>2} participant(s) over {} node(s), rung {:<11} "
+                         "t_red={:>7.3f} us  {}",
+                         t->key, t->participants, t->nodes, tier_name(t->tier),
+                         t->t_reduce_s * 1e6,
+                         topology_placeable(*t) ? "placeable"
+                         : !t->calibrated       ? "BLOCKED: uncalibrated"
+                         : t->contended         ? "BLOCKED: contended"
+                                                : "BLOCKED: no link signature");
         std::println("");
 
         const auto table = load_placement(a.placement_csv, a.contract_m_ceiling);
@@ -555,8 +627,8 @@ int main(int argc, char** argv)
                 for (const auto& [n1, row] : table)
                     if (row.validation == "PASS") grids.push_back(n1);
             std::println("-- fixed-global: one grid sequence, every topology --------------------------");
-            for (const auto& t : kSyngeTopologies)
-                for (int n1 : grids) emit("fixed-global", t, n1);
+            for (const GpuTopology* t : selected)
+                for (int n1 : grids) emit("fixed-global", *t, n1);
             std::println("");
         }
 
@@ -565,13 +637,13 @@ int main(int argc, char** argv)
             std::println("-- fixed-local: heaviest slab held near {} rows ({}^3 on one GPU) ----------",
                          target, a.local_ref);
             int64_t lo = 0, hi = 0;
-            for (const auto& t : kSyngeTopologies) {
-                const int n1 = grid_for_fixed_local(table, t.participants, target);
+            for (const GpuTopology* t : selected) {
+                const int n1 = grid_for_fixed_local(table, t->participants, target);
                 if (n1 == 0) { ++blocked; continue; }
-                const int64_t local = slab_points_max(n1, t.participants);
+                const int64_t local = slab_points_max(n1, t->participants);
                 lo = (lo == 0) ? local : std::min(lo, local);
                 hi = std::max(hi, local);
-                emit("fixed-local", t, n1);
+                emit("fixed-local", *t, n1);
             }
             if (lo > 0)
                 std::println("  heaviest slab spans {} to {} rows, a {:.1f}% spread; the residual is "
