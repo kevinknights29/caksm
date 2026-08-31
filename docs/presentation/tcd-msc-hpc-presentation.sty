@@ -1,0 +1,390 @@
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+%% fonts %%
+%\usepackage{gillius}
+%%%%%%%%%%%
+\usepackage[ruled]{algorithm2e}
+\usepackage{amsmath,mathtools}
+\usepackage{amsfonts,amssymb}
+\usepackage{array}
+\usepackage{comment}
+\usepackage{eurosym}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{overpic}
+\usepackage{hhline}
+\def\UrlBreaks{\do\/\do-}
+\usepackage[numbered,framed]{matlab-prettifier}
+\usepackage{multicol}
+\usepackage[final]{pdfpages}
+\usepackage{pifont}
+\usepackage{polynom}
+\usepackage{stmaryrd}
+\usepackage{tcolorbox}
+\usepackage{tikz}
+\newcommand*\circled[1]{\tikz[baseline=(char.base)]{
+            \node[shape=circle,draw,inner sep=2pt] (char) {#1};}}
+\usepackage{xcolor}
+\allowdisplaybreaks
+%\usepackage{url}
+\usepackage{tabularx}
+\usepackage{subcaption}
+\usepackage{float}
+%\usepackage{color}
+\usepackage{empheq}
+%\usepackage{amsfonts}
+\usepackage{xcolor}
+\usepackage{bigints}
+\usepackage{multirow}
+\usepackage[tableposition=top]{caption}
+\usepackage{lipsum}
+
+\usepackage{ifthen}
+
+\RequirePackage{hyperref}
+
+\usepackage{beamerthemesplit}
+\usepackage{mathtools}
+\usepackage{changepage}
+\usepackage{verbatim}
+\usepackage{epsfig}
+\usepackage{graphicx}
+\usepackage{psfrag}
+\usepackage{url}
+\usepackage{color, colortbl}
+\usepackage{tikz}
+\usepackage{algorithm2e}
+\usepackage{tikzsymbols}
+\usepackage{textcomp}
+\usepackage{eurosym}
+\usepackage{xspace}
+
+\setbeamercovered{transparent}
+ 
+%TRISTAN STUFF%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%Fonts
+%\usefonttheme{professionalfonts} % using non standard fonts for beamer
+%\usefonttheme{serif} % default family is serif
+%\usepackage[T1]{fontenc}
+%\usepackage{helvet}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%\usepackage{lmodern}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Colors
+\newcommand{\Bred}[1]{\textcolor{TCDRed}{#1}}
+\newcommand{\Dblue}[1]{\textcolor{TCDBlue}{#1}}
+\newcommand{\Dgreen}[1]{\textcolor{TCDGreen}{#1}}
+\newcommand{\red}[1]{\textcolor{TCDRed}{#1}}
+\newcommand{\bfg}[1]{\textbf{\textcolor{TCDGrey}{#1}}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Item lables
+%\setbeamertemplate{items}[circle]
+\newcommand{\TRACE}{\mathop{\mathrm{trace}}}
+
+\def\Put(#1,#2)#3{\leavevmode\makebox(0,0){\put(#1,#2){#3}}}
+%%END TRISTAN%%  
+ 
+%----------------------------------------------------------------------------------------
+%   TCD colors
+%----------------------------------------------------------------------------------------
+%
+% Trinity blue (main)
+%
+\definecolor{TCD-Main}{HTML}{0569b9}        % 100%
+\definecolor{TCD-Main-i}{HTML}{448fcb}      %  75%
+\definecolor{TCD-Main-ii}{HTML}{82b4dc}     %  50%
+\definecolor{TCD-Main-iii}{HTML}{c1daee}    %  25%
+\definecolor{TCD-Main-iv}{HTML}{e6f0f8}     %  10%
+%
+% Trinity grey
+%
+\definecolor{TCD-Grey}{HTML}{50555a}        % 100%
+\definecolor{TCD-Grey-i}{HTML}{7c8083}      %  75%
+\definecolor{TCD-Grey-ii}{HTML}{a8aaad}     %  50%
+\definecolor{TCD-Grey-iii}{HTML}{d3d5d6}    %  25%
+\definecolor{TCD-Grey-iv}{HTML}{eeeeef}     %  10%
+%
+% Trinity cyan
+%
+\definecolor{TCD-Cyan}{HTML}{00aacd}        % 100%
+\definecolor{TCD-Cyan-i}{HTML}{40bfda}      %  75%
+\definecolor{TCD-Cyan-ii}{HTML}{80d4e6}     %  50%
+\definecolor{TCD-Cyan-iii}{HTML}{bfeaf3}    %  25%
+\definecolor{TCD-Cyan-iv}{HTML}{e6f7fa}     %  10%
+%
+% Trinity green
+%
+\definecolor{TCD-Green}{HTML}{32d732}        % 100%
+\definecolor{TCD-Green-i}{HTML}{65e165}      %  75%
+\definecolor{TCD-Green-ii}{HTML}{99eb99}     %  50%
+\definecolor{TCD-Green-iii}{HTML}{ccf5cc}    %  25%
+\definecolor{TCD-Green-iv}{HTML}{ebfbeb}     %  10%
+%
+% Trinity gold
+%
+\definecolor{TCD-Gold}{HTML}{ffd200}        % 100%
+\definecolor{TCD-Gold-i}{HTML}{ffdd40}      %  75%
+\definecolor{TCD-Gold-ii}{HTML}{ffe980}     %  50%
+\definecolor{TCD-Gold-iii}{HTML}{fff4bf}    %  25%
+\definecolor{TCD-Gold-iv}{HTML}{fffbe6}     %  10%
+%
+% Trinity red
+%
+\definecolor{TCD-Red}{HTML}{dc281e}        % 100%
+\definecolor{TCD-Red-i}{HTML}{e55e56}      %  75%
+\definecolor{TCD-Red-ii}{HTML}{ee938f}     %  50%
+\definecolor{TCD-Red-iii}{HTML}{f6c9c7}    %  25%
+\definecolor{TCD-Red-iv}{HTML}{fceae9}     %  10%
+%
+% Trinity blue
+%
+\definecolor{TCD-Blue}{HTML}{001e69}        % 100%
+\definecolor{TCD-Blue-i}{HTML}{40568f}      %  75%
+\definecolor{TCD-Blue-ii}{HTML}{808fb4}     %  50%
+\definecolor{TCD-Blue-iii}{HTML}{bfc7da}    %  25%
+\definecolor{TCD-Blue-iv}{HTML}{e6e9f0}     %  10%
+%
+% Trinity violet
+%
+\definecolor{TCD-Violet}{HTML}{823278}      % 100%
+\definecolor{TCD-Violet-i}{HTML}{a1659a}    %  75%
+\definecolor{TCD-Violet-ii}{HTML}{c199bc}   %  50%
+\definecolor{TCD-Violet-iii}{HTML}{e0ccdd}  %  25%
+\definecolor{TCD-Violet-iv}{HTML}{f3ebf2}   %  10%
+%
+% Trinity orange
+%
+\definecolor{TCD-Orange}{HTML}{ff641e}      % 100%
+\definecolor{TCD-Orange-i}{HTML}{ff8b56}    %  75%
+\definecolor{TCD-Orange-ii}{HTML}{ffb28f}   %  50%
+\definecolor{TCD-Orange-iii}{HTML}{ffd8c7}  %  25%
+\definecolor{TCD-Orange-iv}{HTML}{fff0e9}   %  10%
+%
+% Trinity lime
+%
+\definecolor{TCD-Lime}{HTML}{96d700}        % 100%
+\definecolor{TCD-Lime-i}{HTML}{b0e140}      %  75%
+\definecolor{TCD-Lime-ii}{HTML}{cbeb80}     %  50%
+\definecolor{TCD-Lime-iii}{HTML}{e5f5bf}    %  25%
+\definecolor{TCD-Lime-iv}{HTML}{f5fbe6}     %  10%
+%
+% Trinity olive
+%
+\definecolor{TCD-Olive}{HTML}{d2e100}        % 100%
+\definecolor{TCD-Olive-i}{HTML}{dde940}      %  75%
+\definecolor{TCD-Olive-ii}{HTML}{e9f080}     %  50%
+\definecolor{TCD-Olive-iii}{HTML}{f4f8bf}    %  25%
+\definecolor{TCD-Olive-iv}{HTML}{fbfce6}     %  10%
+%
+% Trinity teal
+%
+\definecolor{TCD-Teal}{HTML}{00b4aa}        % 100%
+\definecolor{TCD-Teal-i}{HTML}{40c7bf}      %  75%
+\definecolor{TCD-Teal-ii}{HTML}{80dad4}     %  50%
+\definecolor{TCD-Teal-iii}{HTML}{bfecea}    %  25%
+\definecolor{TCD-Teal-iv}{HTML}{e6f8f7}     %  10%
+%
+% Trinity brown
+%
+\definecolor{TCD-Brown}{HTML}{c8aa78}       % 100%
+\definecolor{TCD-Brown-i}{HTML}{d6bf9a}     %  75%
+\definecolor{TCD-Brown-ii}{HTML}{e3d4bc}    %  50%
+\definecolor{TCD-Brown-iii}{HTML}{f1eadd}   %  25%
+\definecolor{TCD-Brown-iv}{HTML}{faf7f2}    %  10%
+%---------------------------------------------------
+
+% define some colors (TCD)
+\definecolor{TCDBlue}{HTML}{0569b9}
+\definecolor{TCDBlue75}{HTML}{448fcb} 
+\definecolor{TCDBlue50}{HTML}{82b4dc} 
+\definecolor{TCDBlue25}{HTML}{c1daee}  
+\definecolor{TCDBlue10}{HTML}{e6f0f8}  
+
+\definecolor{TCDRed}{HTML}{dc281e} 
+\definecolor{TCDRed75}{HTML}{e55e56} 
+\definecolor{TCDRed50}{HTML}{ee938f} 
+\definecolor{TCDRed25}{HTML}{f6c9c7} 
+\definecolor{TCDRed10}{HTML}{fceae9} 
+
+\definecolor{TCDPurple}{HTML}{823278}
+\definecolor{TCDPurple75}{HTML}{a1659a}
+\definecolor{TCDPurple50}{HTML}{c199bc}
+\definecolor{TCDPurple25}{HTML}{e0ccdd}
+\definecolor{TCDPurple10}{HTML}{f3ebf2}
+
+\definecolor{TCDGreen}{HTML}{32d732} 
+\definecolor{TCDGreen75}{HTML}{65e165} 
+\definecolor{TCDGreen50}{HTML}{99eb99} 
+\definecolor{TCDGreen25}{HTML}{ccf5cc} 
+\definecolor{TCDGreen10}{HTML}{ebfbeb} 
+
+\definecolor{TCDYellow}{HTML}{ff641e}
+\definecolor{TCDYellow75}{HTML}{ff641e}
+\definecolor{TCDYellow50}{HTML}{ff641e}
+\definecolor{TCDYellow25}{HTML}{ff641e}
+\definecolor{TCDYellow10}{HTML}{ff641e}
+
+\definecolor{TCDGrey}{HTML}{50555a}
+\definecolor{TCDGrey75}{HTML}{7c8083}
+\definecolor{TCDGrey50}{HTML}{a8aaad}
+\definecolor{TCDGrey25}{HTML}{d3d5d6}
+\definecolor{TCDGrey10}{HTML}{eeeeef}
+
+\definecolor{DarkGreen}{HTML}{96d700}
+\definecolor{DarkBlue}{HTML}{001e69}
+
+\usetheme{Warsaw}
+%\usetheme{AnnArbor}
+\setbeamercolor{structure}{fg=TCDBlue}
+\setbeamercolor{frametitle}{fg=TCDGrey25}
+\setbeamercolor{titlelike}{fg=TCDGrey10}
+\setbeamercolor{normal text}{fg=black}
+\setbeamercolor{author in head/foot}{fg=TCDPurple,bg=TCD-Cyan}
+\setbeamercolor{title in head/foot}{fg=TCDBlue,bg=TCD-Lime}
+\setbeamercolor{date in head/foot}{fg=TCDGrey10,bg=TCDPurple}
+
+\newsavebox{\LOGOgraphics}
+\sbox{\LOGOgraphics}{\includegraphics[keepaspectratio,height=21pt]{./TCDsymbol.png}}
+
+
+\defbeamertemplate*{frametitle}{WarsawLaTeXTheme}
+{%
+  \nointerlineskip%
+  \vskip-4pt%
+  \hbox{\leavevmode
+    \advance\beamer@leftmargin by -12bp%
+    \advance\beamer@rightmargin by -12bp%
+    \beamer@tempdim=\textwidth%
+    \advance\beamer@tempdim by \beamer@leftmargin%
+    \advance\beamer@tempdim by \beamer@rightmargin%
+    \hskip-\Gm@lmargin\hbox{%
+      \setbox\beamer@tempbox=\hbox{\begin{minipage}[b]{\paperwidth}%
+          \vbox{}\vskip-0.4ex%
+          \leftskip0.3cm%
+          \rightskip0.3cm plus1fil\leavevmode
+          \insertframetitle%
+          %\hspace*{0.7875\paperwidth}
+          \hfill\raisebox{-5pt}{\usebox{\LOGOgraphics}\hspace*{-4.5pt}}%\includegraphics[width=1cm]{graphics/HU}
+          \ifx\insertframesubtitle\@empty%
+            \strut\par%
+          \else
+          %\vbox{}\vskip-.25ex%
+            \par{\usebeamerfont*{framesubtitle}{\usebeamercolor[fg]{framesubtitle}\insertframesubtitle}\strut\par}%
+          \fi%
+          \nointerlineskip
+          \vbox{}%
+          \end{minipage}}%
+      \beamer@tempdim=\ht\beamer@tempbox%
+      \advance\beamer@tempdim by 2pt%
+      \begin{pgfpicture}{0pt}{0pt}{\paperwidth}{\beamer@tempdim}
+        \usebeamercolor{frametitle right}
+        \pgfpathrectangle{\pgfpointorigin}{\pgfpoint{\paperwidth}{\beamer@tempdim}}
+        \pgfusepath{clip}
+        \pgftext[left,base]{\pgfuseshading{beamer@frametitleshade}}
+      \end{pgfpicture}
+      \hskip-\paperwidth%
+      \box\beamer@tempbox%
+    }%
+    \hskip-\Gm@rmargin%
+  }%
+  \nointerlineskip
+%    \vskip-18pt
+%    \hbox to\textwidth{\hskip-\Gm@lmargin\pgfuseshading{beamer@topshade}\hskip-\Gm@rmargin}
+%    \vskip-2pt
+}
+
+
+%\defbeamertemplate*{footline}{WarsawLaTeXTheme}{%
+%  \leavevmode%
+%  \hbox{\begin{beamercolorbox}[wd=.45\paperwidth,ht=1.5ex,dp=3.5ex,leftskip=3.5ex,rightskip=3.5ex]{title in head/foot}%
+%    \makebox[2.5ex][l]{{\usebeamerfont{title in head/foot}\textcolor{TCDBlue}{\insertframenumber}}}%
+%    {\usebeamercolor{title in head/foot}\insertshorttitle}
+%  \end{beamercolorbox}%
+%  \begin{beamercolorbox}[wd=.325\paperwidth,ht=0.5ex,dp=3.5ex,leftskip=3.5ex,rightskip=3.5ex,right]{author in head/foot}%
+%    \usebeamerfont{author in head/foot}\insertshortauthor%
+%  \end{beamercolorbox}}%
+%  \begin{beamercolorbox}[wd=.225\paperwidth,ht=0ex,dp=1.5ex,leftskip=3.5ex,rightskip=3.5ex,right]{date in head/foot}%
+%    \usebeamerfont{date in head/foot}\insertshortdate%
+%  \end{beamercolorbox}}%
+%  \vskip0pt%
+%}
+%
+\defbeamertemplate*{footline}{WarsawLaTeXTheme}{%
+  \leavevmode%
+  \hbox{\begin{beamercolorbox}[wd=.55\paperwidth,ht=3.5ex,dp=0.5ex,leftskip=1.5ex,rightskip=3.5ex]{title in head/foot}%
+       \raisebox{0.4em}{%
+       \makebox[3.5ex][l]{{\usebeamerfont{title in head/foot}\textcolor{TCDBlue}{\insertframenumber}}}%
+       {\usebeamercolor{title in head/foot}\insertshorttitle}
+       }
+  \end{beamercolorbox}%
+  \begin{beamercolorbox}[wd=.275\paperwidth,ht=2.5ex,dp=0.5ex,leftskip=3.5ex,rightskip=3.5ex,center]{author in head/foot}%
+       \raisebox{0.2em}{%
+          \usebeamerfont{author in head/foot}\scalebox{0.9}{\insertshortauthor}%
+       }
+  \end{beamercolorbox}%
+  \begin{beamercolorbox}[wd=.175\paperwidth,ht=1.5ex,dp=0.5ex,leftskip=3.5ex,rightskip=3.5ex,center]{date in head/foot}%
+          \usebeamerfont{date in head/foot}\scalebox{0.8}{\insertshortdate}%
+  \end{beamercolorbox}}%
+  \vskip0pt%
+}
+
+\beamertemplatenavigationsymbolsempty
+
+%defines the colors for a colored box
+\setbeamercolor{postit}{fg=TCDGrey,bg=TCDGrey50!20}
+
+\def\nref#1{{\rm (\ref{#1})}}
+\def\rd{\color{TCDRed}}
+\def\bla{\color{TCDBlue}}
+\def\mr{\color{TCDPurple}}
+\newcommand{\R}{{\mathbb{R}}}
+\newcommand{\C}{{\mathbb{C}}}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{summary}[theorem]{\begin{center}Summary\end{center}}
+
+
+
+\usepackage{XCharter}
+\usepackage{inconsolata}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Definitions
+\newcommand{\bfv}[1]{\mathbf{#1}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%TITLE PAGE BUSINESS
+\institute[TCD]{
+MSc for High-performance Computing\\
+\href{mailto:\email}{\email}
+}
+
+
+
+\newcommand\mytriangleLOWER{{%
+\tikz\draw [fill=red] (0,0)--(0,.15) -- (.15,0)-- (0,0);
+}}
+\newcommand\mytriangle{{%
+\tikz\draw [fill=red] (.15,.15)--(0,.15) -- (.15,0)-- (.15,.15);
+}}
+\newcommand\myblacktriangle{{%
+\tikz\draw [fill=black] (.15,.15)--(0,.15) -- (.15,0)-- (.15,.15);
+}}
+\newcommand\mycircle{{%
+\tikz\draw [fill=black] (0,0) circle (.25em);
+}}
+\newcommand\myredcircle{{%
+\tikz\draw [fill=red] (0,0) circle (.25em);
+}}
+\makeatother
+
+\DeclareUnicodeCharacter{2212}{-} 
+
+
+
+\pagenumbering{gobble}
+
+\usepackage{stackengine}
+\newcommand\oexp{\stackMath\mathbin{\stackinset{c}{0ex}{c}{0ex}{\wedge}{\bigcirc}}}
