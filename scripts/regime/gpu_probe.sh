@@ -87,7 +87,12 @@ echo "### Topology: which link the DEVICE_P2P rung actually crosses"
 echo "  'SYS' = PCIe + cross-socket UPI (a genuine cross-socket hop, no NVLink)."
 echo "  'NV#' = NVLink, which would make the intra-node rung nearly free and cost the study"
 echo "          its cheapest horizontal probe. Record whichever it is."
-nvidia-smi topo -m 2>/dev/null | sed 's/^/  /' || echo "  (topo unavailable)"
+TOPOLOGY_OUT="$DATA_DIR/gpu_topology_$(uname -n).txt"
+if nvidia-smi topo -m > "$TOPOLOGY_OUT" 2>/dev/null; then
+    sed 's/^/  /' "$TOPOLOGY_OUT"
+else
+    echo "  (topo unavailable)"
+fi
 echo
 
 echo "### MIG, MPS and co-tenancy: the topology objection, applied to a GPU"

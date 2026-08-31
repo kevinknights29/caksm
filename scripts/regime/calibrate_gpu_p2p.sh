@@ -61,6 +61,10 @@ RUN_DIR="${RUN_DIR:-$WORK_DIR/data/calibration/$MACHINE/$STAMP-job$JOBID}"
 
 SRUN_EXTRA="${SRUN_EXTRA:-}"
 SRUN_MPI="${SRUN_MPI:-pmix}"
+REQUIRE_COMPLETE_SWEEP="${REQUIRE_COMPLETE_SWEEP:-0}"
+REQUIRE_PROBE="${REQUIRE_PROBE:-0}"
+REQUIRE_NCCL_TRANSPORT="${REQUIRE_NCCL_TRANSPORT:-}"
+REQUIRE_IDLE="${REQUIRE_IDLE:-0}"
 
 if [[ ! -x "$P2P" ]]; then
     echo "Error: calibrate-gpu-p2p not found at $P2P"
@@ -90,6 +94,12 @@ fi
 VISIBLE=0
 [[ -n "$BASE_DEVICES" ]] && VISIBLE="$(awk -F, '{print NF}' <<< "$BASE_DEVICES")"
 NODES="${NODES:-${SLURM_JOB_NUM_NODES:-1}}"
+[[ "$NODES" =~ ^[0-9]+$ && "$NODES" -gt 0 ]] \
+    || { echo "Error: NODES must be positive." >&2; exit 1; }
+for flag in "$REQUIRE_COMPLETE_SWEEP" "$REQUIRE_PROBE" "$REQUIRE_IDLE"; do
+    [[ "$flag" == "0" || "$flag" == "1" ]] \
+        || { echo "Error: requirement flags must be 0 or 1." >&2; exit 1; }
+done
 
 # The powers of two up to a bound. The participant counts a sweep should walk: doubling is what
 # separates one arrangement from the next on the horizontal axis, and an arithmetic sweep would
@@ -121,6 +131,16 @@ record_output() {   # <csv> -> 0 when it is a real table
     local csv="$1"
     if [[ -s "$csv" ]]; then
         OUTPUTS+=("$csv")
+        if [[ "$REQUIRE_IDLE" -eq 1 ]] && awk -F, '
+                NR == 1 { for (i = 1; i <= NF; ++i) if ($i == "contended") column = i }
+                NR > 1 && column && $column != 0 { bad = 1 }
+                END { exit !column || bad }
+            ' "$csv"; then
+            :
+        elif [[ "$REQUIRE_IDLE" -eq 1 ]]; then
+            echo "     FAILED: $(basename "$csv") reports a contended device."
+            return 1
+        fi
         return 0
     fi
     echo "     FAILED: exited 0 but wrote no table to $(basename "$csv")"
@@ -160,7 +180,12 @@ echo
     echo "repeats=$REPEATS"
     echo "bw_bytes=$BW_BYTES"
     echo "git_revision=$(git -C "$WORK_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
-    echo "git_dirty=$(git -C "$WORK_DIR" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+    if git -C "$WORK_DIR" diff --quiet 2>/dev/null \
+            && git -C "$WORK_DIR" diff --cached --quiet 2>/dev/null; then
+        echo "git_tracked_dirty=0"
+    else
+        echo "git_tracked_dirty=1"
+    fi
 } > "$RUN_DIR/provenance.txt"
 
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -190,6 +215,11 @@ if [[ "$VISIBLE" -lt 2 ]]; then
     DEVICE_STATUS=2
 else
     for COUNT in $LOCAL_GPUS; do
+        if [[ ! "$COUNT" =~ ^[0-9]+$ || "$COUNT" -lt 2 || "$COUNT" -gt "$VISIBLE" ]]; then
+            echo "  FAILED: invalid device participant count '$COUNT' for $VISIBLE GPUs."
+            DEVICE_STATUS=1
+            continue
+        fi
         MASK="$(first_devices "$COUNT")"
         CSV="$RUN_DIR/device_${COUNT}participants_1node.csv"
         LOG="$RUN_DIR/device_${COUNT}participants_1node.log"
@@ -210,11 +240,8 @@ fi
 
 # The NODE rung: the crossing is the fabric whenever more than one host takes part.
 #
-# Which transport NCCL chose is part of the measurement, not a debugging detail. NCCL has no
-# native Omni-Path transport, so on an OPA fabric it falls back to its socket-based net
-# transport. That still gives a real, recordable node-tier latency, but a very different one
-# from IB verbs, and the write-up must say which it was. NCCL_DEBUG=INFO names the transport,
-# captured to its own file rather than stdout because at INFO it is extremely verbose.
+# Which transport NCCL chose is part of the measurement, not a debugging detail. NCCL_DEBUG
+# names it, and the output goes to a separate file because INFO is verbose.
 #
 # No --gpus-per-node here. The binary picks its device as local_rank % visible devices, so R
 # ranks per node take R distinct devices whether or not GRES was requested, and on a site where
@@ -257,6 +284,11 @@ fi
 #                     srun inherits binding and GPU visibility more predictably.
 run_node_geometry() {   # <nodes> <ranks-per-node>
     local nodes="$1" rpn="$2"
+    if [[ ! "$nodes" =~ ^[0-9]+$ || ! "$rpn" =~ ^[0-9]+$ \
+            || "$nodes" -lt 2 || "$rpn" -lt 1 ]]; then
+        echo "     FAILED: invalid node geometry '$nodes nodes x $rpn ranks'."
+        return 1
+    fi
     local participants=$((nodes * rpn))
     local csv="$RUN_DIR/node_${participants}participants_${nodes}nodes.csv"
     local log="$RUN_DIR/node_${participants}participants_${nodes}nodes.log"
@@ -273,9 +305,10 @@ run_node_geometry() {   # <nodes> <ranks-per-node>
         return 1
     fi
 
-    if srun --nodes="$nodes" --ntasks="$participants" --ntasks-per-node="$rpn" \
+    if NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET PMIX_MCA_gds=hash \
+       srun --nodes="$nodes" --ntasks="$participants" --ntasks-per-node="$rpn" \
             --mpi="$SRUN_MPI" ${SRUN_EXTRA} \
-            --export=ALL,NCCL_DEBUG=INFO,NCCL_DEBUG_SUBSYS=INIT,NET,PMIX_MCA_gds=hash \
+            --export=ALL \
             "$P2P" --machine "$MACHINE" --tier node \
                    --iters "$ITERS" --repeats "$REPEATS" --bw-bytes "$BW_BYTES" \
                    --csv "$csv" > "$log" 2> "$nccl"; then
@@ -298,18 +331,27 @@ run_node_geometry() {   # <nodes> <ranks-per-node>
     echo "     transport:"
     grep -Eo 'NET/[A-Za-z]+|Using network [A-Za-z]+' "$nccl" 2>/dev/null \
         | sort -u | sed 's/^/       /' || echo "       (not reported; see $nccl)"
+    if [[ -n "$REQUIRE_NCCL_TRANSPORT" ]] \
+            && ! grep -q "$REQUIRE_NCCL_TRANSPORT" "$nccl" 2>/dev/null; then
+        echo "     FAILED: required NCCL transport '$REQUIRE_NCCL_TRANSPORT' was not reported."
+        return 1
+    fi
     if grep -q 'NET/Socket' "$nccl" 2>/dev/null; then
-        echo "     NOTE: socket transport, not verbs. Expected on Omni-Path, which NCCL does"
-        echo "     not support natively. The latency is real and recordable, but it is the"
-        echo "     latency of this fabric via sockets: say so rather than implying IB."
+        echo "     NOTE: socket transport, not verbs. The latency is recordable, but it must"
+        echo "     be identified as a socket result rather than an InfiniBand result."
     fi
     return 0
 }
 
 if [[ $NODE_STATUS -eq 0 ]]; then
     NODE_LANDED=0
+    NODE_FAILED=0
     for RPN in $RANKS_PER_NODE; do
-        run_node_geometry "$NODES" "$RPN" && NODE_LANDED=$((NODE_LANDED + 1))
+        if run_node_geometry "$NODES" "$RPN"; then
+            NODE_LANDED=$((NODE_LANDED + 1))
+        else
+            NODE_FAILED=$((NODE_FAILED + 1))
+        fi
         echo
     done
     if [[ $NODE_LANDED -eq 0 ]]; then
@@ -328,15 +370,28 @@ if [[ $NODE_STATUS -eq 0 ]]; then
         echo "      no fabric path is compiled in. Load an MPI module and reconfigure."
         NODE_STATUS=1
         echo
+    elif [[ $NODE_FAILED -gt 0 ]]; then
+        NODE_STATUS=1
+        echo "  $NODE_FAILED requested fabric geometry or geometries failed."
+        echo
     fi
 fi
 
 # The geometry and overlap fields the calibrators do not report, and which a preset must not
 # guess. Cheap, so it rides along with every run rather than needing its own job.
+PROBE_STATUS=2
 if [[ -x "$PROBE" ]]; then
-    "$PROBE" > "$RUN_DIR/gpu_device_probe.txt" 2>&1 \
-        && echo "### gpu-device-probe recorded" \
-        || echo "### gpu-device-probe FAILED; see gpu_device_probe.txt"
+    if "$PROBE" > "$RUN_DIR/gpu_device_probe.txt" 2>&1; then
+        PROBE_STATUS=0
+        echo "### gpu-device-probe recorded"
+    else
+        PROBE_STATUS=1
+        echo "### gpu-device-probe FAILED; see gpu_device_probe.txt"
+    fi
+    echo
+elif [[ "$REQUIRE_PROBE" -eq 1 ]]; then
+    PROBE_STATUS=1
+    echo "### gpu-device-probe missing at $PROBE"
     echo
 fi
 
@@ -379,4 +434,11 @@ if [[ $DEVICE_STATUS -eq 1 || $NODE_STATUS -eq 1 ]]; then
     echo "them uncalibrated: an arrangement that never completed has no latency at all."
 fi
 echo "==============================================================================="
+if [[ "$REQUIRE_COMPLETE_SWEEP" -eq 1 ]] \
+        && [[ $DEVICE_STATUS -eq 1 || $NODE_STATUS -eq 1 ]]; then
+    exit 1
+fi
+if [[ "$REQUIRE_PROBE" -eq 1 && $PROBE_STATUS -ne 0 ]]; then
+    exit 1
+fi
 exit 0

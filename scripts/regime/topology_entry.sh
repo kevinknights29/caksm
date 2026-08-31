@@ -131,16 +131,16 @@ emit_entry() {   # <csv>
     [[ "$participants" -eq 1 ]] && plural_g=""
     [[ "$hosts" -eq 1 ]] && plural_n=""
 
-    # The devices this arrangement used, as the signature records them. A contiguous run from
-    # zero collapses to "0-7"; anything else is listed, and an unknown set stays unknown.
+    # The devices used on each host. A contiguous run from zero collapses to "0-7";
+    # anything else is listed, and an unknown set stays unknown.
     local devices="unknown"
     if [[ -n "$VISIBLE_DEVICES" ]]; then
         local first last n
         n="$(awk -F, '{print NF}' <<< "$VISIBLE_DEVICES")"
-        if [[ "$n" -ge "$participants" ]]; then
+        if [[ "$n" -ge "$local_gpus" ]]; then
             first="$(cut -d, -f1 <<< "$VISIBLE_DEVICES")"
-            last="$(cut -d, -f"$participants" <<< "$VISIBLE_DEVICES")"
-            if [[ "$participants" -eq 1 ]]; then devices="$first"
+            last="$(cut -d, -f"$local_gpus" <<< "$VISIBLE_DEVICES")"
+            if [[ "$local_gpus" -eq 1 ]]; then devices="$first"
             else devices="$first-$last"; fi
         fi
     fi

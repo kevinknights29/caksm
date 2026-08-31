@@ -528,7 +528,8 @@ namespace {
 
 /// One rank per GPU, bootstrapped over MPI. Only needed once the crossing leaves the node.
 [[nodiscard]] Result run_mpi(const Args& a, int rank, int nranks, char* device_name,
-                             std::size_t device_name_len, int& distinct_hosts)
+                             std::size_t device_name_len, int& distinct_hosts,
+                             bool& contended)
 {
     char host[MPI_MAX_PROCESSOR_NAME] = {};
     int host_len = 0;
@@ -556,10 +557,22 @@ namespace {
 
     int ndev = 0;
     CUDA_CHECK(cudaGetDeviceCount(&ndev));
-    CUDA_CHECK(cudaSetDevice(local_rank % ndev));
+    if (ndev < 1) die("MPI rank has no visible CUDA device");
+    const int device = local_rank % ndev;
+    CUDA_CHECK(cudaSetDevice(device));
+
+    const DeviceContention contention = check_device_contention();
+    const int local_contended = contention.contended ? 1 : 0;
+    int any_contended = 0;
+    MPI_Allreduce(&local_contended, &any_contended, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    contended = any_contended != 0;
+    if (contention.contended) {
+        std::printf("  rank %d device %d:", rank, device);
+        report_contention(contention);
+    }
 
     cudaDeviceProp prop{};
-    CUDA_CHECK(cudaGetDeviceProperties(&prop, local_rank % ndev));
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
     std::snprintf(device_name, device_name_len, "%s", prop.name);
 
     ncclUniqueId id;
@@ -603,18 +616,20 @@ namespace {
     bw_s.reserve(static_cast<std::size_t>(a.repeats));
     for (int k = 0; k < a.repeats; ++k) bw_s.push_back(timed(bw_elems, bw_iters));
 
-    // A collective costs what its slowest participant costs, so reduce with MPI_MAX.
-    const double my_lat = quantile(lat_s, 0.5);
-    const double my_bw_t = quantile(bw_s, 0.5);
-    double lat_max = 0.0, bw_t_max = 0.0;
-    MPI_Allreduce(&my_lat, &lat_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&my_bw_t, &bw_t_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    // Each sample costs what its slowest participant costs.
+    std::vector<double> collective_lat_s(lat_s.size());
+    std::vector<double> collective_bw_s(bw_s.size());
+    MPI_Allreduce(lat_s.data(), collective_lat_s.data(), a.repeats,
+                  MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(bw_s.data(), collective_bw_s.data(), a.repeats,
+                  MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    const double bw_t = quantile(collective_bw_s, 0.5);
 
     Result r;
-    r.lat_s  = lat_max;
-    r.lat_q1 = quantile(lat_s, 0.25);
-    r.lat_q3 = quantile(lat_s, 0.75);
-    r.bw_gbs = bus_gbs(static_cast<double>(a.bw_bytes), nranks, bw_t_max);
+    r.lat_s  = quantile(collective_lat_s, 0.5);
+    r.lat_q1 = quantile(collective_lat_s, 0.25);
+    r.lat_q3 = quantile(collective_lat_s, 0.75);
+    r.bw_gbs = bus_gbs(static_cast<double>(a.bw_bytes), nranks, bw_t);
     r.participants = nranks;
     r.hosts = distinct_hosts;
 
@@ -1063,7 +1078,8 @@ int main(int argc, char** argv)
 
     if (nranks > 1) {
 #ifdef CAKSM_HAVE_MPI
-        r = run_mpi(a, rank, nranks, device_name, sizeof(device_name), distinct_hosts);
+        r = run_mpi(a, rank, nranks, device_name, sizeof(device_name), distinct_hosts,
+                    contended);
         rung = distinct_hosts > 1 ? "node" : "device-p2p";
 #endif
     } else {

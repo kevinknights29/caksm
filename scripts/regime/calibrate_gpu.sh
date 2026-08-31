@@ -32,9 +32,10 @@
 set -uo pipefail
 
 WORK_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-RED="$WORK_DIR/build/calibrate-gpu-reduction"
-STREAM="$WORK_DIR/build/gpu-stream"
-FMA="$WORK_DIR/build/gpu-fma-loop"
+BUILD_DIR="${BUILD_DIR:-$WORK_DIR/build}"
+RED="$BUILD_DIR/calibrate-gpu-reduction"
+STREAM="$BUILD_DIR/gpu-stream"
+FMA="$BUILD_DIR/gpu-fma-loop"
 # Overridable so independent invocations can be kept apart. The replicate policy needs
 # several runs of this script on one host, and a fixed path would have each overwrite the
 # last: see the h200 preset comment in include/gpu_machine.hpp.
@@ -156,10 +157,10 @@ if [[ $FMA_STATUS -ne 0 || $RED_STATUS -ne 0 || $STREAM_STATUS -ne 0 ]]; then
     exit 1
 fi
 echo "Done."
-echo "  data/regime/gpu_fma_loop.csv             <- the compute roof, and the FP64:FP32 ratio"
-echo "  data/regime/calibrate_gpu_reduction.csv  <- the on-device ladder"
-echo "  data/regime/gpu_stream.csv               <- the size sweep, and the two memory roofs"
-echo "  data/regime/gpu_stream_occupancy.csv     <- is the kernel occupancy-bound?"
+echo "  $DATA_DIR/gpu_fma_loop.csv             <- the compute roof, and the FP64:FP32 ratio"
+echo "  $DATA_DIR/calibrate_gpu_reduction.csv  <- the on-device ladder"
+echo "  $DATA_DIR/gpu_stream.csv               <- the size sweep, and the two memory roofs"
+echo "  $DATA_DIR/gpu_stream_occupancy.csv     <- is the kernel occupancy-bound?"
 echo
 echo "Next:"
 echo "  1. Transcribe the printed constants into the '$MACHINE' preset in"
