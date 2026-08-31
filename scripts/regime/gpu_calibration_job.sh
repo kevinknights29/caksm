@@ -39,6 +39,7 @@ RUN_SINGLE="${RUN_SINGLE:-auto}"
 RUN_TESTS="${RUN_TESTS:-1}"
 PROBE_SRUN_EXTRA="${PROBE_SRUN_EXTRA:-}"
 P2P_SRUN_EXTRA="${P2P_SRUN_EXTRA:-}"
+REQUIRE_NCCL_TRANSPORT="${REQUIRE_NCCL_TRANSPORT-any}"
 for flag in "$REQUIRE_CLEAN_GIT" "$RUN_TESTS"; do
     [[ "$flag" == "0" || "$flag" == "1" ]] \
         || fail "REQUIRE_CLEAN_GIT and RUN_TESTS must be 0 or 1"
@@ -182,6 +183,7 @@ COMPUTE_CAPABILITY="$(awk 'NF == 3 {print $3}' "$GPU_COUNT_FILE" | sort -u)"
     echo "build_dir=$BUILD_DIR"
     echo "probe_srun_extra=${PROBE_SRUN_EXTRA:-none}"
     echo "p2p_srun_extra=${P2P_SRUN_EXTRA:-none}"
+    echo "required_nccl_transport=${REQUIRE_NCCL_TRANSPORT:-none}"
     echo "nccl_home=${NCCL_HOME:-${NCCL_ROOT:-unknown}}"
 } > "$RUN_ROOT/provenance.txt"
 
@@ -243,7 +245,7 @@ P2P_DIR="$RUN_ROOT/p2p"
 MACHINE="$MACHINE" P2P="$BUILD_DIR/calibrate-gpu-p2p" \
     PROBE="$BUILD_DIR/gpu-device-probe" RUN_DIR="$P2P_DIR" \
     SRUN_EXTRA="$P2P_SRUN_EXTRA" REQUIRE_COMPLETE_SWEEP=1 REQUIRE_PROBE=1 \
-    REQUIRE_NCCL_TRANSPORT="${REQUIRE_NCCL_TRANSPORT:-}" REQUIRE_IDLE=1 \
+    REQUIRE_NCCL_TRANSPORT="$REQUIRE_NCCL_TRANSPORT" REQUIRE_IDLE=1 \
     bash "$WORK_DIR/scripts/regime/calibrate_gpu_p2p.sh"
 bash "$WORK_DIR/scripts/regime/topology_entry.sh" "$P2P_DIR" \
     > "$RUN_ROOT/topology_entries.txt"

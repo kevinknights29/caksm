@@ -95,15 +95,29 @@ LINK="$(link_label)"
 # The transport NCCL selected, where a diagnostic was captured. Read rather than assumed: the
 # calibrator's code path says which primitive was called, not which network was chosen.
 transport_for() {   # <participants> <nodes>
-    local nccl
-    nccl="$(ls "$RUN_DIR"/*"${1}participants_${2}node"*_nccl.log 2>/dev/null | head -1)"
+    local nccl="" candidate
+    for candidate in "$RUN_DIR"/*"${1}participants_${2}node"*_nccl.log \
+                     "$RUN_DIR/node_${1}participants_${2}nodes.log"; do
+        [[ -f "$candidate" ]] || continue
+        if grep -q 'NCCL INFO' "$candidate" 2>/dev/null; then
+            nccl="$candidate"
+            break
+        fi
+    done
     if [[ -n "$nccl" ]]; then
         local net
-        net="$(grep -Eo 'NET/[A-Za-z]+' "$nccl" 2>/dev/null | sort -u | head -1)"
+        net="$(sed -n -E \
+            's/.*Using network ([A-Za-z0-9_.-]+).*/\1/p' "$nccl" 2>/dev/null \
+            | tail -1)"
+        if [[ -z "$net" ]]; then
+            net="$(sed -n -E \
+                's@.*NET/([A-Za-z0-9_.-]+).*:[[:space:]]+Using .*@\1@p' \
+                "$nccl" 2>/dev/null | tail -1)"
+        fi
         case "$net" in
-            NET/IB)     echo "nccl-net-ib";     return ;;
-            NET/Socket) echo "nccl-net-socket"; return ;;
-            NET/*)      echo "nccl-net-${net#NET/}"; return ;;
+            IB)     echo "nccl-net-ib";     return ;;
+            Socket) echo "nccl-net-socket"; return ;;
+            ?*)     echo "nccl-net-$net";   return ;;
         esac
     fi
     [[ "$2" -gt 1 ]] && { echo "nccl-net-UNKNOWN"; return; }

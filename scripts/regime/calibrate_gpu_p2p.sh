@@ -147,6 +147,18 @@ record_output() {   # <csv> -> 0 when it is a real table
     return 1
 }
 
+selected_nccl_transport() {   # <log>
+    local log="$1" selected
+    selected="$(sed -n -E \
+        's/.*Using network ([A-Za-z0-9_.-]+).*/\1/p' "$log" 2>/dev/null | tail -1)"
+    if [[ -z "$selected" ]]; then
+        selected="$(sed -n -E \
+            's@.*NET/([A-Za-z0-9_.-]+).*:[[:space:]]+Using .*@\1@p' \
+            "$log" 2>/dev/null | tail -1)"
+    fi
+    echo "$selected"
+}
+
 mkdir -p "$RUN_DIR" || { echo "Error: cannot create $RUN_DIR" >&2; exit 1; }
 
 echo "==============================================================================="
@@ -179,6 +191,7 @@ echo
     echo "iters=$ITERS"
     echo "repeats=$REPEATS"
     echo "bw_bytes=$BW_BYTES"
+    echo "required_nccl_transport=${REQUIRE_NCCL_TRANSPORT:-none}"
     echo "git_revision=$(git -C "$WORK_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
     if git -C "$WORK_DIR" diff --quiet 2>/dev/null \
             && git -C "$WORK_DIR" diff --cached --quiet 2>/dev/null; then
@@ -293,6 +306,10 @@ run_node_geometry() {   # <nodes> <ranks-per-node>
     local csv="$RUN_DIR/node_${participants}participants_${nodes}nodes.csv"
     local log="$RUN_DIR/node_${participants}participants_${nodes}nodes.log"
     local nccl="$RUN_DIR/node_${participants}participants_${nodes}nodes_nccl.log"
+    local nccl_base="${nccl%.log}"
+    local launcher=""
+    local stderr=""
+    local debug_file=""
 
     echo "  -- $participants participant(s): $rpn rank(s) x $nodes node(s) --"
 
@@ -305,38 +322,69 @@ run_node_geometry() {   # <nodes> <ranks-per-node>
         return 1
     fi
 
-    if NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET PMIX_MCA_gds=hash \
+    stderr="${nccl_base}.srun.stderr"
+    debug_file="${nccl_base}.srun.rank.%h.%p.log"
+    if NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET NCCL_DEBUG_FILE="$debug_file" \
+       PMIX_MCA_gds=hash \
        srun --nodes="$nodes" --ntasks="$participants" --ntasks-per-node="$rpn" \
             --mpi="$SRUN_MPI" ${SRUN_EXTRA} \
             --export=ALL \
             "$P2P" --machine "$MACHINE" --tier node \
                    --iters "$ITERS" --repeats "$REPEATS" --bw-bytes "$BW_BYTES" \
-                   --csv "$csv" > "$log" 2> "$nccl"; then
+                   --csv "$csv" > "$log" 2> "$stderr"; then
+        launcher="srun"
         echo "     ok (srun)"
-    elif command -v mpirun >/dev/null 2>&1 && \
-         PMIX_MCA_gds=hash NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET \
-         mpirun -np "$participants" --map-by "ppr:$rpn:node" \
-             "$P2P" --machine "$MACHINE" --tier node \
-                    --iters "$ITERS" --repeats "$REPEATS" --bw-bytes "$BW_BYTES" \
-                    --csv "$csv" > "$log" 2> "$nccl"; then
-        echo "     ok (mpirun; srun's PMIx path failed, so record which launcher was used)"
-    else
+    elif command -v mpirun >/dev/null 2>&1; then
+        stderr="${nccl_base}.mpirun.stderr"
+        debug_file="${nccl_base}.mpirun.rank.%h.%p.log"
+        if PMIX_MCA_gds=hash NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET \
+           NCCL_DEBUG_FILE="$debug_file" \
+           mpirun -np "$participants" --map-by "ppr:$rpn:node" \
+               "$P2P" --machine "$MACHINE" --tier node \
+                      --iters "$ITERS" --repeats "$REPEATS" --bw-bytes "$BW_BYTES" \
+                      --csv "$csv" > "$log" 2> "$stderr"; then
+            launcher="mpirun"
+            echo "     ok (mpirun; srun's PMIx path failed, so record which launcher was used)"
+        fi
+    fi
+    if [[ -z "$launcher" ]]; then
         echo "     FAILED under both launchers; see ${nccl#"$WORK_DIR"/}"
         return 1
     fi
 
     record_output "$csv" || return 1
 
+    : > "$nccl"
+    [[ ! -s "$stderr" ]] || cat "$stderr" >> "$nccl"
+    local shard
+    for shard in "${nccl_base}.${launcher}.rank."*.log; do
+        [[ -f "$shard" ]] || continue
+        cat "$shard" >> "$nccl"
+    done
+    # Keep a fallback for NCCL versions that ignore NCCL_DEBUG_FILE.
+    grep 'NCCL INFO' "$log" >> "$nccl" 2>/dev/null || true
+
     grep -E 'all-reduce (latency|bus)' "$log" | sed 's/^/     /'
+    local transport
+    transport="$(selected_nccl_transport "$nccl")"
     echo "     transport:"
-    grep -Eo 'NET/[A-Za-z]+|Using network [A-Za-z]+' "$nccl" 2>/dev/null \
-        | sort -u | sed 's/^/       /' || echo "       (not reported; see $nccl)"
-    if [[ -n "$REQUIRE_NCCL_TRANSPORT" ]] \
-            && ! grep -q "$REQUIRE_NCCL_TRANSPORT" "$nccl" 2>/dev/null; then
-        echo "     FAILED: required NCCL transport '$REQUIRE_NCCL_TRANSPORT' was not reported."
-        return 1
+    if [[ -n "$transport" ]]; then
+        echo "       $transport"
+    else
+        echo "       (not reported; see $nccl)"
     fi
-    if grep -q 'NET/Socket' "$nccl" 2>/dev/null; then
+    if [[ -n "$REQUIRE_NCCL_TRANSPORT" ]]; then
+        local required="${REQUIRE_NCCL_TRANSPORT#NET/}"
+        if [[ -z "$transport" ]]; then
+            echo "     FAILED: NCCL did not report the selected transport."
+            return 1
+        fi
+        if [[ "$required" != "any" && "$transport" != "$required" ]]; then
+            echo "     FAILED: required NCCL transport '$required', got '$transport'."
+            return 1
+        fi
+    fi
+    if [[ "$transport" == "Socket" ]]; then
         echo "     NOTE: socket transport, not verbs. The latency is recordable, but it must"
         echo "     be identified as a socket result rather than an InfiniBand result."
     fi
