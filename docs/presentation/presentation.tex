@@ -37,12 +37,12 @@
    urlcolor    = TCDPurple,
 }
 
+\setbeamercovered{invisible}
+
 \setbeamertemplate{navigation symbols}{}
-\setbeamertemplate{headline}{}          % the theme's section bar is not wanted
+\setbeamertemplate{headline}{}
 \setbeamerfont{frametitle}{size=\large}
 
-% Section dividers: one compact roadmap frame before each part, so the
-% audience can always see which part of the argument is on screen.
 \setbeamertemplate{section in toc}{%
   \inserttocsectionnumber.~\inserttocsection}
 \AtBeginSection[]{%
@@ -63,7 +63,6 @@
 \newcommand{\Rh}{R_h}
 \newcommand{\tred}{t_{\mathrm{red}}}
 \newcommand{\tredstar}{t^{\star}_{\mathrm{red}}}
-% marks a slide whose content is my own contribution
 \newcommand{\mine}{{\color{TCDBlue}$\bigstar$}}
 
 \title[When does communication avoidance pay?]{%
@@ -102,7 +101,7 @@
   \emph{communication-avoiding} methods target.
 
   \vskip0.3em
-  \begin{alertblock}{}\footnotesize
+  \begin{alertblock}{}<2->\footnotesize
     \centering
     The question is not \emph{how} to avoid communication, but
     \textbf{when it is worth doing.}
@@ -112,23 +111,23 @@
   \begin{columns}[T]
     \column{0.60\textwidth}
     \begin{enumerate}\scriptsize
-      \item \textbf{The problem and the method}\\
+      \item<3-> \textbf{The problem and the method}\\
             the operator, and one exponential action per step
-      \item \textbf{Where the time goes}\\
+      \item<3-> \textbf{Where the time goes}\\
             profiling, the two CA mechanisms, and a null result
-      \item \mine\ \textbf{The regime map}\\
+      \item<4-> \mine\ \textbf{The regime map}\\
             two a-priori coordinates that predict the opportunity
-      \item \mine\ \textbf{Does it pay?}\\
+      \item<4-> \mine\ \textbf{Does it pay?}\\
             a distributed CA integrator on four GPUs
     \end{enumerate}
 
     \column{0.38\textwidth}\footnotesize
-    \begin{block}{\footnotesize Method in one line}\footnotesize
+    \begin{block}{\footnotesize Method in one line}<4->\footnotesize
       Predict the opportunity \emph{before} building the kernel, then measure
       whether the prediction holds.
     \end{block}
     \vskip0.2em
-    \centerline{\scriptsize \mine\ marks my own contribution.}
+    \uncover<4->{\centerline{\scriptsize \mine\ marks my own contribution.}}
   \end{columns}
 
 \end{frame}
@@ -145,17 +144,19 @@
 
   Three-asset Black--Scholes in log prices, backward in $\tau = T-t$, for a
   \textbf{basket call} and a \textbf{rainbow min-call}:
-  \vskip-0.2em
-  \[
+  \vskip-0.4em
+  \begin{equation*}
     \frac{\partial u}{\partial \tau}
       = \underbrace{\tfrac{1}{2}\!\sum_{d,d'}\!\rho_{dd'}\sigma_d\sigma_{d'}
         \frac{\partial^2 u}{\partial x_d \partial x_{d'}}}_{\text{diffusion}+\text{correlation}}
       + \underbrace{\sum_d\!\left(r-\tfrac{1}{2}\sigma_d^2\right)\!
         \frac{\partial u}{\partial x_d}}_{\text{convection}}
       \underbrace{-\,r u}_{\text{reaction}} + \;b(\tau)
-  \]
+    \tag{1}
+  \end{equation*}
 
-  \medskip
+  \onslide<2->
+  \vskip0.3em
   Second-order central differences on a uniform grid, $N=n^3$ unknowns:
   \begin{itemize}
     \item $\mat A$ carries \textbf{19 nonzeros per row} and $O(N_1N_2)$
@@ -165,11 +166,14 @@
     \item Stiffness grows as $\|\mat A\|\sim O(n^2)$.
   \end{itemize}
 
-  \vskip0.5em
+  \onslide<3->
+  \vskip0.3em
   \begin{exampleblock}{}\footnotesize
     \centering
     Production resolution is $n=61$: \textbf{226{,}981 unknowns},
-    4.23\,M nonzeros.
+    4.23\,M nonzeros.\\[0.15em]
+    Every timing in this talk is for the \textbf{basket call}, the more
+    expensive of the two.
   \end{exampleblock}
 
 \end{frame}
@@ -180,43 +184,59 @@
 \begin{frame}[t]{The method: one exponential action per time step}
 \small
 
-  \vskip0.2em
   Discretizing space only leaves time continuous: the PDE becomes a large
   linear system of ODEs, one equation per grid point.
-  \vskip0.1em
-  \[
+  \vskip-0.4em
+  \begin{equation*}
     \frac{d\vect u}{d\tau} = \mat A\vect u + \mat B\vect s(\tau),
     \qquad \vect u(0)=\vect u_0 \quad(\text{the payoff}).
-  \]
+    \tag{2}
+  \end{equation*}
 
-  \vskip0.5em
-  The basket's boundary forcing is polynomial, $\vect s'=\mat K\vect s$ with
-  $\mat K$ nilpotent, so it is absorbed \emph{exactly} into an autonomous
-  augmented system:
-  \vskip0.1em
+  \onslide<2->
+  \vskip0.3em
+  For the basket, the payoff and the far-field boundary forcing are
+  \vskip-0.4em
   \[
-    \widetilde{\mat A}=\begin{bmatrix}\mat A&\mat B\\ \mat 0&\mat K\end{bmatrix},
+    \vect u_0(\vect x)=\max\!\Big(\textstyle\sum_d w_d e^{x_d}-K,\ 0\Big),
     \qquad
-    \boxed{\;\widetilde{\vect v}=\begin{bmatrix}\vect u_k\\ \vect s(\tau_k)\end{bmatrix},
-    \qquad M=N+3\;}
+    \vect s(\tau)=\big[\tfrac{\tau^2}{2},\;\tau,\;1\big]^{\mathsf T} .
   \]
 
-  \vskip0.6em
-  One time step is then \emph{one matrix-exponential action}, approximated in
-  the Krylov subspace $\mathcal K_m(\mat G,\widetilde{\vect v})$ with
+  \onslide<3->
+  \vskip0.3em
+  The forcing is polynomial, so $\vect s'=\mat K\vect s$ with $\mat K$
+  nilpotent. Stacking the two states absorbs it \emph{exactly}, and (2) loses
+  its forcing term altogether:
+  \vskip-0.4em
+  \begin{equation*}
+    \widetilde{\mat A}=\begin{bmatrix}\mat A&\mat B\\ \mat 0&\mat K\end{bmatrix}
+      \in\mathbb{R}^{(N+3)\times(N+3)},
+    \quad
+    \widetilde{\vect v}=\begin{bmatrix}\vect u\\ \vect s\end{bmatrix}
+    \;\Longrightarrow\;
+    \frac{d\widetilde{\vect v}}{d\tau}=\widetilde{\mat A}\widetilde{\vect v} .
+    \tag{3}
+  \end{equation*}
+
+  \onslide<4->
+  \vskip0.3em
+  One step from $\tau_k$ is then \emph{one matrix-exponential action} on $\widetilde{\vect v}_k$, approximated in the
+  Krylov subspace $\mathcal K_m(\mat G,\widetilde{\vect v}_k)$,
   $\mat G = h\widetilde{\mat A}$:
-  \vskip0.1em
-  \[
-    \vect u_{k+1}=e^{\mat G}\widetilde{\vect v}
+  \vskip-0.4em
+  \begin{equation*}
+    \vect u_{k+1}=e^{\mat G}\widetilde{\vect v}_k
     \;\approx\;
     \beta\,\mat V_m\, e^{\mat H_m}\vect e_1 ,
-    \qquad \beta=\|\widetilde{\vect v}\| .
-  \]
+    \qquad \beta=\|\widetilde{\vect v}_k\| .
+    \tag{4}
+  \end{equation*}
 
-  \vskip0.5em
-  \centerline{\footnotesize Arnoldi on $\mat G$ builds $\mat V_m$ and
-              $\overline{\mat H}_m$; $m$ grows adaptively until the endpoint
-              defect $\eta_m<10^{-8}$.}
+  \vskip0.1em
+  \centerline{\footnotesize Call this solver \textbf{KSM-EI}: a
+              \textbf{K}rylov \textbf{s}ubspace \textbf{m}ethod used as an
+              \textbf{e}xponential \textbf{i}ntegrator.}
 
 \end{frame}
 
@@ -250,17 +270,18 @@
     ODE error stays comparable with theirs.
 
     \column{0.53\textwidth}
+    \uncover<2->{%
     \vskip-0.6em
     \begin{figure}
       \centering
       \includegraphics[width=0.99\linewidth]{pres_scaling_strong.png}
     \end{figure}
     \vskip-1.1em
-    \centerline{\scriptsize Strong scaling at $n{=}61$: fixed work, more cores.}
+    \centerline{\scriptsize Strong scaling at $n{=}61$: fixed work, more cores.}}
   \end{columns}
 
   \vskip0.6em
-  \begin{exampleblock}{}\footnotesize
+  \begin{exampleblock}{}<2->\footnotesize
     \centering
     SpMV plateaus until the working set fits the engaged cache. Modified
     Gram--Schmidt (MGS) keeps improving, but every inner product it performs
@@ -278,39 +299,64 @@
   \textbf{The obstacle.} Arnoldi iteration $j$ needs $\vect v_j$ before it can
   start: one SpMV and one global reduction per step, strictly in sequence.
 
-  \vskip0.5em
-  \textbf{1. One deep exchange, not $q-1$.}
+	  \onslide<2->
+  \vskip0.4em
+  \textbf{1. Vertical: one deep exchange, not $q-1$.}
   \vskip0.1em
   \begin{center}
-  \scalebox{0.60}{%
+  \scalebox{0.74}{%
   \begin{tikzpicture}[
+    capt/.style={font=\scriptsize,text=TCD-Grey,align=center},
     lbl/.style={font=\scriptsize,text=TCD-Grey},
-    ghost/.style={draw=TCD-Grey-ii,fill=TCD-Grey-iii},
+    slab/.style={draw=TCD-Blue,fill=TCDBlue},
+    ghost/.style={draw=TCD-Grey,fill=TCD-Grey-ii,line width=0.5pt},
     msg/.style={-{Latex[length=5pt]},TCD-Red,thick}]
-    \fill[TCDBlue] (0,0) rectangle (2.8,1.2);
-    \node[white,font=\scriptsize\bfseries] at (1.4,0.6) {owned slab};
-    \foreach \k in {0,1,2}{
-      \draw[ghost] (0,1.25+\k*0.30) rectangle (2.8,1.51+\k*0.30);
-      \draw[msg] (3.15,1.38+\k*0.30) -- (2.95,1.38+\k*0.30);
-    }
-    \node[lbl,anchor=west] at (3.25,1.78) {$q-1$ messages};
 
-    \begin{scope}[xshift=7.4cm]
-      \fill[TCDBlue] (0,0) rectangle (2.8,1.2);
-      \node[white,font=\scriptsize\bfseries] at (1.4,0.6) {owned slab};
-      \draw[ghost] (0,1.25) rectangle (2.8,2.11);
-      \node[lbl] at (1.4,1.68) {$q-1$ planes};
-      \draw[msg,line width=1.6pt] (3.35,1.68) -- (2.95,1.68);
-      \node[lbl,anchor=west] at (3.45,1.68) {\textbf{1} message, same bytes};
+    % --- (a) what a plane is: one oblique sheet out of the stack --------
+    \foreach \k in {0,1}{
+      \filldraw[draw=TCD-Grey-ii,fill=TCD-Grey-iii]
+        (0,\k*0.30) -- (1.9,\k*0.30) -- (2.5,\k*0.30+0.60)
+                    -- (0.6,\k*0.30+0.60) -- cycle;}
+    \filldraw[slab] (0,0.60) -- (1.9,0.60) -- (2.5,1.20) -- (0.6,1.20) -- cycle;
+    \foreach \t in {0.25,0.5,0.75}{
+      \draw[white,line width=0.4pt] (1.9*\t,0.60) -- (0.6+1.9*\t,1.20);}
+    \foreach \u in {0.33,0.66}{
+      \draw[white,line width=0.4pt] (0.6*\u,0.60+0.6*\u) -- (1.9+0.6*\u,0.60+0.6*\u);}
+    \draw[{Latex[length=4pt]}-{Latex[length=4pt]},TCD-Grey] (0,0.46) -- (1.9,0.46);
+    \node[lbl,anchor=north] at (0.95,0.44) {$N_1$};
+    \node[lbl,anchor=west,rotate=45] at (2.56,1.24) {$N_2$};
+    \draw[-{Latex[length=4pt]},TCD-Grey] (-0.34,0.02) -- (-0.34,1.34);
+    \node[lbl,anchor=east] at (-0.40,0.68) {$x_3$};
+    \node[capt] at (1.1,-0.62) {one \textbf{plane}:\\an $N_1\times N_2$ cut};
+
+    % --- (b) the naive exchange ----------------------------------------
+    \begin{scope}[xshift=4.3cm]
+      \draw[slab] (0,0) rectangle (2.6,1.0);
+      \node[white,font=\scriptsize\bfseries] at (1.3,0.5) {owned slab};
+      \foreach \k in {0,1,2}{
+        \draw[ghost] (0,1.05+\k*0.30) rectangle (2.6,1.05+\k*0.30+0.24);
+        \draw[msg] (3.02,1.17+\k*0.30) -- (2.74,1.17+\k*0.30);}
+      \node[capt] at (1.3,-0.62) {naive:\\$q-1$ messages};
+    \end{scope}
+
+    % --- (c) the deep halo ---------------------------------------------
+    \begin{scope}[xshift=8.7cm]
+      \draw[slab] (0,0) rectangle (2.6,1.0);
+      \node[white,font=\scriptsize\bfseries] at (1.3,0.5) {owned slab};
+      \draw[ghost] (0,1.05) rectangle (2.6,1.89);
+      \node[lbl] at (1.3,1.47) {$q-1$ planes};
+      \draw[msg,line width=1.7pt] (3.16,1.47) -- (2.74,1.47);
+      \node[capt] at (1.3,-0.62) {\textbf{deep halo:}\\1 message, same bytes};
     \end{scope}
   \end{tikzpicture}}
   \end{center}
 
-  \vskip0.5em
-  \textbf{2. One block, not $m$ vectors.} Orthogonalize a whole Krylov block at
-  once with \textbf{CholeskyQR2}: form the Gram matrix
+  \onslide<3->
+  \vskip0.3em
+  \textbf{2. Horizontal: one block, not $m$ vectors.} Orthogonalize a whole
+  Krylov block at once with \textbf{CholeskyQR2}: form the Gram matrix
   $\mat Z^{\mathsf T}\mat Z$, Cholesky-factor it, repeat once for stability.
-  \vskip-0.2em
+  \vskip-0.3em
   \[
     \mat Z_q=[\vect v,\ \mat A\vect v,\ \ldots,\ \mat A^{q-1}\vect v]
     \qquad
@@ -319,8 +365,8 @@
     \underbrace{1+2\lceil m/q\rceil}_{\text{one block}}
   \]
 
-  \vskip0.2em
-  \begin{exampleblock}{}\footnotesize
+  \vskip0.1em
+  \begin{exampleblock}{}<4->\footnotesize
     \centering
     Messages fall from $q-1$ to one and reductions by \textbf{11--16$\times$}
     at the measured $m=8$--$11$, $q=8$; the price is recomputing the ghost
@@ -344,25 +390,26 @@
     \vskip-0.6em
     \begin{figure}
       \centering
-      \includegraphics[width=\linewidth]{pres_scaling_reduction.png}
-    \end{figure}
-    \vskip-1.0em
-    \centerline{\scriptsize \textbf{Horizontal:} a $1.7\times$ faster all-reduce}
-    \centerline{\scriptsize leaves MGS within 5\%.}
-
-    \column{0.49\textwidth}
-    \vskip-0.6em
-    \begin{figure}
-      \centering
       \includegraphics[width=\linewidth]{pres_sweep_mechanism.png}
     \end{figure}
     \vskip-1.0em
     \centerline{\scriptsize \textbf{Vertical (L2):} the gap is the halo.}
     \centerline{\scriptsize The L3 sweep agrees.}
+
+    \column{0.49\textwidth}
+    \uncover<2->{%
+    \vskip-0.6em
+    \begin{figure}
+      \centering
+      \includegraphics[width=\linewidth]{pres_scaling_reduction.png}
+    \end{figure}
+    \vskip-1.0em
+    \centerline{\scriptsize \textbf{Horizontal:} a $1.7\times$ faster all-reduce}
+    \centerline{\scriptsize leaves MGS within 5\%.}}
   \end{columns}
 
   \vskip0.4em
-  \begin{alertblock}{}\footnotesize
+  \begin{alertblock}{}<3->\footnotesize
     \centering
     $11$--$16\times$ fewer reductions, $4$--$8\times$ less modeled traffic.\\
     \textbf{The saving is real; the speedup is not. So when \emph{does} it pay?}
@@ -381,22 +428,25 @@
 \small
 
   \vskip-0.2em
-  \centerline{$\displaystyle
-    \Rv=\frac{\text{Arnoldi working set}}{\text{last-level cache}}
-    \qquad\qquad
-    \Rh=\frac{\text{reduction latency}}{\text{compute between reductions}}$}
+  \centerline{%
+    $\displaystyle
+      \Rv=\frac{\text{Arnoldi working set}}{\text{last-level cache}}$
+    \hskip2.2em
+    \uncover<2->{$\displaystyle
+      \Rh=\frac{\text{reduction latency}}{\text{compute between reductions}}$}}
 
   \vskip-0.3em
+  \uncover<3->{%
   \begin{figure}
     \centering
     \includegraphics[height=0.585\textheight]{regime_trajectory_puffin.png}
   \end{figure}
   \vskip-0.9em
   \centerline{\scriptsize Eight production grids, $n=25\to90$, real basket
-              operator, puffin's calibrated constants.}
+              operator, puffin's calibrated constants.}}
 
   \vskip0.3em
-  \begin{exampleblock}{}\footnotesize
+  \begin{exampleblock}{}<3->\footnotesize
     \centering
     On one socket $\Rv\Rh$ stays near $0.04$ for every $P$, so the corner is
     not merely unreached here: it is unreachable on this topology.
@@ -419,6 +469,7 @@
     \Rv = \frac{\text{bytes}(N,\ \mathrm{nnz},\ m)}{C_{\text{LLC}}(P)} .
   \]
 
+  \onslide<2->
   \vskip0.6em
   \textbf{$\Rh$, from a calibration instrument.} An isolated scalar all-reduce
   with no application work, fitted over the tree levels it crosses:
@@ -426,16 +477,26 @@
   \[
     \Rh = \frac{\tred(P)}{W_{\text{local}}} ,
     \qquad
-    \tred(P) = t_{\text{intra}}L_{\text{in}}
-             + t_{\text{cross}}\min(L_{\text{x}},L^{\star}) .
+    \tred(P) = t_{\text{intra}}L_{\text{in}}(P)
+             + t_{\text{cross}}\min\!\big(L_{\text{x}}(P),\,L^{\star}\big) .
   \]
+  \vskip0.1em
+  \begin{center}\scriptsize
+  \begin{minipage}{0.94\textwidth}\centering
+    $W_{\text{local}}$, compute between reductions;\hskip0.7em
+    $t_{\text{intra}},t_{\text{cross}}$, cost of one tree level inside and
+    across a cache domain;\hskip0.7em
+    $L_{\text{in}},L_{\text{x}}$, how many levels of each kind the tree
+    crosses;\hskip0.7em
+    $L^{\star}$, fitted depth beyond which concurrency hides the cost.
+  \end{minipage}
+  \end{center}
 
-  \vskip0.8em
-  \begin{alertblock}{}\footnotesize
+  \vskip0.4em
+  \begin{alertblock}{}<3->\footnotesize
     \centering
     \textbf{Raising the cost of a reduction is what moves an operator right,
-    and that is a property of topology.} \\Puffin tops out at
-    $\tred = 1.70\,\mu$s, and the corner opens at about $25\,\tred$.
+    and that is a property of topology.}
   \end{alertblock}
 
 \end{frame}
@@ -446,31 +507,56 @@
 \begin{frame}[t]{More participants push the operator into the corner}
 \small
 
-  \vskip0.3em
+  \vskip-0.3em
+  \begin{center}
+  \scalebox{0.56}{%
+  \begin{tikzpicture}[
+    gpu/.style={draw=TCD-Blue,fill=TCDBlue,text=white,
+                font=\small\bfseries,minimum width=1.6cm,minimum height=0.55cm},
+    nodebox/.style={draw=TCD-Grey-ii,rounded corners=2pt,inner sep=7pt},
+    lbl/.style={font=\footnotesize,text=TCD-Grey}]
+    \node[gpu] (a1) at (0,0)   {V100};
+    \node[gpu] (a2) at (2.2,0) {V100};
+    \draw[TCDBlue,very thick] (a1) -- (a2);
+    \node[nodebox,fit=(a1)(a2)] (n1) {};
+    \node[lbl,anchor=north] at ([yshift=-2pt]n1.south) {PCIe, $11.46\,\mu$s};
+    \node[lbl,anchor=south west] at ([yshift=-1pt]n1.north west) {\texttt{synge-n01}};
+
+    \node[gpu] (b1) at (8.0,0)  {V100};
+    \node[gpu] (b2) at (10.2,0) {V100};
+    \draw[TCDBlue,very thick] (b1) -- (b2);
+    \node[nodebox,fit=(b1)(b2)] (n2) {};
+    \node[lbl,anchor=north] at ([yshift=-2pt]n2.south) {PCIe, $11.46\,\mu$s};
+    \node[lbl,anchor=south west] at ([yshift=-1pt]n2.north west) {\texttt{synge-n02}};
+
+    \node[draw=TCD-Red,fill=TCD-Red-iii,minimum height=1.1cm,
+          font=\footnotesize,align=center] (fab) at (5.1,0)
+          {Omni-Path fabric\\$\mathbf{22.09\,\mu s}$};
+    \draw[TCD-Grey,thick] (n1.east) -- (fab.west);
+    \draw[TCD-Grey,thick] (fab.east) -- (n2.west);
+  \end{tikzpicture}}
+  \end{center}
+  \vskip-0.2em
+  \centerline{\scriptsize A reduction inside a card costs tens of nanoseconds; one
+              that leaves the node costs \textbf{22\,$\mu$s}.}
+
+  \onslide<2->
+  \vskip0.2em
   \begin{columns}[c]
-    \column{0.56\textwidth}
+    \column{0.60\textwidth}
     \begin{figure}
       \centering
       \includegraphics[width=\linewidth]{regime_trajectory_synge_grid.png}
     \end{figure}
 
-    \column{0.42\textwidth}\footnotesize
-    Same definitions, recalibrated machine constants. Synge is two nodes with
-    two Tesla V100s each.
-
-    \smallskip
-    A GPU crosses \textbf{five} reduction levels where the CPU crosses two, and
-    every added participant raises $\tred$, moving the whole trajectory
+    \column{0.38\textwidth}\footnotesize
+    Every added participant raises $\tred$, moving the whole trajectory
     \textbf{right}.
 
     \smallskip
-    At $n{=}61$, $m{=}12$, $q{=}8$ the coordinates are
-    $\Rv=7.2$ and $\Rh=1.7$: inside the corner on both cards.
+    At $n{=}61$, $m{=}12$, $q{=}8$: $\Rv=7.2$, $\Rh=1.7$, inside the corner on
+    both cards.
   \end{columns}
-
-  \vskip0.2em
-  \centerline{\scriptsize Each line sweeps the same grids: $n{=}25$ at the lower
-              right to $n{=}90$ at the upper left.}
 
 \end{frame}
 
@@ -490,6 +576,7 @@
     \includegraphics[width=0.96\linewidth]{pres_gpu_gate.png}
 
     \column{0.42\textwidth}
+    \uncover<2->{%
     \centerline{\scriptsize\textbf{Nsight Compute, $s$-Gram kernel}}
     \vskip0.2em
     \begin{center}\scriptsize\setlength{\tabcolsep}{4pt}
@@ -500,11 +587,11 @@
       verdict & memory        & compute \\
       \bottomrule
     \end{tabular}
-    \end{center}
+    \end{center}}
   \end{columns}
 
   \vskip0.6em
-  \begin{block}{\footnotesize The memory-bound check}\footnotesize
+  \begin{block}{\footnotesize The memory-bound check}<3->\footnotesize
     A precondition, before the map is read: compare each kernel's arithmetic
     intensity ($AI$, FLOP per byte) with the FP64 ridge, peak FP64 over
     achieved bandwidth ($BW$).
@@ -539,8 +626,7 @@
   \begin{exampleblock}{}\footnotesize
     \centering
     Parity on one GPU, and \textbf{1.78--1.80$\times$} on four V100s across two
-    nodes. Plane-streamed matrix powers add \textbf{1.21--1.32$\times$} on a
-    single device.
+    nodes.
   \end{exampleblock}
 
 \end{frame}
@@ -564,17 +650,18 @@
     \centerline{\scriptsize $0.89\times$, about 22\% efficiency.}
 
     \column{0.49\textwidth}
+    \uncover<2->{%
     \vskip-0.8em
     \begin{figure}
       \centering
       \includegraphics[width=\linewidth]{pres_weak_scaling.png}
     \end{figure}
     \vskip-1.0em
-    \centerline{\scriptsize \textbf{Weak:} ${\approx}227{,}000$ rows per GPU held fixed.}
+    \centerline{\scriptsize \textbf{Weak:} ${\approx}227{,}000$ rows per GPU held fixed.}}
   \end{columns}
 
   \vskip0.7em
-  \begin{alertblock}{}\footnotesize
+  \begin{alertblock}{}<3->\footnotesize
     \centering
     At $n{=}61$ each of four slabs owns only ${\approx}57{,}000$ rows: too
     little to saturate a V100. Four GPUs earn their place \textbf{above
@@ -598,8 +685,8 @@
 
   \begin{columns}[T]
     \column{0.49\textwidth}
-    \textbf{What the work establishes}
-    \begin{itemize}\footnotesize
+    \uncover<2->{\textbf{What the work establishes}}
+    \begin{itemize}[<2->]\footnotesize
       \item Two a-priori coordinates that say \emph{which} mechanism is
             worth measuring, without timing the solver.
       \item One system where the corner is unreachable and one where more
@@ -611,14 +698,14 @@
     \end{itemize}
 
     \column{0.49\textwidth}
-    \textbf{Future work}
-    \begin{itemize}\footnotesize
+    \uncover<3->{\textbf{Future work}}
+    \begin{itemize}[<3->]\footnotesize
       \item A \textbf{tile-aware $\Rv$} predicting read redundancy from tile
             dimensions, stencil radius and streamed height.
       \item \textbf{Mixed precision} recurrence with higher-precision Gram
-            accumulation. Not free: a lower-precision basis worsens the very
-            conditioning the guard tracks, so it must be gated on measured
-            orthogonality.
+            accumulation. Not free: it can cost numerical stability, so the
+            first job is identifying which parts of the solve are sensitive to
+            the change.
       \item \textbf{H100-class devices and faster links}: does the crossover
             transfer beyond Synge?
     \end{itemize}
@@ -671,7 +758,6 @@
   \vfill
   \begin{center}
     {\Large\bfseries\color{TCDBlue} Appendix}\\[0.8em]
-    {\small Supporting detail, held in reserve.}
   \end{center}
   \vfill
 \end{frame}}
@@ -683,7 +769,8 @@
 \small
 
   Are the prices still right, and how does the solver compare with an
-  established method? \textbf{KSM-EI} is the Krylov exponential integrator,
+  established method? \\
+  \textbf{KSM-EI} is the Krylov exponential integrator. \\
   \textbf{ADI-HV-S} the smoothed Hundsdorfer--Verwer ADI scheme.
 
   \vskip0.4em
@@ -727,7 +814,37 @@
 \end{frame}
 
 % -----------------------------------------------------------
-% A2  |  Numerical admissibility
+% A2  |  KSM-EI against ADI: the work-precision picture
+% -----------------------------------------------------------
+\begin{frame}[t]{Appendix: where the $5.8\times$ comes from}
+\small
+
+  \vskip-0.4em
+  \begin{figure}
+    \centering
+    \includegraphics[width=0.70\linewidth]{pres_method_comparison.png}
+  \end{figure}
+  \vskip-1.1em
+  \centerline{\scriptsize One thread, $n{=}61$; each marker is one step count,
+              1 step at the left to 400 at the right.}
+
+  \vskip0.4em
+  \begin{exampleblock}{}\footnotesize
+    \centering
+    ADI-HV-S needs \textbf{50 steps} to meet the error budget. KSM-EI reaches
+    machine precision in \textbf{one}.
+  \end{exampleblock}
+
+  \vskip0.2em
+  {\footnotesize
+  ADI-HV-S is second order in time, so accuracy has to be bought with steps.
+  KSM-EI's curve is vertical: past the first step there is no temporal error
+  left to remove, and further steps buy only time.}
+
+\end{frame}
+
+% -----------------------------------------------------------
+% A3  |  Numerical admissibility
 % -----------------------------------------------------------
 \begin{frame}[t]{Appendix: is the Krylov block numerically admissible?}
 \small
@@ -738,19 +855,23 @@
   \vskip0.4em
   \begin{columns}[T]
     \column{0.50\textwidth}\footnotesize
-    \textbf{What the implementation does.} It narrows the block whenever
-    $\kappa_2(\mat Z) > u^{-1/2}\approx9.5\times10^{7}$.
+    \textbf{In practice.} The solver narrows the block whenever
+    $\kappa_2(\mat Z_q) > u^{-1/2}\approx9.5\times10^{7}$.
 
     \smallskip
-    \textbf{What theory covers.} The dimension-dependent sufficient condition
-    $\delta = 8\kappa_2(\mat Z)\sqrt{Mqu+q(q+1)u}\le1$ limits $\kappa_2$ to
-    ${\approx}1.25\times10^{4}$ at $M=226{,}984$, $q=4$. The measured block
-    reaches $6.0\times10^{6}$, giving $\delta\approx482$: the theorem is
-    \emph{inconclusive}, not violated.
+    \textbf{In theory.} CholeskyQR2's sufficient condition is
+    dimension-dependent,
+    \vskip-0.2em
+    \centerline{\scalebox{0.86}{$\displaystyle
+      \delta = 8\kappa_2(\mat Z_q)\sqrt{(N{+}3)qu+q(q+1)u}\le1 ,$}}
+    \vskip0.1em
+    which allows only $\kappa_2\lesssim1.25\times10^{4}$ at our size. The
+    measured block reaches $6.0\times10^{6}$, so $\delta\approx482$: the
+    theorem is \textbf{inconclusive here, not violated}.
 
     \smallskip
-    Acceptance therefore rests on the guard, successful factorization,
-    measured orthogonality, and referee agreement.
+    \textbf{So the claim rests on} the guard, a successful factorization, the
+    orthogonality measured on the right, and referee agreement.
 
     \column{0.48\textwidth}
     \centerline{\footnotesize\textbf{Orthogonality loss, $n{=}61$, $m{=}8$, $q{=}4$}}
@@ -764,7 +885,9 @@
       \bottomrule
     \end{tabular}
     \end{center}
-    \vskip0.5em
+    \vskip-0.1em
+    \centerline{\scriptsize lower is better in both columns}
+    \vskip0.4em
     \centerline{\footnotesize\textbf{Width admitted by the guard}}
     \vskip0.2em
     \begin{center}\scriptsize\setlength{\tabcolsep}{6pt}
@@ -776,12 +899,57 @@
       \bottomrule
     \end{tabular}
     \end{center}
+    \vskip-0.1em
+    \centerline{\scriptsize higher is better: a wider block means fewer
+                reductions}
   \end{columns}
 
 \end{frame}
 
 % -----------------------------------------------------------
-% A3  |  The cache-aware roofline
+% A4  |  Why the monomial basis is enough
+% -----------------------------------------------------------
+\begin{frame}[t]{Appendix: why the monomial basis is enough}
+\small
+
+  \vskip0.1em
+  \begin{columns}[T]
+    \column{0.56\textwidth}
+    \vskip-0.6em
+    \begin{figure}
+      \centering
+      \includegraphics[width=\linewidth]{pres_basis_conditioning.png}
+    \end{figure}
+    \vskip-0.9em
+    \centerline{\scriptsize Basket, $n{=}61$. Each line stops at the widest}
+    \centerline{\scriptsize block that basis certifies (filled marker).}
+
+    \column{0.41\textwidth}\footnotesize
+    \textbf{$m$ stays small.} The endpoint defect is met at a mean
+    $m\approx8$, so the recurrence never needs $q>4$.
+
+    \smallskip
+    \textbf{Small $q$ is the safe regime.} Monomial conditioning is only a
+    problem for wide blocks. At $q\le4$ it stays under the guard, and grows
+    \emph{more slowly} than either alternative.
+
+    \smallskip
+    \textbf{The alternatives do not pay.} Newton and Chebyshev exist to hold
+    conditioning down at large $q$. Here they are worse at every width,
+    certify one column fewer, and need spectral estimates the monomial does
+    not.
+  \end{columns}
+
+  \vskip0.4em
+  \begin{exampleblock}{}\footnotesize
+    \centering
+    Stability here comes from $m$ being small, not from a clever basis.
+  \end{exampleblock}
+
+\end{frame}
+
+% -----------------------------------------------------------
+% A5  |  The cache-aware roofline
 % -----------------------------------------------------------
 \begin{frame}[t]{Appendix: the cache-aware roofline on puffin}
 \small
@@ -819,7 +987,7 @@
 \end{frame}
 
 % -----------------------------------------------------------
-% A4  |  Where a GPU differs from a CPU
+% A6  |  Where a GPU differs from a CPU
 % -----------------------------------------------------------
 \begin{frame}[t]{Appendix: where a GPU differs from a CPU}
 \small
@@ -838,7 +1006,7 @@
     lbl/.style={font=\scriptsize,text=TCD-Grey}]
 
     \node[font=\small\bfseries,text=TCD-Grey] at (2.20,2.62)
-      {\textbf{CPU} --- puffin, Threadripper 3960X};
+      {\textbf{CPU}: puffin, Threadripper 3960X};
     \foreach \k in {0,1,2}{
       \begin{scope}[xshift=\k*1.70cm]
         \foreach \i in {0,1,2}{\node[core] at (\i*0.46,1.85) {};}
@@ -848,7 +1016,7 @@
     \node[lbl] at (5.35,1.60) {$\cdots\times 8$};
 
     \node[font=\small\bfseries,text=TCD-Grey] at (9.30,2.62)
-      {\textbf{GPU} --- synge, Tesla V100};
+      {\textbf{GPU}: synge, Tesla V100};
     \foreach \i in {0,...,7}{\node[sm] at (6.55+\i*0.66,1.85) {};}
     \node[lbl] at (12.02,1.85) {$\cdots\times 80$};
     \node[cache,minimum width=6.20cm] at (9.30,1.35) {one shared 6\,MB L2};
@@ -882,14 +1050,14 @@
 \end{frame}
 
 % -----------------------------------------------------------
-% A5  |  The reduction ladder
+% A7  |  The reduction ladder
 % -----------------------------------------------------------
 \begin{frame}[t]{Appendix: the reduction ladder and $\tredstar$}
 \small
 
   \vskip-0.4em
   \begin{center}
-  \scalebox{0.66}{%
+  \scalebox{0.74}{%
   \begin{tikzpicture}[
     gpu/.style={draw=TCD-Blue,fill=TCDBlue,text=white,
                 font=\small\bfseries,minimum width=1.6cm,minimum height=0.55cm},
@@ -930,7 +1098,7 @@
   \vskip0.4em
   \begin{center}\footnotesize\setlength{\tabcolsep}{10pt}
   \begin{tabular}{@{}lrc@{}}\toprule
-    \textbf{Reduction rung} & $\tred$ \textbf{($\mu$s)} & \textbf{Corner} \\\midrule
+    \textbf{Reduction level} & $\tred$ \textbf{($\mu$s)} & \textbf{Corner} \\\midrule
     warp shuffle       & 0.42  & closed \\
     thread block       & 0.79  & \textbf{open} \\
     grid, 2nd launch   & 5.54  & \textbf{open} \\
@@ -947,7 +1115,7 @@
 \end{frame}
 
 % -----------------------------------------------------------
-% A6  |  Memory access is the CPU's binding constraint
+% A8  |  Memory access is the CPU's binding constraint
 % -----------------------------------------------------------
 \begin{frame}[t]{Appendix: on the CPU, memory access is the binding constraint}
 \small
@@ -994,7 +1162,7 @@
 \end{frame}
 
 % -----------------------------------------------------------
-% A7  |  Plane streaming
+% A9  |  Plane streaming
 % -----------------------------------------------------------
 \begin{frame}[t]{Appendix: the kernel schedule, not the tile}
 \small
@@ -1030,38 +1198,87 @@
 \end{frame}
 
 % -----------------------------------------------------------
-% A8  |  The memory footprint
+% A10 |  The memory footprint
 % -----------------------------------------------------------
 \begin{frame}[t]{Appendix: when does the problem stop fitting on one card?}
 \small
 
-  \vskip0.8em
+  \vskip0.6em
   \begin{center}\footnotesize\setlength{\tabcolsep}{12pt}
   \begin{tabular}{@{}lrr@{}}\toprule
     \textbf{FP64 footprint} & $n{=}61$ & $n{=}337$ \\\midrule
-    unknowns $N$                    & $2.27\times10^{5}$ & $3.83\times10^{7}$ \\
-    one state vector (GB)           & $1.8\times10^{-3}$ & $3.1\times10^{-1}$ \\
-    Krylov basis, $m{=}39$ (GB)     & $7.1\times10^{-2}$ & $1.19\times10^{1}$ \\
-    share of a 16\,GB V100          & 0.4\%              & \textbf{75\%} \\
+    unknowns $N$ (millions)      & 0.23  & 38.3 \\
+    one state vector (MB)        & 1.8   & 306 \\
+    Krylov basis, $m{=}39$ (GB)  & 0.07  & 11.9 \\
+    share of a 16\,GB V100       & 0.4\% & \textbf{75\%} \\
     \bottomrule
   \end{tabular}
   \end{center}
 
-  \vskip1.0em
-  \begin{exampleblock}{}\footnotesize
-    \centering
-    $n=337$ is the largest odd grid common to every topology, payoff and width
-    after a 10\% memory reserve. The binding arm is the \emph{one-GPU},
-    $s{=}4$ case, which is exactly why four GPUs start to earn their place
-    above it.
-  \end{exampleblock}
+  \vskip0.8em
+  \begin{block}{\footnotesize At $n=337$ the solve converges but is still not accepted}\footnotesize
+    Maximum $m=32$, residual $9.85\times10^{-9}$: the \emph{convergence} gate
+    passes. The \emph{boundary-state} gate fails, at $6.40\times10^{-5}$, and
+    the cause is scaling rather than convergence. The fixed augmentation leaves
+    $\|\mat B\|_1 = 4.15\times10^{10}$, so $\widetilde{\mat A}$ is badly scaled
+    and the three-component forcing tail loses its digits. A power-of-two
+    similarity rescaling, $\eta=2^{-36}$, brings $\|\mat B\|_1$ to $0.603$ and
+    the tail error to $4.41\times10^{-13}$, and the run then passes.
+  \end{block}
+
+  \vskip0.3em
+  \centerline{\scriptsize The original stop remains the reported result.}
+
+\end{frame}
+
+% -----------------------------------------------------------
+% A11 |  The acceptance gates
+% -----------------------------------------------------------
+\begin{frame}[t]{Appendix: what a run has to pass}
+\small
+
+  \vskip0.2em
+  \begin{center}
+  \scalebox{0.70}{%
+  \begin{tikzpicture}[
+    gate/.style={draw=TCD-Blue,fill=TCD-Main-iv,text=TCD-Grey,
+                 font=\footnotesize\bfseries,rounded corners=2pt,align=center,
+                 minimum width=2.25cm,minimum height=0.85cm},
+    arr/.style={-{Latex[length=5pt]},TCD-Grey,thick}]
+    \node[gate] (g1) at (0,0)     {conditioning};
+    \node[gate] (g2) at (2.85,0)  {convergence};
+    \node[gate] (g3) at (5.70,0)  {boundary\\state};
+    \node[gate] (g4) at (8.55,0)  {single-GPU\\agreement};
+    \node[gate] (g5) at (11.40,0) {independent\\referee};
+    \foreach \a/\b in {g1/g2,g2/g3,g3/g4,g4/g5}{\draw[arr] (\a) -- (\b);}
+  \end{tikzpicture}}
+  \end{center}
 
   \vskip0.6em
-  {\footnotesize
-  At that grid the predeclared numerical gate converges with maximum $m=32$ and
-  residual $9.85\times10^{-9}$, but the boundary-state gate fails at
-  $6.40\times10^{-5}$. Rescaling the augmentation by $\eta=2^{-36}$ repairs it
-  to $4.41\times10^{-13}$; the original stop remains the reported result.}
+  \begin{center}\scriptsize\setlength{\tabcolsep}{5pt}
+  \begin{tabular}{@{}lll@{}}\toprule
+    \textbf{Gate} & \textbf{What it checks} & \textbf{Tolerance} \\\midrule
+    conditioning   & $\kappa_2(\mat Z_q)$ before every factorization
+                                          & $u^{-1/2}\approx9.5\times10^{7}$ \\
+    convergence    & endpoint defect $\eta_m$, at every step
+                                          & $10^{-8}$ \\
+    boundary state & the forcing tail against its closed form
+                                          & $10^{-8}$ \\
+    single-GPU     & distributed state against a one-GPU run
+                                          & $10^{-13}\,\|\text{state}\|$ \\
+    referee        & against an Al-Mohy--Higham solve
+                                          & stated per arm \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vskip0.7em
+  \begin{exampleblock}{}\footnotesize
+    \centering
+    A result is reported only if \textbf{all five} pass. Each is a different
+    quantity, so tightening one does not repair another: the $n=337$ probe
+    converges and still fails at \emph{boundary state}.
+  \end{exampleblock}
 
 \end{frame}
 

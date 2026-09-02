@@ -1,0 +1,4 @@
+\beamer@sectionintoc {1}{The problem and the method}{6}{0}{1}
+\beamer@sectionintoc {2}{Where the time goes}{14}{0}{2}
+\beamer@sectionintoc {3}{The regime map}{24}{0}{3}
+\beamer@sectionintoc {4}{Does it pay?}{33}{0}{4}
