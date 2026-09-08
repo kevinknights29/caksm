@@ -95,6 +95,17 @@ else
 fi
 echo
 
+echo "  Per-link state and negotiated rate. The matrix above gives the link COUNT, so 'NV18'"
+echo "  says eighteen links are bonded but not how fast they run or whether all of them are"
+echo "  up. Without this, an intra-node rung can only be attributed to NVLink by its bandwidth."
+NVLINK_OUT="$DATA_DIR/gpu_nvlink_$(uname -n).txt"
+if nvidia-smi nvlink -s > "$NVLINK_OUT" 2>&1 && [[ -s "$NVLINK_OUT" ]]; then
+    sed 's/^/  /' "$NVLINK_OUT"
+else
+    echo "  (no NVLink on this host, or the status is unavailable)"
+fi
+echo
+
 echo "### MIG, MPS and co-tenancy: the topology objection, applied to a GPU"
 echo "  MIG mode (enabled means L2 is partitioned and gpu_machine.hpp's 6 MiB is wrong):"
 nvidia-smi --query-gpu=index,mig.mode.current --format=csv 2>/dev/null | sed 's/^/    /' \
