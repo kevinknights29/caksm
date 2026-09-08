@@ -1,14 +1,19 @@
 /**
- * @file regime_gpu_sstep_2gpu.cu
- * @brief Two-GPU measured horizontal crossover: MGS against s-step with real inter-GPU reductions.
+ * @file regime_gpu_sstep_multigpu.cu
+ * @brief Measured horizontal crossover over N local GPUs: MGS against s-step with real
+ *        inter-GPU reductions.
  *
  * The single-GPU harness models the crossover, adding R * t_reduce to each method's local
- * compute. This one measures it. The n basis rows are split across both local V100s, so every
- * MGS dot and norm, and every s-step Gram, becomes a real NCCL all-reduce across the PCIe/UPI
- * link. At the DEVICE_P2P rung the reduction is expensive, so s-step's smaller reduction count is
- * a wall-clock saving, and the n at which s-step stops beating MGS is the measured theta_h.
+ * compute. This one measures it. The n basis rows are split across the participating devices,
+ * so every MGS dot and norm, and every s-step Gram, becomes a real NCCL all-reduce across the
+ * link. At the DEVICE_P2P rung the reduction is expensive, so s-step's smaller reduction count
+ * is a wall-clock saving, and the n at which s-step stops beating MGS is the measured theta_h.
  *
- * Single process, both devices via ncclCommInitAll, the rung reachable in a one-node allocation.
+ * Single process, every participating device via ncclCommInitAll, the rung reachable in a
+ * one-node allocation. `--devices` selects which of the visible GPUs take part, which makes the
+ * participant count a swept variable: the collective grows more expensive with the count, so
+ * the crossover can be read against a ladder rung whose cost is known for that exact count.
+ *
  * Values are immaterial to a timing, as in the single-GPU harness: the all-reduces are real
  * and the kernels move real traffic, but no scalar is fed forward, and orthogonality is the
  * single-GPU harness's job. The reduction counts are exact: R_mgs = 1 + m(m+3)/2 all-reduces
@@ -20,9 +25,9 @@
  * in the numerator is the same either way, and is what this harness measures against the ladder.
  *
  * Usage:
- *   ./regime-gpu-sstep-2gpu [--machine v100-pcie-16gb] [--m M] [--n-list "8000 61000 227000"]
- *                           [--s-list "1 2 4 6 8"] [--s-max 9] [--repeats K]
- *                           [--t-reduce-us T] [--csv PATH]
+ *   ./regime-gpu-sstep-multigpu [--machine v100-pcie-16gb] [--devices 0,1,2,3] [--m M]
+ *                               [--n-list "8000 61000 227000"] [--s-list "1 2 4 6 8"]
+ *                               [--s-max 9] [--repeats K] [--t-reduce-us T] [--csv PATH]
  *
  * @author Kevin Knights
  * @date 2026-07-25
@@ -372,6 +377,9 @@ struct Args {
     double      t_reduce_us = 0.0;   ///< calibrated DEVICE_P2P rung, for the R_h prediction
     std::vector<int64_t> n_list{8000, 61000, 227000, 705000, 1728000};
     std::vector<int>     s_list{1, 2, 4, 6, 8};
+    /// The devices that take part. Empty means every visible one.
+    std::vector<int> devices;
+    bool             devices_given = false;
     std::string csv_path;
 };
 
@@ -385,6 +393,40 @@ template <typename T>
     return out;
 }
 
+/// Comma-separated device ordinals, e.g. "0,1,2,3". Duplicates are rejected here rather than
+/// at NCCL, which would otherwise hang instead of reporting the mistake.
+[[nodiscard]] std::vector<int> parse_devices(const std::string& text)
+{
+    std::vector<int> devices;
+    std::size_t begin = 0;
+    while (begin < text.size()) {
+        const std::size_t end = text.find(',', begin);
+        const std::string token = text.substr(
+            begin, end == std::string::npos ? std::string::npos : end - begin);
+        if (token.empty()) {
+            std::fprintf(stderr, "--devices contains an empty device index\n");
+            std::exit(EXIT_FAILURE);
+        }
+        const int device = std::stoi(token);
+        if (device < 0) {
+            std::fprintf(stderr, "--devices indices must be non-negative\n");
+            std::exit(EXIT_FAILURE);
+        }
+        if (std::find(devices.begin(), devices.end(), device) != devices.end()) {
+            std::fprintf(stderr, "--devices must not contain duplicates\n");
+            std::exit(EXIT_FAILURE);
+        }
+        devices.push_back(device);
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    if (devices.empty()) {
+        std::fprintf(stderr, "--devices requires at least one device\n");
+        std::exit(EXIT_FAILURE);
+    }
+    return devices;
+}
+
 [[nodiscard]] Args parse_args(int argc, char** argv)
 {
     Args a;
@@ -396,6 +438,8 @@ template <typename T>
             return argv[i];
         };
         if      (arg == "--machine")     a.machine = next();
+        else if (arg == "--devices")   { a.devices = parse_devices(next());
+                                         a.devices_given = true; }
         else if (arg == "--m")           a.m       = std::stoi(next());
         else if (arg == "--repeats")     a.repeats = std::stoi(next());
         else if (arg == "--s-max")       a.s_max   = std::stoi(next());
@@ -405,14 +449,18 @@ template <typename T>
         else if (arg == "--csv")         a.csv_path = next();
         else if (arg == "--help") {
             std::printf(
-                "Usage: ./regime-gpu-sstep-2gpu [--machine KEY] [--m M] [--n-list \"...\"]\n"
-                "                               [--s-list \"1 2 4 8\"] [--s-max S] [--repeats K]\n"
-                "                               [--t-reduce-us T] [--csv PATH]\n\n"
-                "  Splits the n basis rows across both local GPUs, so every MGS dot/norm and every\n"
-                "  s-step Gram is a real NCCL all-reduce. Sweeps n at the DEVICE_P2P rung; the n\n"
-                "  where s-step stops beating MGS is the measured horizontal crossover.\n\n"
-                "  --t-reduce-us T  calibrated DEVICE_P2P reduction cost, for the predicted R_h the\n"
-                "                   measured crossover is checked against.\n");
+                "Usage: ./regime-gpu-sstep-multigpu [--machine KEY] [--devices 0,1,2,3] [--m M]\n"
+                "                                   [--n-list \"...\"] [--s-list \"1 2 4 8\"]\n"
+                "                                   [--s-max S] [--repeats K] [--t-reduce-us T]\n"
+                "                                   [--csv PATH]\n\n"
+                "  Splits the n basis rows across the participating GPUs, so every MGS dot/norm\n"
+                "  and every s-step Gram is a real NCCL all-reduce. Sweeps n at the DEVICE_P2P\n"
+                "  rung; the n where s-step stops beating MGS is the measured crossover.\n\n"
+                "  --devices LIST   which visible GPUs take part (default: all of them). Sweeping\n"
+                "                   it varies the participant count, and so the cost of the\n"
+                "                   collective the crossover is being read against.\n"
+                "  --t-reduce-us T  calibrated DEVICE_P2P reduction cost at THAT participant\n"
+                "                   count, for the predicted R_h the crossover is checked against.\n");
             std::exit(0);
         }
         else { std::fprintf(stderr, "Unknown flag: %s\n", arg.c_str()); std::exit(EXIT_FAILURE); }
@@ -424,7 +472,7 @@ template <typename T>
 
 struct Row {
     int64_t n; int s; int64_t blocks; int64_t r_ca;
-    double mgs_local_us; double mgs_2gpu_us; double sstep_2gpu_us; double speedup;
+    double mgs_local_us; double mgs_dist_us; double sstep_dist_us; double speedup;
     double meas_treduce_us; double rh_pred;
 };
 
@@ -434,43 +482,64 @@ int main(int argc, char** argv)
 {
     const Args a = parse_args(argc, argv);
 
-    int ndev = 0;
-    CUDA_CHECK(cudaGetDeviceCount(&ndev));
+    int visible = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&visible));
+
+    // Which devices take part. Every visible one unless --devices names a subset, so a
+    // dedicated allocation needs no flag and a participant sweep needs no reallocation.
+    std::vector<int> ids;
+    if (a.devices_given) {
+        ids = a.devices;
+    } else {
+        for (int d = 0; d < visible; ++d) ids.push_back(d);
+    }
+
+    for (const int d : ids) {
+        if (d >= visible) {
+            std::fprintf(stderr,
+                "--devices names GPU %d, but only %d are visible to this process.\n"
+                "Check CUDA_VISIBLE_DEVICES and the allocation's --gpus-per-node.\n", d, visible);
+            return EXIT_FAILURE;
+        }
+    }
+
+    const int ndev = static_cast<int>(ids.size());
     if (ndev < 2) {
         std::fprintf(stderr,
-            "Need at least 2 visible GPUs: the measured crossover is a real inter-GPU reduction,\n"
-            "and one device has nothing to reduce across. Check CUDA_VISIBLE_DEVICES and that the\n"
-            "allocation requested --gpus-per-node=2.\n");
+            "Need at least 2 participating GPUs: the measured crossover is a real inter-GPU\n"
+            "reduction, and one device has nothing to reduce across. %d visible, %d selected.\n",
+            visible, ndev);
         return EXIT_FAILURE;
     }
 
     // Every participating device must be idle: a collective costs what its slowest participant
-    // costs, so one contended GPU contaminates the whole measurement.
+    // costs, so one contended GPU contaminates the whole measurement. Only the selected devices
+    // are checked, since a busy GPU nobody reduces across cannot affect this measurement.
     bool contended = false;
-    for (int d = 0; d < ndev; ++d) {
+    for (const int d : ids) {
         CUDA_CHECK(cudaSetDevice(d));
         const DeviceContention c = check_device_contention();
         if (c.contended) { std::printf("  device %d:", d); report_contention(c); contended = true; }
     }
 
     cudaDeviceProp prop{};
-    CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, ids[0]));
 
     // Comms first, then per-device streams and handles bound to their device and stream. Device
     // pointer mode keeps the vector kernels asynchronous: a host-pointer dot would block to
     // return its scalar and serialize the pipeline the all-reduce is meant to dominate.
     std::vector<Dev> devs(static_cast<std::size_t>(ndev));
-    std::vector<int> ids(static_cast<std::size_t>(ndev));
-    for (int d = 0; d < ndev; ++d) ids[static_cast<std::size_t>(d)] = d;
     std::vector<ncclComm_t> comms(static_cast<std::size_t>(ndev));
     NCCL_CHECK(ncclCommInitAll(comms.data(), ndev, ids.data()));
 
     const double one = 1.0, zero = 0.0;
     for (int d = 0; d < ndev; ++d) {
         Dev& dv = devs[static_cast<std::size_t>(d)];
-        dv.id = d;
+        // The device ORDINAL, not the slot: with a subset the two differ, and every
+        // cudaSetDevice below and in the timed paths goes through dv.id.
+        dv.id = ids[static_cast<std::size_t>(d)];
         dv.comm = comms[static_cast<std::size_t>(d)];
-        CUDA_CHECK(cudaSetDevice(d));
+        CUDA_CHECK(cudaSetDevice(dv.id));
         CUDA_CHECK(cudaStreamCreate(&dv.stream));
         CUBLAS_CHECK(cublasCreate(&dv.blas));
         CUBLAS_CHECK(cublasSetStream(dv.blas, dv.stream));
@@ -485,9 +554,10 @@ int main(int argc, char** argv)
         CUDA_CHECK(cudaMemset(dv.d_scalar, 0, sizeof(double)));
     }
 
-    std::printf("GPU s-step vs MGS on two devices -- the measured horizontal crossover\n");
-    std::printf("  machine=%s  devices=%d (%s)  m=%d  rung=DEVICE_P2P\n",
-                a.machine.c_str(), ndev, prop.name, a.m);
+    std::printf("GPU s-step vs MGS over %d devices -- the measured horizontal crossover\n",
+                ndev);
+    std::printf("  machine=%s  devices=%d of %d visible (%s)  m=%d  rung=DEVICE_P2P\n",
+                a.machine.c_str(), ndev, visible, prop.name, a.m);
     std::printf("  rows split across devices; every reduction is a real NCCL all-reduce\n");
     report_toolkit();
 
@@ -501,29 +571,29 @@ int main(int argc, char** argv)
     std::vector<Row> rows;
     for (const int64_t n : a.n_list) {
         const double mgs_local = run_mgs(devs, a.m, n, a.repeats, false);
-        const double mgs_2gpu  = run_mgs(devs, a.m, n, a.repeats, true);
+        const double mgs_dist  = run_mgs(devs, a.m, n, a.repeats, true);
         const int64_t r_mgs = mgs_reductions(a.m);
         const double meas_treduce_us = r_mgs > 0
-            ? (mgs_2gpu - mgs_local) / static_cast<double>(r_mgs) * 1e6 : 0.0;
+            ? (mgs_dist - mgs_local) / static_cast<double>(r_mgs) * 1e6 : 0.0;
         const double rh_pred = mgs_local > 0.0 && a.t_reduce_us > 0.0
             ? (a.t_reduce_us * 1e-6) / (mgs_local / static_cast<double>(r_mgs)) : 0.0;
 
-        std::printf("\n  n=%lld  MGS: local %.1f us, 2-GPU %.1f us, R=%lld"
+        std::printf("\n  n=%lld  MGS: local %.1f us, distributed %.1f us, R=%lld"
                     "  (measured t_reduce %.2f us; predicted R_h %.3f)\n",
-                    n, mgs_local * 1e6, mgs_2gpu * 1e6, r_mgs, meas_treduce_us, rh_pred);
+                    n, mgs_local * 1e6, mgs_dist * 1e6, r_mgs, meas_treduce_us, rh_pred);
         std::printf("  %4s %8s %6s %13s %13s %10s\n",
-                    "s", "blocks", "R_ca", "s-step 2gpu", "MGS 2gpu", "MGS/sstep");
+                    "s", "blocks", "R_ca", "s-step dist", "MGS dist", "MGS/sstep");
         std::printf("  %s\n", std::string(58, '-').c_str());
 
         for (const int s : s_list) {
-            const double sstep_2gpu = run_sstep(devs, a.m, n, s, a.repeats, prop.multiProcessorCount);
+            const double sstep_dist = run_sstep(devs, a.m, n, s, a.repeats, prop.multiProcessorCount);
             const int64_t blocks = (a.m + s - 1) / s;
             const int64_t r_ca   = ca_reductions(a.m, s);
-            const double speedup = sstep_2gpu > 0.0 ? mgs_2gpu / sstep_2gpu : 0.0;
-            rows.push_back({n, s, blocks, r_ca, mgs_local * 1e6, mgs_2gpu * 1e6,
-                            sstep_2gpu * 1e6, speedup, meas_treduce_us, rh_pred});
+            const double speedup = sstep_dist > 0.0 ? mgs_dist / sstep_dist : 0.0;
+            rows.push_back({n, s, blocks, r_ca, mgs_local * 1e6, mgs_dist * 1e6,
+                            sstep_dist * 1e6, speedup, meas_treduce_us, rh_pred});
             std::printf("  %4d %8lld %6lld %13.2f %13.2f %10.3f\n",
-                        s, blocks, r_ca, sstep_2gpu * 1e6, mgs_2gpu * 1e6, speedup);
+                        s, blocks, r_ca, sstep_dist * 1e6, mgs_dist * 1e6, speedup);
         }
         std::printf("  %s\n", std::string(58, '-').c_str());
     }
@@ -550,13 +620,13 @@ int main(int argc, char** argv)
         std::FILE* f = std::fopen(a.csv_path.c_str(), "w");
         if (!f) { std::fprintf(stderr, "Cannot open CSV: %s\n", a.csv_path.c_str()); return 1; }
         std::fprintf(f, "machine,device_name,devices,m,n,s,blocks,r_ca,r_mgs,mgs_local_us,"
-                        "mgs_2gpu_us,sstep_2gpu_us,speedup,meas_treduce_us,t_reduce_us,rh_pred,"
+                        "mgs_dist_us,sstep_dist_us,speedup,meas_treduce_us,t_reduce_us,rh_pred,"
                         "contended\n");
         for (const Row& r : rows)
             std::fprintf(f, "%s,\"%s\",%d,%d,%lld,%d,%lld,%lld,%lld,%.4f,%.4f,%.4f,%.6f,%.6f,"
                             "%.6f,%.6f,%d\n",
                          a.machine.c_str(), prop.name, ndev, a.m, r.n, r.s, r.blocks, r.r_ca,
-                         mgs_reductions(a.m), r.mgs_local_us, r.mgs_2gpu_us, r.sstep_2gpu_us,
+                         mgs_reductions(a.m), r.mgs_local_us, r.mgs_dist_us, r.sstep_dist_us,
                          r.speedup, r.meas_treduce_us, a.t_reduce_us, r.rh_pred,
                          contended ? 1 : 0);
         std::fclose(f);

@@ -9,12 +9,12 @@
  * primitives the rest of the solver is built from, and the agreement checkpoints
  * that assert every rank is still making the same adaptive decisions.
  *
- * The solver itself is not here. It lives in src/ca_integrator_2gpu.cu, where
+ * The solver itself is not here. It lives in src/ca_integrator_multigpu.cu, where
  * append_block() builds and orthogonalizes one block, distributed_cholqr2()
  * dispatches to the cholqr2_immediate() and cholqr2_deferred() arms,
  * advance_step() takes one time step, and solve() runs the integration.
  *
- * @see src/ca_integrator_2gpu.cu for every caller of the primitives below.
+ * @see src/ca_integrator_multigpu.cu for every caller of the primitives below.
  *
  * @author Kevin Knights
  * @date 2026-07-27

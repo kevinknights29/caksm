@@ -63,7 +63,7 @@
 # CUDA targets, which build only where a toolkit is present:
 #
 #   cmake --build build --target regime-gpu-trajectory --parallel   # anywhere
-#   cmake --build build --target ca-integrator ca-integrator-2gpu --parallel  # synge
+#   cmake --build build --target ca-integrator ca-integrator-multigpu --parallel  # synge
 set -uo pipefail
 
 WORK_DIR="${ROOT:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}}"
@@ -99,6 +99,20 @@ N1_LIST="${N1_LIST:-25 30 40 50 61 74 90 120}"
 LOCAL_REF="${LOCAL_REF:-40}"
 S="${S:-8}"
 X_REUSE="${X_REUSE:-1.0}"
+# The measurement sweep, derived from the allocation rather than hardcoded. The launch is a
+# function of two numbers: how many nodes take part, and how many local GPUs each rank drives.
+# Sweeping the powers of two of both gives 1x1, 1x2, 2x1 and 2x2 on a two-GPU pair of nodes and
+# 1, 2, 4 and 8 participants on an eight-GPU node, with no edit. MEASURE_ARMS overrides the
+# derivation with an explicit "<nodes>x<local>" list, which is what a publication run should
+# pass so it repeats the same arrangements every time.
+MEASURE_NODES="${MEASURE_NODES:-${SLURM_JOB_NUM_NODES:-1}}"
+MEASURE_LOCAL_GPUS="${MEASURE_LOCAL_GPUS:-}"
+MEASURE_ARMS="${MEASURE_ARMS:-}"
+# Repeat the single-node arms on every node of the allocation. Nominally identical nodes of one
+# installation can differ materially in collective latency, so running the same participant
+# count on each is a homogeneity check rather than a duplicate. Its rows are keyed
+# "<arm>@<host>" so they stay evidence and never place a point.
+PER_NODE_CHECK="${PER_NODE_CHECK:-0}"
 VERIFY_TOPOLOGY="${VERIFY_TOPOLOGY:-0}"
 MEASURE="${MEASURE:-0}"
 # Under sbatch the job's stdout goes to slurm-<jobid>.out in the submission
@@ -106,7 +120,7 @@ MEASURE="${MEASURE:-0}"
 MEASURED_CSV="${MEASURED_CSV:-$OUT_DIR/measured_m.csv}"
 # The integrator that supplies the measured Krylov dimension per arrangement.
 SINGLE="${SINGLE:-$BUILD_DIR/ca-integrator}"
-DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-2gpu}"
+DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-multigpu}"
 # Grids to measure. Smaller than N1_LIST by default because a measurement run is
 # 4 arms per grid; grids left out keep their placed coordinates and say so.
 MEASURE_N1_LIST="${MEASURE_N1_LIST:-$N1_LIST}"
@@ -114,7 +128,7 @@ MEASURE_N1_LIST="${MEASURE_N1_LIST:-$N1_LIST}"
 # The timed constants R_h needs were calibrated separately, over seven repeats.
 MEASURE_REPEATS="${MEASURE_REPEATS:-1}"
 # The integrator takes an expiry and a step count, and its per-step h is
-# expiry/steps (src/ca_integrator_2gpu.cu). The placement table measured its Krylov
+# expiry/steps (src/ca_integrator_multigpu.cu). The placement table measured its Krylov
 # dimension at h=0.01, so the two agree only when expiry/steps is 0.01. Getting this
 # wrong does not fail: it silently measures a different operator. A ten-times step
 # asked for m=30 where the placement contract needs 12, and the two numbers then
@@ -313,6 +327,58 @@ run_arm() {
         "$key" "$n1" "$m" "$verdict" "$contended"
 }
 
+# The powers of two up to a bound: the counts that separate one arrangement from the next.
+measure_ladder() {   # <max> -> "1 2 4 ... <= max"
+    local max="$1" k=1 out=()
+    while (( k <= max )); do out+=("$k"); k=$((k * 2)); done
+    echo "${out[*]}"
+}
+
+# One arrangement, launched. The geometry is the only thing that varies: one rank per node,
+# each rank driving the first `local` devices, so participants = nodes x local. A single device
+# on a single node takes the non-distributed binary, which is the one case that is not just a
+# smaller instance of the same launch.
+launch_arm() {   # <nodes> <local> <n1> [nodelist]
+    local nodes="$1" local_gpus="$2" n1="$3" nodelist="${4:-}"
+    local key="$(( nodes * local_gpus ))gpu-${nodes}node"
+    # Built in the shell rather than with `seq -s,`: BSD seq appends the separator after the
+    # last element and GNU seq does not, so that would send "--devices 0,1," from a Mac and
+    # "--devices 0,1" from the cluster, and the integrator rejects the empty token.
+    local -a device_list=()
+    local d
+    for (( d = 0; d < local_gpus; ++d )); do device_list+=("$d"); done
+    local devices
+    devices="$(IFS=,; echo "${device_list[*]}")"
+
+    # Built as one array rather than expanding an optional one: "${pin[@]}" on an empty array
+    # is an unbound-variable error under `set -u` in bash 3.2, which is a failure that would
+    # only appear on whichever host happens to ship the older shell.
+    local -a launcher=(srun)
+    if [[ "$nodes" -eq 1 ]]; then
+        launcher+=(--nodes=1 --ntasks=1 --ntasks-per-node=1 --mpi=none)
+    else
+        launcher+=(--nodes="$nodes" --ntasks="$nodes" --ntasks-per-node=1
+                   --mpi="$SRUN_MPI")
+    fi
+    if [[ -n "$nodelist" ]]; then
+        launcher+=(--nodelist="$nodelist")
+        key="$key@$nodelist"
+    fi
+
+    if [[ "$nodes" -eq 1 && "$local_gpus" -eq 1 ]]; then
+        # The one arrangement that is not a smaller instance of the same launch: no slabs to
+        # distribute, so the non-distributed binary and no --devices.
+        run_arm "$key" "$n1" "${launcher[@]}" "$SINGLE" "${common[@]}"
+    elif [[ "$nodes" -eq 1 ]]; then
+        run_arm "$key" "$n1" "${launcher[@]}" \
+            "$DISTRIBUTED" --devices "$devices" "${common[@]}"
+    else
+        run_arm "$key" "$n1" "${launcher[@]}" \
+            "$DISTRIBUTED" --require-mpi --devices "$devices" "${common[@]}"
+    fi
+}
+
+
 if [[ "$MEASURE" == "1" ]]; then
     echo "### Measurement: one solver run per arrangement and grid"
     [[ "$MEASURE_M" -le "$GPU_CA_MAX_M" ]] || fail \
@@ -335,6 +401,47 @@ if [[ "$MEASURE" == "1" ]]; then
         [[ -x "$binary" ]] || fail "missing $binary
   Build the CUDA targets on synge: cmake --build build --parallel"
     done
+    # What the allocation actually holds, unless the caller named it.
+    if [[ -z "$MEASURE_LOCAL_GPUS" ]]; then
+        if [[ -n "${SLURM_GPUS_PER_NODE:-}" ]]; then
+            MEASURE_LOCAL_GPUS="${SLURM_GPUS_PER_NODE##*:}"
+        elif command -v nvidia-smi >/dev/null 2>&1; then
+            MEASURE_LOCAL_GPUS="$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')"
+        else
+            MEASURE_LOCAL_GPUS=1
+        fi
+    fi
+    [[ "$MEASURE_NODES" =~ ^[0-9]+$ && "$MEASURE_NODES" -ge 1 ]] \
+        || fail "MEASURE_NODES must be a positive integer, got '$MEASURE_NODES'"
+    [[ "$MEASURE_LOCAL_GPUS" =~ ^[0-9]+$ && "$MEASURE_LOCAL_GPUS" -ge 1 ]] \
+        || fail "MEASURE_LOCAL_GPUS must be a positive integer, got '$MEASURE_LOCAL_GPUS'"
+
+    if [[ -z "$MEASURE_ARMS" ]]; then
+        measure_arms=()
+        for arm_nodes in $(measure_ladder "$MEASURE_NODES"); do
+            for arm_local in $(measure_ladder "$MEASURE_LOCAL_GPUS"); do
+                measure_arms+=("${arm_nodes}x${arm_local}")
+            done
+        done
+        MEASURE_ARMS="${measure_arms[*]}"
+    fi
+    for arm in $MEASURE_ARMS; do
+        [[ "$arm" =~ ^[0-9]+x[0-9]+$ ]] \
+            || fail "MEASURE_ARMS entries must read <nodes>x<local>, got '$arm'"
+        [[ "${arm%x*}" -le "$MEASURE_NODES" ]] \
+            || fail "arm $arm asks for more nodes than the allocation holds"
+        [[ "${arm#*x}" -le "$MEASURE_LOCAL_GPUS" ]] \
+            || fail "arm $arm asks for more local GPUs than the allocation holds"
+    done
+    if [[ "$PER_NODE_CHECK" == "1" && -z "${MEASURE_HOSTS:-}" ]]; then
+        MEASURE_HOSTS="$(scontrol show hostnames "${SLURM_JOB_NODELIST:-}" 2>/dev/null \
+                         | tr '\n' ' ')"
+    fi
+
+    echo "  alloc   : $MEASURE_NODES node(s) x $MEASURE_LOCAL_GPUS GPU(s)"
+    echo "  arms    : $MEASURE_ARMS   (<nodes>x<local GPUs>)"
+    [[ "$PER_NODE_CHECK" == "1" ]] \
+        && echo "  per-node: repeating the single-node arms on ${MEASURE_HOSTS:-<none>}"
     echo "  grids   : $MEASURE_N1_LIST"
     echo "  contract: option=$MEASURE_OPTION arm=$MEASURE_ARM"
     echo "            m_ceiling=$MEASURE_M (GPU build cap $GPU_CA_MAX_M) tol=$MEASURE_TOL"
@@ -354,18 +461,20 @@ if [[ "$MEASURE" == "1" ]]; then
             --repeats "$MEASURE_REPEATS" --option "$MEASURE_OPTION"
             --basis monomial --orth cholqr2 --arm "$MEASURE_ARM"
         )
-        run_arm 1gpu-1node "$n1" \
-            srun --nodes=1 --ntasks=1 --ntasks-per-node=1 --mpi=none \
-            "$SINGLE" "${common[@]}"
-        run_arm 2gpu-1node "$n1" \
-            srun --nodes=1 --ntasks=1 --ntasks-per-node=1 --mpi=none \
-            "$DISTRIBUTED" --devices 0,1 "${common[@]}"
-        run_arm 2gpu-2node "$n1" \
-            srun --nodes=2 --ntasks=2 --ntasks-per-node=1 --mpi="$SRUN_MPI" \
-            "$DISTRIBUTED" --require-mpi --devices 0 "${common[@]}"
-        run_arm 4gpu-2node "$n1" \
-            srun --nodes=2 --ntasks=2 --ntasks-per-node=1 --mpi="$SRUN_MPI" \
-            "$DISTRIBUTED" --require-mpi --devices 0,1 "${common[@]}"
+        for arm in $MEASURE_ARMS; do
+            launch_arm "${arm%x*}" "${arm#*x}" "$n1"
+        done
+        # The same single-node arms again on each node in turn, when asked. Same participant
+        # counts, different hardware: a difference here is a property of the installation and
+        # not of the participant axis, which is why these rows carry the host in their key.
+        if [[ "$PER_NODE_CHECK" == "1" && -n "${MEASURE_HOSTS:-}" ]]; then
+            for host in $MEASURE_HOSTS; do
+                for arm in $MEASURE_ARMS; do
+                    [[ "${arm%x*}" -eq 1 ]] || continue
+                    launch_arm 1 "${arm#*x}" "$n1" "$host"
+                done
+            done
+        fi
     done
     echo
     echo "  [wrote $MEASURED_CSV]"
@@ -386,8 +495,8 @@ if [[ "$RUN_PLACEMENT" == "0" ]]; then
     echo
     echo "  The measurements above stand on their own and are written to"
     echo "    $MEASURED_CSV"
-    echo "  Render them where the placement table lives:"
-    echo "    scp synge01:$MEASURED_CSV <repo>/data/regime/regime_gpu_trajectory/"
+    echo "  Render them where the placement table lives: copy the file above into that"
+    echo "  checkout's data/regime/regime_gpu_trajectory/, then"
     echo "    ./scripts/regime/regime_gpu_trajectory.sh"
     echo "    uv run scripts/plots/regime_trajectory.py"
     echo "==============================================================================="

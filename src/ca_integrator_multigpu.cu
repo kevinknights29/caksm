@@ -1,6 +1,6 @@
 /**
- * @file ca_integrator_2gpu.cu
- * @brief Two-GPU slab-decomposed CA exponential integrator.
+ * @file ca_integrator_multigpu.cu
+ * @brief Slab-decomposed CA exponential integrator over N local GPUs.
  *
  * @author Kevin Knights
  * @date 2026-07-27
@@ -154,12 +154,12 @@ struct Args {
             else throw std::invalid_argument("--option must be basket or rainbow");
         } else if (arg == "--help") {
             std::printf(
-                "Usage: ./ca-integrator-2gpu [--n N] [--m M] [--s S]\n"
+                "Usage: ./ca-integrator-multigpu [--n N] [--m M] [--s S]\n"
                 "       [--steps K] [--repeats K] [--tol T]\n"
                 "       [--single-state-atol T] [--single-state-rtol T]\n"
                 "       [--expiry T]\n"
                 "       [--option basket|rainbow]\n"
-                "       [--devices 0,1] [--basis monomial] [--orth cholqr2]\n"
+                "       [--devices 0,1,2,3] [--basis monomial] [--orth cholqr2]\n"
                 "       [--referee-dir DIR] [--single-gpu-state FILE]\n"
                 "       [--save-state FILE]\n"
                 "       [--profile-start STEP] [--profile-steps K]\n"
@@ -206,10 +206,16 @@ struct Args {
         || (args.profile_start >= 0
             && args.profile_start + args.profile_steps > args.steps))
         throw std::invalid_argument("--profile-steps exceeds the timed solve");
-    if (args.devices.empty() || args.devices.size() > 2)
-        throw std::invalid_argument("--devices must name one or two GPUs");
-    if (args.devices.size() == 2 && args.devices[0] == args.devices[1])
-        throw std::invalid_argument("--devices must name distinct GPUs");
+    if (args.devices.empty())
+        throw std::invalid_argument("--devices must name at least one GPU");
+    {
+        // Distinct, not merely pairwise distinct. Two slabs sharing a device would each
+        // believe they own their planes exclusively and would overwrite each other's halo.
+        std::vector<int> ordered = args.devices;
+        std::sort(ordered.begin(), ordered.end());
+        if (std::adjacent_find(ordered.begin(), ordered.end()) != ordered.end())
+            throw std::invalid_argument("--devices must name distinct GPUs");
+    }
     if (args.halo_backend != "auto"
         && args.halo_backend != "peer"
         && args.halo_backend != "nccl")
@@ -343,9 +349,20 @@ void exchange_halos_nccl(
     }
 }
 
-/// The same exchange as a direct device-to-device copy, when both GPUs are on
-/// one node and can address each other. Skips the NCCL stack entirely; the
-/// events are what keep the copies ordered against the compute stream.
+/// The same exchange as direct device-to-device copies, when every slab is on one node and
+/// adjacent slabs can address each other. Skips the NCCL stack entirely; the events keep the
+/// copies ordered against the compute stream.
+///
+/// The decomposition is one-dimensional in z, so a slab talks only to the slabs below and
+/// above it. Each slab PULLS its own halo: its lower halo from the previous slab's last
+/// `depth` owned planes, its upper from the next slab's first `depth`. Every copy is issued on
+/// the receiving slab's own stream, so an interior slab's two incoming copies are ordered
+/// against each other for free and `halo_received` is recorded once, after both. Pulling
+/// rather than pushing makes the N-slab case a loop instead of a special case: the ends simply
+/// have one neighbor instead of two.
+///
+/// Local neighbors only. The caller guarantees that, since peer_halo requires a single node;
+/// the end slabs of a multi-node run have a neighbor on another rank, which only NCCL reaches.
 void exchange_halos_peer(
     std::vector<Slab>& slabs, const std::vector<const double*>& input,
     int n, int depth, bool overlap)
@@ -355,37 +372,40 @@ void exchange_halos_peer(
     const std::size_t bytes =
         static_cast<std::size_t>(depth) * static_cast<std::size_t>(n2)
         * sizeof(double);
-    Slab& low = slabs[0];
-    Slab& high = slabs[1];
-    const cudaStream_t low_stream =
-        overlap ? low.halo_stream : low.stream;
-    const cudaStream_t high_stream =
-        overlap ? high.halo_stream : high.stream;
+    const std::size_t count = slabs.size();
 
-    CUDA_CHECK(cudaSetDevice(low.device));
-    if (overlap)
-        CUDA_CHECK(cudaStreamWaitEvent(
-            low_stream, low.halo_ready, 0));
-    CUDA_CHECK(cudaStreamWaitEvent(
-        low_stream, high.halo_ready, 0));
-    CUDA_CHECK(cudaMemcpyPeerAsync(
-        low.halo + static_cast<int64_t>(depth + low.z_count) * n2,
-        low.device, input[1], high.device, bytes, low_stream));
-    if (overlap)
-        CUDA_CHECK(cudaEventRecord(low.halo_received, low_stream));
+    for (std::size_t rank = 0; rank < count; ++rank) {
+        Slab& slab = slabs[rank];
+        const cudaStream_t stream = overlap ? slab.halo_stream : slab.stream;
 
-    CUDA_CHECK(cudaSetDevice(high.device));
-    if (overlap)
-        CUDA_CHECK(cudaStreamWaitEvent(
-            high_stream, high.halo_ready, 0));
-    CUDA_CHECK(cudaStreamWaitEvent(
-        high_stream, low.halo_ready, 0));
-    CUDA_CHECK(cudaMemcpyPeerAsync(
-        high.halo, high.device,
-        input[0] + static_cast<int64_t>(low.z_count - depth) * n2,
-        low.device, bytes, high_stream));
-    if (overlap)
-        CUDA_CHECK(cudaEventRecord(high.halo_received, high_stream));
+        CUDA_CHECK(cudaSetDevice(slab.device));
+        // Wait for this slab's own staging, and for each neighbor it is about to read from.
+        // Reading a neighbor's owned planes before that neighbor has finished writing them
+        // would copy the previous step's values, which is a wrong answer rather than a stall.
+        if (overlap)
+            CUDA_CHECK(cudaStreamWaitEvent(stream, slab.halo_ready, 0));
+        if (rank > 0)
+            CUDA_CHECK(cudaStreamWaitEvent(stream, slabs[rank - 1].halo_ready, 0));
+        if (rank + 1 < count)
+            CUDA_CHECK(cudaStreamWaitEvent(stream, slabs[rank + 1].halo_ready, 0));
+
+        if (rank > 0) {
+            const Slab& below = slabs[rank - 1];
+            CUDA_CHECK(cudaMemcpyPeerAsync(
+                slab.halo, slab.device,
+                input[rank - 1]
+                    + static_cast<int64_t>(below.z_count - depth) * n2,
+                below.device, bytes, stream));
+        }
+        if (rank + 1 < count) {
+            const Slab& above = slabs[rank + 1];
+            CUDA_CHECK(cudaMemcpyPeerAsync(
+                slab.halo + static_cast<int64_t>(depth + slab.z_count) * n2,
+                slab.device, input[rank + 1], above.device, bytes, stream));
+        }
+        if (overlap)
+            CUDA_CHECK(cudaEventRecord(slab.halo_received, stream));
+    }
 }
 
 enum class HaloPurpose {
@@ -396,11 +416,10 @@ enum class HaloPurpose {
 /// Build one block of the local basis: stage the halo, exchange it once, then
 /// run the whole recurrence locally.
 ///
-/// The depth requested here is the correction. A block of width s consumes
-/// columns 0 to s-1, so it needs s-1 recurrence steps and a halo s-1 planes
-/// deep; the as-measured arm asked for s of each and discarded the extra
-/// column. At exact-depth s=1 that leaves nothing to exchange, and the copy
-/// path fires with no communication at all.
+/// The depth requested here is the correction. A block of width s consumes columns 0 to s-1,
+/// so it needs s-1 recurrence steps and a halo s-1 planes deep; the as-measured arm asks for s
+/// of each and discards the extra column. At exact-depth s=1 that leaves nothing to exchange,
+/// and the copy path fires with no communication at all.
 void build_matrix_powers(
     std::vector<Slab>& slabs, const std::vector<const double*>& input,
     int n, int steps, const GpuPdeOperator& op, double scale,
@@ -696,17 +715,12 @@ void record_first_factor(std::vector<Slab>& slabs, int block)
     }
 }
 
-/**
- * The certificate in its recorded form: the condition estimate and both Cholesky
- * results are read as they are produced, so a rejected width costs no wasted work
- * and three host round-trips per accepted block.
- */
 /// CholQR2 with the certificate read as it is decided.
 ///
-/// Three blocking reads per block: the condition number, and a Cholesky status
-/// per pass. Simple and, at four checkpoints a block, the dominant term in the
-/// host-synchronization account, which is why the deferred form exists to be
-/// measured against it.
+/// The condition estimate and both Cholesky results are read as they are produced: three
+/// blocking reads per block, so a rejected width costs no wasted work. At four checkpoints a
+/// block this is the dominant term in the host-synchronization account, which is why the
+/// deferred form exists to be measured against it.
 [[nodiscard]] bool cholqr2_immediate(
     std::vector<Slab>& slabs, int block, double& kappa,
     bool agreement_strict, bool agreement_self_test, int step,
@@ -757,16 +771,13 @@ void record_first_factor(std::vector<Slab>& slabs, int block)
     return true;
 }
 
-/**
- * The same certificate, decided on the device and read once. The block is completed
- * speculatively; a rejected width discards it and the retry rebuilds the basis, which
- * is what the immediate form does anyway. Trades wasted work on the rare rejection
- * for two fewer host round-trips on every accepted block.
- */
 /// CholQR2 with the certificate folded on the device and read once.
 ///
-/// Same decisions, one round-trip instead of three. The acceptance gate checks
-/// the decisions exactly and the saved state within its declared tolerance.
+/// Same decisions as the immediate form, one round-trip instead of three: the block is
+/// completed speculatively, and a rejected width discards it so the retry rebuilds the basis,
+/// which the immediate form does anyway. Trades wasted work on the rare rejection for two
+/// fewer host round-trips on every accepted block. The acceptance gate checks the decisions
+/// exactly and the saved state within its declared tolerance.
 [[nodiscard]] bool cholqr2_deferred(
     std::vector<Slab>& slabs, int block, double& kappa,
     bool agreement_strict, bool agreement_self_test, int step,
@@ -1655,15 +1666,23 @@ int main(int argc, char** argv)
 #endif
         }
 
-        int peer_forward = 0;
-        int peer_reverse = 0;
-        if (local_gpus == 2) {
+        // Only ADJACENT slabs exchange halos, because the decomposition is one-dimensional in
+        // z, so the peer path needs bidirectional access across the N-1 adjacent pairs and not
+        // the full N x N matrix. Every pair is checked: one pair without reciprocal access is
+        // enough to make the whole chain fall back to NCCL, since a halo that arrives for some
+        // slabs and not others is worse than one that never takes the fast path.
+        bool peer_capable = local_gpus > 1;
+        for (int rank = 0; rank + 1 < local_gpus && peer_capable; ++rank) {
+            int forward = 0;
+            int reverse = 0;
             CUDA_CHECK(cudaDeviceCanAccessPeer(
-                &peer_forward, args.devices[0], args.devices[1]));
+                &forward, args.devices[static_cast<std::size_t>(rank)],
+                args.devices[static_cast<std::size_t>(rank + 1)]));
             CUDA_CHECK(cudaDeviceCanAccessPeer(
-                &peer_reverse, args.devices[1], args.devices[0]));
+                &reverse, args.devices[static_cast<std::size_t>(rank + 1)],
+                args.devices[static_cast<std::size_t>(rank)]));
+            peer_capable = forward != 0 && reverse != 0;
         }
-        const bool peer_capable = peer_forward != 0 && peer_reverse != 0;
         if (args.halo_backend == "peer"
             && (mpi_size > 1 || !peer_capable))
             throw std::runtime_error(
@@ -1673,14 +1692,20 @@ int main(int argc, char** argv)
             && (args.halo_backend == "peer"
                 || (args.halo_backend == "auto" && peer_capable));
         if (peer_halo) {
+            // Each slab enables access to the neighbors it will read from. Enabling is
+            // directional, so both ends of every adjacent pair do it; `1 - rank` served that
+            // for two devices and names the wrong device for any other count.
             for (int rank = 0; rank < local_gpus; ++rank) {
-                CUDA_CHECK(cudaSetDevice(devices[rank]));
-                const cudaError_t status =
-                    cudaDeviceEnablePeerAccess(devices[1 - rank], 0);
-                if (status == cudaErrorPeerAccessAlreadyEnabled)
-                    (void)cudaGetLastError();
-                else
-                    CUDA_CHECK(status);
+                CUDA_CHECK(cudaSetDevice(devices[static_cast<std::size_t>(rank)]));
+                for (const int neighbor : {rank - 1, rank + 1}) {
+                    if (neighbor < 0 || neighbor >= local_gpus) continue;
+                    const cudaError_t status = cudaDeviceEnablePeerAccess(
+                        devices[static_cast<std::size_t>(neighbor)], 0);
+                    if (status == cudaErrorPeerAccessAlreadyEnabled)
+                        (void)cudaGetLastError();
+                    else
+                        CUDA_CHECK(status);
+                }
             }
         }
 

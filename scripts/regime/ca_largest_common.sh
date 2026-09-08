@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT="${ROOT:-$PWD}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
 SINGLE="${SINGLE:-$BUILD_DIR/ca-integrator}"
-DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-2gpu}"
+DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-multigpu}"
 STATE_DIR="${STATE_DIR:-$ROOT/data/ca-integrator-largest-common}"
 M="${M:-39}"
 RESERVE="${RESERVE:-0.10}"

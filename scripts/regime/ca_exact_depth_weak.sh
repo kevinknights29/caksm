@@ -31,7 +31,7 @@ set -euo pipefail
 
 ROOT="${ROOT:-$PWD}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
-DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-2gpu}"
+DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-multigpu}"
 SINGLE="${SINGLE:-$BUILD_DIR/ca-integrator}"
 OUT_DIR="${OUT_DIR:-$ROOT/data/ca-integrator-exact-depth}"
 VALIDATION_DIR="${VALIDATION_DIR:-$ROOT/data/ca-integrator-validation}"

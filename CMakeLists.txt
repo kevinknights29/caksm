@@ -627,11 +627,9 @@ if(CMAKE_CUDA_COMPILER)
     # one an implementation would actually call, or R_h's calibrated constant is the slope of
     # code nobody runs.
     #
-    # NCCL is required for this target, MPI is optional. Both of synge's V100s sit on one
-    # node, so ncclCommInitAll drives the DEVICE_P2P rung from a single process with no
-    # launcher, and that is the rung Phase 0 predicts carries the production operator into
-    # Upper-Right. MPI buys only the NODE rung, so a site without it loses the fabric
-    # measurement rather than the headline one.
+    # NCCL is required for these targets, MPI is optional: ncclCommInitAll drives the
+    # DEVICE_P2P rung from a single process with no launcher, and MPI buys only the NODE rung,
+    # so a site without it loses the fabric measurement rather than the headline one.
     #
     # NAMES carries libnccl.so.2 explicitly: a pip-installed NCCL (nvidia-nccl-cu12) ships the
     # versioned soname with no unversioned symlink, and plain `nccl` would miss it.
@@ -659,15 +657,15 @@ if(CMAKE_CUDA_COMPILER)
         target_link_libraries(calibrate-gpu-p2p PRIVATE ${NCCL_LIBRARY} CUDA::nvml)
         target_compile_options(calibrate-gpu-p2p PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
 
-        # Two-GPU measured horizontal crossover: MGS vs s-step with real inter-GPU all-reduces.
-        # DEVICE_P2P rung only (single process, both local GPUs), so it only needs NCCL.
-        # cuBLAS and cuSOLVER supply the same kernels the single-GPU s-step harness calls.
-        add_executable(regime-gpu-sstep-2gpu src/regime_gpu_sstep_2gpu.cu)
-        target_include_directories(regime-gpu-sstep-2gpu
+        # Measured horizontal crossover over N local GPUs: MGS vs s-step with real inter-GPU
+        # all-reduces. DEVICE_P2P rung only (single process, the local GPUs), so it only needs
+        # NCCL. cuBLAS and cuSOLVER supply the same kernels the single-GPU s-step harness calls.
+        add_executable(regime-gpu-sstep-multigpu src/regime_gpu_sstep_multigpu.cu)
+        target_include_directories(regime-gpu-sstep-multigpu
                 PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
-        target_link_libraries(regime-gpu-sstep-2gpu
+        target_link_libraries(regime-gpu-sstep-multigpu
                 PRIVATE ${NCCL_LIBRARY} CUDA::nvml CUDA::cublas CUDA::cusolver)
-        target_compile_options(regime-gpu-sstep-2gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+        target_compile_options(regime-gpu-sstep-multigpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
 
         add_executable(ca-matrix-powers-2gpu src/ca_matrix_powers_2gpu.cu)
         target_include_directories(ca-matrix-powers-2gpu
@@ -676,39 +674,39 @@ if(CMAKE_CUDA_COMPILER)
                 PRIVATE caksm ${NCCL_LIBRARY} CUDA::nvml)
         target_compile_options(ca-matrix-powers-2gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
 
-        add_executable(ca-integrator-2gpu src/ca_integrator_2gpu.cu)
-        target_include_directories(ca-integrator-2gpu
+        add_executable(ca-integrator-multigpu src/ca_integrator_multigpu.cu)
+        target_include_directories(ca-integrator-multigpu
                 PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
-        target_link_libraries(ca-integrator-2gpu
+        target_link_libraries(ca-integrator-multigpu
                 PRIVATE caksm ${NCCL_LIBRARY} CUDA::nvml CUDA::cublas
                         CUDA::cusolver CUDA::nvToolsExt)
-        target_compile_options(ca-integrator-2gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
+        target_compile_options(ca-integrator-multigpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
         if(MPI_C_FOUND)
-            target_link_libraries(ca-integrator-2gpu PRIVATE MPI::MPI_C)
-            target_compile_definitions(ca-integrator-2gpu PRIVATE CAKSM_HAVE_MPI)
+            target_link_libraries(ca-integrator-multigpu PRIVATE MPI::MPI_C)
+            target_compile_definitions(ca-integrator-multigpu PRIVATE CAKSM_HAVE_MPI)
             message(STATUS
-                "ca-integrator-2gpu: MPI bootstrap enabled for the multi-node NCCL path")
+                "ca-integrator-multigpu: MPI bootstrap enabled for the multi-node NCCL path")
         else()
             message(STATUS
-                "ca-integrator-2gpu: NCCL only, no MPI; the multi-node path is disabled")
+                "ca-integrator-multigpu: NCCL only, no MPI; the multi-node path is disabled")
         endif()
 
         # Retained only to reproduce the closed pointer-qualification arm.
         add_executable(
-                ca-integrator-2gpu-restrict EXCLUDE_FROM_ALL
-                src/ca_integrator_2gpu.cu)
-        target_include_directories(ca-integrator-2gpu-restrict
+                ca-integrator-multigpu-restrict EXCLUDE_FROM_ALL
+                src/ca_integrator_multigpu.cu)
+        target_include_directories(ca-integrator-multigpu-restrict
                 PRIVATE ${NCCL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
-        target_link_libraries(ca-integrator-2gpu-restrict
+        target_link_libraries(ca-integrator-multigpu-restrict
                 PRIVATE caksm ${NCCL_LIBRARY} CUDA::nvml CUDA::cublas
                         CUDA::cusolver CUDA::nvToolsExt)
-        target_compile_definitions(ca-integrator-2gpu-restrict
+        target_compile_definitions(ca-integrator-multigpu-restrict
                 PRIVATE CAKSM_MPK_USE_RESTRICT)
-        target_compile_options(ca-integrator-2gpu-restrict
+        target_compile_options(ca-integrator-multigpu-restrict
                 PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3>)
         if(MPI_C_FOUND)
-            target_link_libraries(ca-integrator-2gpu-restrict PRIVATE MPI::MPI_C)
-            target_compile_definitions(ca-integrator-2gpu-restrict
+            target_link_libraries(ca-integrator-multigpu-restrict PRIVATE MPI::MPI_C)
+            target_compile_definitions(ca-integrator-multigpu-restrict
                     PRIVATE CAKSM_HAVE_MPI)
         endif()
 
@@ -719,7 +717,7 @@ if(CMAKE_CUDA_COMPILER)
         else()
             message(STATUS
                 "calibrate-gpu-p2p: NCCL only, no MPI. The DEVICE_P2P rung is reachable "
-                "(single process, both local GPUs), the NODE rung is not. reduction_calibrated "
+                "(single process, the local GPUs), the NODE rung is not. reduction_calibrated "
                 "must stay false until the fabric rung lands.")
         endif()
     else()

@@ -19,7 +19,7 @@ set -euo pipefail
 ROOT="${ROOT:-$PWD}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
 SINGLE="${SINGLE:-$BUILD_DIR/ca-integrator}"
-DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-2gpu}"
+DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-multigpu}"
 OUT_DIR="${OUT_DIR:-$ROOT/data/ca-halo-overlap}"
 M="${M:-39}"
 STEPS="${STEPS:-100}"

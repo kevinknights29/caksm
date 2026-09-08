@@ -369,7 +369,7 @@ orthogonalizer experiment, not an end-to-end pricing result.
 ./scripts/regime/gram_splitk_test.sh
 ./scripts/regime/trsm_test.sh
 ./scripts/regime/regime_gpu_sstep.sh
-./scripts/regime/regime_gpu_sstep_2gpu.sh
+./scripts/regime/regime_gpu_sstep_multigpu.sh
 ```
 
 ## Distributed CUDA integrator

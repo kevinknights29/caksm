@@ -36,7 +36,7 @@ set -uo pipefail
 
 ROOT="${ROOT:-$PWD}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
-DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-2gpu}"
+DISTRIBUTED="${DISTRIBUTED:-$BUILD_DIR/ca-integrator-multigpu}"
 OUT_DIR="${OUT_DIR:-$ROOT/data/ca-integrator-nsight}"
 NSYS="${NSYS:-/usr/local/cuda-12.8/nsight-systems-2024.6.2/bin/nsys}"
 N="${N:-97}"
