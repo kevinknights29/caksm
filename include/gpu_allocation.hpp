@@ -22,7 +22,7 @@
  *
  * The separation also fixes a provenance leak. Collective latency is keyed to the exact
  * participant count, not to the rung: eight H200s on one node reduce at the same DEVICE_P2P
- * rung as four and cost 2.01x as much. `GpuMachine::t_reduce_s` is indexed by rung alone and
+ * rung as four and cost 1.89x as much. `GpuMachine::t_reduce_s` is indexed by rung alone and
  * cannot hold both, which is why a machine preset may carry the on-device rungs only, and the
  * off-device cost belongs to a measured arrangement in gpu_topology.hpp.
  *
