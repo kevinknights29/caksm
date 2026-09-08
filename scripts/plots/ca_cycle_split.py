@@ -166,7 +166,7 @@ def draw() -> str | None:
         ax.tick_params(axis="x", length=0, pad=18)
         mark_better(ax, "down", loc="upper left")
         # Upper right: the tallest column sits mid-figure, and its value label
-        # reaches into the top centre where a key would otherwise go.
+        # reaches into the top center where a key would otherwise go.
         lib.legend(
             ax, loc="upper right", ncol=2,
             handles=[plt.Rectangle((0, 0), 1, 1, color=ca.TERM_COLOR[t])

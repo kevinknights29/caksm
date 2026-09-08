@@ -427,7 +427,7 @@ def plot_reduction(rows) -> None:
             # is barely one. A ratio printed as "0.9x" reads as a speedup the
             # wrong way round.
             inflation[n] = float(max(abs(linear / tree - 1.0)))
-            # The band is thin, which is the point, so a label centred in it
+            # The band is thin, which is the point, so a label centered in it
             # lands on both curves. It goes to whichever side the curve is
             # leaving: above where the tail rises, below where it still falls.
             rising = tree[-1] >= tree[-2]

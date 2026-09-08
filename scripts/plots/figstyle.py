@@ -56,9 +56,9 @@ def mark_better(ax, direction: str, loc: str = "upper left", length: float = 0.1
         raise ValueError(f"direction must be 'up' or 'down', got {direction!r}")
 
     if at is not None:
-        x, y_centre = at
+        x, y_center = at
         side = "left" if x < 0.5 else "right"
-        yhi, ylo = y_centre + length / 2.0, y_centre - length / 2.0
+        yhi, ylo = y_center + length / 2.0, y_center - length / 2.0
     else:
         side = "left" if "left" in loc else "right"
         x = _ARROW_X[side]

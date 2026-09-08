@@ -202,7 +202,7 @@ def evaluate_full_volume(tile, threads, shared_pad_x=0, low_occupancy=False):
         / interior_points(tile))
     model["points_per_thread"] = interior_points(tile) / threads
     # Residency at the widest width the shape can run, which is where it is
-    # tightest, so the wave filter is applied to the least favourable case.
+    # tightest, so the wave filter is applied to the least favorable case.
     resident = blocks_per_sm(model["shared_bytes_max"], threads)
     model["blocks_per_sm"] = resident
     model["warps_per_sm"] = resident * threads // 32

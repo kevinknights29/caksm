@@ -166,7 +166,7 @@ if count == 0:
 print(f"{count}|{total:.0f}")
 PY
     )"; then
-        # Exit 3 is an unrecognised unit, which must not be guessed at.
+        # Exit 3 is an unrecognized unit, which must not be guessed at.
         if [[ $? -eq 3 ]]; then
             printf 'unknown-metric-unit||%s\n' "$report"
         else
