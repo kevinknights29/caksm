@@ -18,24 +18,23 @@
  *   2. The reduction cost is a property of the participant and node topology, not of the tier
  *      name. Two participants on two nodes and four participants on two nodes both reduce at
  *      the NODE rung and differ by 1.5x, because the ring is longer. Eight H200s of one node
- *      cost 2.01x what four of the same node cost, at the same DEVICE_P2P rung.
+ *      cost 1.89x what four of the same node cost, at the same DEVICE_P2P rung.
  *      `GpuMachine::t_reduce_s` cannot express either: it is indexed by rung alone. Each
  *      arrangement therefore carries its own measured collective latency, transcribed from the
  *      run that measured that exact arrangement.
  *
  * The table is keyed by machine, so one build serves every calibrated cluster and adding a
  * cluster adds rows rather than editing anyone else's. It is compiled in rather than loaded,
- * for the same reason gpu_machine.hpp's presets are: a measured constant entering the model is
- * a deliberate, reviewable edit, and a constant that can change without a diff is a constant
- * nobody is checking. What a person must not do is retype the numbers. Every field below that
- * a run already recorded is produced by scripts/regime/topology_entry.sh, which reads an
- * archived run directory and prints the entry ready to paste; only the judgments are typed.
+ * for the same reason gpu_machine.hpp's presets are: a measured constant entering the model
+ * should be a deliberate, reviewable edit. Do not retype the numbers. Every field a run
+ * already recorded is produced by scripts/regime/topology_entry.sh, which reads an archived
+ * run directory and prints the entry ready to paste; only the judgments are typed.
  *
- * The provenance rule is inherited unchanged from gpu_machine.hpp: geometry is transcribed,
- * every latency is measured offline on an idle device over at least seven repeats, and the
- * source file of each measurement is named beside it. An arrangement whose collective cost has
- * not been measured for its own arrangement carries `calibrated = false`, and the trajectory
- * tool refuses to place it rather than borrowing a neighbouring rung's constant.
+ * Provenance follows gpu_machine.hpp: geometry is transcribed, every latency is measured
+ * offline on an idle device over at least seven repeats, and the source file is named beside
+ * it. An arrangement whose collective cost was not measured for its own arrangement carries
+ * `calibrated = false`, and the trajectory tool refuses to place it rather than borrowing a
+ * neighboring rung's constant.
  *
  * @author Kevin Knights
  * @date 2026-08-23
@@ -74,6 +73,15 @@ struct GpuTopology {
     int participants;           ///< GPUs taking part in the collective
     int nodes;                  ///< distinct hosts spanned
     int local_gpus;             ///< GPUs per host; participants == nodes * local_gpus
+
+    /// GPUs one process drives: the LAUNCH STRUCTURE, not a property of the hardware. Two
+    /// arrangements can hold the same devices in the same split and still differ here, since
+    /// `ncclCommInitAll` gives one process every local GPU while an MPI launch gives each rank
+    /// one. That is worth 2.10x at eight participants, larger than several of the effects this
+    /// table exists to separate, so it is a field rather than a remark.
+    /// `local_gpus % gpus_per_rank == 0`, and `local_gpus / gpus_per_rank` is ranks per node.
+    int gpus_per_rank;
+
     std::string_view devices;   ///< the logical device ordinals this arrangement selected
 
     ReductionTier tier;         ///< the rung this arrangement reduces at
@@ -111,36 +119,34 @@ struct GpuTopology {
 /**
  * The arrangements measured so far, in the order the trajectory figure connects them.
  *
- * synge, ordered by collective reach, which on that cluster is also ordered by cost: 5.54 us on
- * one device, 11.25 us across the two GPU/NUMA domains of one node, 20.06 us across two nodes,
- * and 29.20 us once both GPUs of both nodes take part. The monotonicity is the hypothesis panel
- * C tests, so it is worth naming that it is visible in the constants before any point is
- * placed; what the figure adds is whether the motion in R_h is large enough to cross theta_h.
+ * synge, ordered by collective reach, which on that cluster is also ordered by cost: 5.54 us
+ * on one device, 11.25 us across the two GPU/NUMA domains of one node, 20.06 us across two
+ * nodes, and 29.20 us once both GPUs of both nodes take part.
  *
  * A single-participant entry is not an NCCL measurement and must not be one. With one
  * participant no collective leaves the device, so the global reduction IS the grid reduction,
  * and the number is the two-kernel grid form from calibrate-gpu-reduction.
  *
- * `link_signature` is "<link label>:<devices>". Two counts are absent for the H200 rather than
- * interpolated: nobody has calibrated two H200s or a sixteen-participant two-node run, so
- * lookup returns nothing and the caller stops, which is what should happen.
+ * `link_signature` is "<link label>:<devices>", and "-per-node" marks a device set each rank
+ * holds rather than one rank holding all of them. An arrangement nobody has calibrated has no
+ * row at all, so lookup returns nothing and the caller stops, which is what should happen.
  */
-inline constexpr std::array<GpuTopology, 7> kGpuTopologies {{
+inline constexpr std::array<GpuTopology, 12> kGpuTopologies {{
     {
         "v100-pcie-16gb", "synge", "1gpu-1node", "1 GPU, 1 node",
-        1, 1, 1, "0", ReductionTier::GRID,
+        1, 1, 1, 1, "0", ReductionTier::GRID,
         // Equals reduction_cost_s(v100, GRID) to five figures, so the ladder and this table
         // agree where they overlap.
         5.538702475e-6, 5.537564556e-6, 5.542684363e-6,
         0.0, 7, 1, false, true,
-        // synge's node has one pair, so a two-GPU arrangement has no other subset it could be
-        // confused with and the signature carries no UUIDs. On a node that does, they must.
+        // synge's node has one pair, so no other subset could be confused with it and the
+        // signature carries no UUIDs. On a node with more devices they must.
         "none:0", "on-device",
         "calibrate-gpu-reduction", "data/regime/calibrate_gpu_reduction.csv",
     },
     {
         "v100-pcie-16gb", "synge", "2gpu-1node", "2 GPUs, 1 node",
-        2, 1, 2, "0-1", ReductionTier::DEVICE_P2P,
+        2, 1, 2, 2, "0-1", ReductionTier::DEVICE_P2P,
         // Both V100s of one node, spanning the two GPU/NUMA domains: GPU0 on NUMA 0, GPU1 on
         // NUMA 1, linked SYS, i.e. PCIe plus a cross-socket UPI hop. No NVLink on this cluster.
         1.124922050e-5, 1.113722375e-5, 1.145958500e-5,
@@ -150,7 +156,7 @@ inline constexpr std::array<GpuTopology, 7> kGpuTopologies {{
     },
     {
         "v100-pcie-16gb", "synge", "2gpu-2node", "2 GPUs, 2 nodes",
-        2, 2, 1, "0", ReductionTier::NODE,
+        2, 2, 1, 1, "0", ReductionTier::NODE,
         // allreduce/norm on one double: the reduction Arnoldi actually performs, rather than a
         // bandwidth payload. synge-n01 and synge-n02, one GPU each, over NET/IB on hfi1_0.
         2.006445450e-5, 1.991615250e-5, 2.150410275e-5,
@@ -161,60 +167,114 @@ inline constexpr std::array<GpuTopology, 7> kGpuTopologies {{
     },
     {
         "v100-pcie-16gb", "synge", "4gpu-2node", "4 GPUs, 2 nodes",
-        4, 2, 2, "0-1", ReductionTier::NODE,
+        4, 2, 2, 2, "0-1", ReductionTier::NODE,
         // The same run at four participants: both GPUs of both nodes. 1.46x the two-node pair
-        // at the same rung, which is the cost the tier index alone cannot see and the reason
-        // this table exists.
+        // at the same rung, which is the cost the tier index alone cannot see.
         2.920146000e-5, 2.902727025e-5, 2.949645525e-5,
         7.00, 7, 1, false, true,
         "SYS:0-1-per-node", "nccl-net-ib",
         "calibrate-gpu-p2p (participants)",
         "data/ca-participant-calibration-quiet/node_4participants.csv",
     },
+    // The H200 one-node arrangements, all four from one host so the participant axis carries
+    // no node effect.
     {
-        "h200", "h200-gpu03", "1gpu-1node", "1 GPU, 1 node",
-        1, 1, 1, "0", ReductionTier::GRID,
-        // The two-kernel grid form of the accepted invocation. The quartiles are NOT that
-        // run's interquartile range, which spans only 5.2550 to 5.2582 us: they are the
-        // extremes over the three independent invocations of the single-device calibrator on
-        // this host, 5.2086 us (2026-08-25, transcript only) to 5.5528 us (2026-08-26 10:50).
-        // Publishing the narrow figure would assert a precision this host does not have.
-        5.256711377e-6, 5.208600000e-6, 5.552817716e-6,
-        0.0, 7, 3, false, true,
+        "h200", "h200-gpu01", "1gpu-1node", "1 GPU, 1 node",
+        1, 1, 1, 1, "0", ReductionTier::GRID,
+        // Equals reduction_cost_s(h200, GRID) to five figures: the preset's ladder is
+        // transcribed from this same invocation, so the ladder and this table agree where
+        // they overlap.
+        5.376960172e-6, 5.376195610e-6, 5.377599928e-6,
+        0.0, 7, 1, false, true,
         "none:0", "on-device", "calibrate-gpu-reduction",
-        "data/calibration/h200/2026-08-26T1057-job20170/calibrate_gpu_reduction.csv",
+        "data/calibration/h200/2026-09-03T234214-job20986-1nodes/single_run_1/"
+        "calibrate_gpu_reduction.csv",
     },
     {
-        "h200", "h200-gpu03", "4gpu-1node", "4 GPUs, 1 node",
-        4, 1, 4, "unknown", ReductionTier::DEVICE_P2P,
-        // A real measurement, 2026-08-25, inside a `salloc -N 1 --gpus=4` allocation: seven
-        // repeats on an idle device. It is nevertheless NOT calibrated, for a reason that is
-        // not about the number. The eight-participant run wrote the same fixed filename and
-        // destroyed the raw CSV, so only the stdout transcript survives; the allocation's
-        // device UUIDs were never recorded, and on a node whose halves have different NUMA and
-        // NIC affinity an unnamed four-GPU subset is not a reproducible arrangement. The row
-        // is kept because deleting it would lose the evidence that four participants cost
-        // 2.011x less than eight; it is blocked because a figure must not treat it as a point.
-        // Re-measure it with the devices named and confirm 16.336 us within the predeclared
-        // tolerance rather than averaging any mismatch away.
-        1.633600000e-5, 1.632000000e-5, 1.634000000e-5,
-        314.4, 7, 1, false, false,
-        "unknown", "nccl-p2p", "calibrate-gpu-p2p",
-        "data/calibration/h200/2026-08-26T1057-job20170/calibrate_gpu_p2p.log",
+        "h200", "h200-gpu01", "2gpu-1node", "2 GPUs, 1 node",
+        2, 1, 2, 2, "0-1", ReductionTier::DEVICE_P2P,
+        // The first two devices, both on NUMA 0.
+        1.050987700e-5, 1.047250675e-5, 1.055002650e-5,
+        274.5571, 7, 1, false, true,
+        "NV18:0-1", "nccl-p2p", "calibrate-gpu-p2p",
+        "data/calibration/h200/2026-09-03T234214-job20986-1nodes/p2p/"
+        "device_2participants_1node.csv",
     },
     {
-        "h200", "h200-gpu03", "8gpu-1node", "8 GPUs, 1 node",
-        8, 1, 8, "0-7", ReductionTier::DEVICE_P2P,
-        // The full node, every device named and checksummed. Latency is 2.011x the
-        // four-participant figure while bus bandwidth rises 18.9%, which is why these are two
-        // arrangements and not two samples of one constant. nvidia-smi topo -m reports NV18
-        // between every one of the 28 GPU pairs, so the GPU-to-GPU graph is uniform; the
-        // device set still matters, since GPUs 0-3 sit on NUMA 0 with mlx5_0..3 closest and
-        // GPUs 4-7 on NUMA 1 with mlx5_4..7.
-        3.284996450e-5, 3.283777425e-5, 3.287139625e-5,
-        373.8386, 7, 1, false, true,
+        "h200", "h200-gpu01", "4gpu-1node", "4 GPUs, 1 node",
+        4, 1, 4, 4, "0-3", ReductionTier::DEVICE_P2P,
+        // The NUMA-0 half, with the devices named.
+        2.063195000e-5, 2.062637100e-5, 2.068094350e-5,
+        315.9469, 7, 1, false, true,
+        "NV18:0-3", "nccl-p2p", "calibrate-gpu-p2p",
+        "data/calibration/h200/2026-09-03T234214-job20986-1nodes/p2p/"
+        "device_4participants_1node.csv",
+    },
+    {
+        "h200", "h200-gpu01", "8gpu-1node", "8 GPUs, 1 node",
+        8, 1, 8, 8, "0-7", ReductionTier::DEVICE_P2P,
+        // The full node. Across 2, 4 and 8 participants latency very nearly doubles with the
+        // count (1.963x then 1.890x) while bus bandwidth rises 36%: the ring all-reduce
+        // signature, and the reason R_h climbs as a fixed problem is sharded wider.
+        3.900244750e-5, 3.898229900e-5, 3.903937325e-5,
+        373.8892, 7, 1, false, true,
         "NV18:0-7", "nccl-p2p", "calibrate-gpu-p2p",
-        "data/calibration/h200/2026-08-26T1057-job20170/calibrate_gpu_p2p_device.csv",
+        "data/calibration/h200/2026-09-03T234214-job20986-1nodes/p2p/"
+        "device_8participants_1node.csv",
+    },
+    // The fabric arrangements, gpu01 + gpu02.
+    //
+    // These differ from the one-node rows in TWO ways, not one: the second node, and the
+    // launch structure. Every row above is ncclCommInitAll, one process driving N local GPUs;
+    // every row here is one MPI rank per GPU. A difference between the families is therefore
+    // not attributable to the node split alone. `gpus_per_rank` and `transport` record the
+    // distinction, and any figure drawing both must keep them apart.
+    //
+    // Latency here is NOT monotonic in participant count: 19.50, 17.21, 18.24, 23.96 us at 2,
+    // 4, 8 and 16. That is the hierarchical all-reduce signature. NCCL reduces within each
+    // node over NVLink first, then makes one cross-fabric exchange, so the InfiniBand hop
+    // dominates and extra local GPUs are nearly free until the intra-node stage itself costs.
+    {
+        "h200", "h200-gpu01+02", "2gpu-2node", "2 GPUs, 2 nodes",
+        2, 2, 1, 1, "0", ReductionTier::NODE,
+        // One GPU per node: no intra-node aggregation to hide the fabric hop behind, which is
+        // why this is the SLOWEST fabric arrangement despite having the fewest participants.
+        1.950380950e-05, 1.949260000e-05, 1.952039050e-05,
+        33.4330, 7, 1, false, true,
+        "NV18:0-per-node", "nccl-net-ib", "calibrate-gpu-p2p",
+        "data/calibration/h200/2026-09-08T004855-job20987-2nodes/p2p/"
+        "node_2participants_2nodes.csv",
+    },
+    {
+        "h200", "h200-gpu01+02", "4gpu-2node", "4 GPUs, 2 nodes",
+        4, 2, 2, 1, "0-1", ReductionTier::NODE,
+        1.721079200e-05, 1.719695800e-05, 1.722339000e-05,
+        77.4671, 7, 1, false, true,
+        "NV18:0-1-per-node", "nccl-net-ib", "calibrate-gpu-p2p",
+        "data/calibration/h200/2026-09-08T004855-job20987-2nodes/p2p/"
+        "node_4participants_2nodes.csv",
+    },
+    {
+        "h200", "h200-gpu01+02", "8gpu-2node", "8 GPUs, 2 nodes",
+        8, 2, 4, 1, "0-3", ReductionTier::NODE,
+        // The same eight participants cost 38.32 us on one node and 18.24 us split over two,
+        // a 2.10x difference in the fabric's favor. Not yet attributable to the split alone --
+        // see the launch-structure caveat above.
+        1.824360500e-05, 1.823046600e-05, 1.829255175e-05,
+        166.1684, 7, 1, false, true,
+        "NV18:0-3-per-node", "nccl-net-ib", "calibrate-gpu-p2p",
+        "data/calibration/h200/2026-09-08T004855-job20987-2nodes/p2p/"
+        "node_8participants_2nodes.csv",
+    },
+    {
+        "h200", "h200-gpu01+02", "16gpu-2node", "16 GPUs, 2 nodes",
+        16, 2, 8, 1, "0-7", ReductionTier::NODE,
+        // Every GPU of both nodes. Still cheaper than eight on one node, 23.96 against 38.32.
+        2.396013750e-05, 2.392272950e-05, 2.402115025e-05,
+        270.7670, 7, 1, false, true,
+        "NV18:0-7-per-node", "nccl-net-ib", "calibrate-gpu-p2p",
+        "data/calibration/h200/2026-09-08T004855-job20987-2nodes/p2p/"
+        "node_16participants_2nodes.csv",
     },
 }};
 
@@ -272,6 +332,8 @@ inline constexpr std::array<GpuTopology, 7> kGpuTopologies {{
 {
     return t.participants > 0 && t.nodes > 0 && t.local_gpus > 0
         && t.participants == t.nodes * t.local_gpus
+        && t.gpus_per_rank > 0 && t.gpus_per_rank <= t.local_gpus
+        && t.local_gpus % t.gpus_per_rank == 0
         && t.tier == collective_tier({t.nodes, t.local_gpus})
         && t.t_reduce_s > 0.0
         && t.t_reduce_q1_s <= t.t_reduce_s && t.t_reduce_s <= t.t_reduce_q3_s

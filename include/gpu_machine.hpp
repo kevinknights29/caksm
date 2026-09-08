@@ -196,11 +196,10 @@ struct GpuMachine {
  * class, FP64 differing by 12x. They hold the vertical axis fixed and vary only the compute
  * roof, which is the lever that tests the roofline precondition.
  *
- * The H200 is not part of that pair and must not be drawn as a third point on its axis. It
- * changes the L2 by 10x and the bandwidth by 5x at the same time, so it varies the vertical
- * mechanism rather than controlling it. What it contributes is the participant axis: eight
- * devices of one node, where the V100 cluster offered two. Keep the machines in separate
- * panels; replacing hardware is not a step along any of the map's coordinates.
+ * The H200 is not a third point on that axis: it changes L2 by 10x and bandwidth by 5x at
+ * once, varying the vertical mechanism rather than controlling it. What it contributes is the
+ * participant axis. Keep the machines in separate panels; replacing hardware is not a step
+ * along any of the map's coordinates.
  */
 inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
     {
@@ -214,8 +213,7 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
         16L << 30,      // 16 GiB HBM2: the footprint ceiling
         // Measured, gpu-fma-loop on an idle device: 6.375 TFLOP/s FP64, 12.70 FP32, a 2.0:1
         // ratio confirming dedicated FP64 units. Below the 7.0/14.13 datasheet figures because
-        // the card ran at 1245 MHz against a 1380 MHz max, so the shortfall is clock, not
-        // silicon. This is the positive arm against the 3090's 0.570 TFLOP/s at 65.6:1.
+        // the card ran at 1245 MHz against a 1380 MHz max: the shortfall is clock, not silicon.
         6.3751e12,      // FP64 peak
         1.2702e13,      // FP32 peak
         900.0,          // theoretical HBM2 (datasheet; deviceQuery computes 898 from clocks)
@@ -224,19 +222,16 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
         // exceeds L2 (6 MiB), so the resident figure is an L1+L2 roof, not a pure L2 one.
         818.3,          // hbm_bw_gbs_achieved
         3624.8,         // l2_bw_gbs_achieved  (cache/DRAM ratio 4.43x)
-        // Confirmed by scripts/regime/gpu_probe.sh: both V100s on one node, 16384 MiB each,
-        // no MIG, no MPS daemon, no resident processes. Whether the DEVICE_P2P rung is
-        // reachable is a question about the allocation, not about this preset; see
-        // gpu_allocation.hpp.
+        // Whether the DEVICE_P2P rung is reachable is a question about the allocation, not
+        // about this preset; see gpu_allocation.hpp.
         "SYS",          // `nvidia-smi topo -m`: PCIe + cross-socket UPI, no NVLink.
                         // GPU0 on NUMA 0 (CPU 0-19), GPU1 on NUMA 1 (CPU 20-39). Uniform:
                         // there is only the one pair.
-        7.3,            // measured, NCCL all-reduce bus bandwidth over SYS, 64 MiB payload
-                        // (7.36 device-to-device, 7.00 across the fabric). Two participants;
-                        // synge never offers another count, which is the only reason a single
-                        // figure can sit on a preset here at all.
-        // Queried on both V100s of synge-n02 with gpu-device-probe; the devices agreed.
-        // These are capability flags, not evidence that a particular transfer overlapped.
+        7.3,            // measured, NCCL all-reduce bus bandwidth over SYS, 64 MiB payload.
+                        // Two participants, the only count synge offers, which is why a
+                        // single figure may sit on this preset at all.
+        // gpu-device-probe, both devices, which agreed. Capability flags, not evidence that a
+        // particular transfer overlapped.
         {7, 1, 1, 1, true}, // async engines, concurrent kernels, overlap, unified addressing
         // Measured increments, which reduction_cost_s accumulates. WARP 0.422 us; BLOCK +0.368;
         // GRID +2.709 (from the two-kernel form at 5.54 us, which again beat cooperative
@@ -244,18 +239,12 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
         // GRID total); NODE +10.632 (22.09 us cumulative over NET/IB on hfi1_0, minus the
         // 11.46 us DEVICE_P2P total).
         //
-        // DEVICE_P2P repeatability: four runs gave 11.24, 11.25, 11.46, 12.47 us (median
-        // 11.36, spread 1.11x). The recorded figure is one of those samples, not a fit, and
-        // every one is >12x tau*, so the corner verdict does not turn on which.
-        //
-        // The NODE rung is only 1.93x the DEVICE_P2P rung, a much flatter step than the CPU's
-        // 5.4x CCX crossing: the intra-node link is PCIe gen3 x16 plus a cross-socket UPI hop,
-        // slow enough that leaving the node barely doubles it. The swept horizontal axis is
-        // therefore really {on-device, off-device}.
+        // NODE is only 1.93x DEVICE_P2P: the intra-node link is PCIe gen3 x16 plus a
+        // cross-socket UPI hop, slow enough that leaving the node barely doubles it. The swept
+        // horizontal axis here is effectively {on-device, off-device}.
         {{4.2246e-7, 3.6841e-7, 2.7089e-6, 5.9213e-6, 1.0632e-5}},
-        // Launch is 74% of a grid reduction here, against 41% on the 3090, so the risk of
-        // launch swamping the ladder comes far closer to firing. The rungs are still separable
-        // (grid/block = 9.5x) but the margin is thin.
+        // Launch is 74% of a grid reduction here, the narrowest margin of the three presets.
+        // The rungs stay separable (grid/block = 9.5x), but only just.
         2.0389e-6,      // t_kernel_launch_s
         {{true, true, true, true, true}},     // every rung measured
         // All five rungs are reachable on synge and all five are measured, so the ladder is
@@ -265,9 +254,7 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
     },
     {
         // Calibrated on puffin with nvcc 12.8 / sm_86, on an idle device (NVML reported zero
-        // foreign processes). The reduction and roof measurements each held to <1% over four
-        // runs; contention shifts them 10-20%, always plausibly, which is why the idle gate
-        // has to hold first.
+        // foreign processes).
         "rtx-3090",
         "NVIDIA GeForce RTX 3090 (puffin)",
         "rtx 3090",
@@ -277,8 +264,7 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
         100L << 10,     // CC 8.6: up to 100 KiB shared per SM
         24L << 30,      // 24 GiB GDDR6X
         // Measured, gpu-fma-loop: 0.570 TFLOP/s FP64, 37.39 FP32, ratio 65.6:1. Datasheet says
-        // 0.556 / 35.58 at 1:64; the 1740 MHz boost clock lifts both. The negative arm, as a
-        // measurement rather than a datasheet claim.
+        // 0.556 / 35.58 at 1:64; the 1740 MHz boost clock lifts both.
         5.7021e11,      // FP64 peak
         3.7387e13,      // FP32 peak
         936.2,          // theoretical GDDR6X (datasheet; the achieved roof is below)
@@ -303,30 +289,15 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
         true,           // roofline_gated
     },
     {
-        // Calibrated on gpu03 of Jose's H200 installation, Slurm job 20170, 2026-08-26, with
-        // all eight devices visible and NVML reporting zero foreign processes at every stage.
-        // Built by the Spack CUDA 12.8.1 nvcc for sm_90 in Release; the 12.9 nvcc later on
-        // PATH did not compile these binaries and each one says so in its own banner.
+        // Calibrated on gpu01, with all eight devices visible and NVML reporting zero foreign
+        // processes at every stage. Built by the Spack CUDA 12.8.1 nvcc for sm_90 in Release.
         //
-        // REPLICATE POLICY, declared before the constants were chosen. The single-device
-        // calibrator ran three independent times on this host: 2026-08-25 (transcript only,
-        // inside a four-GPU allocation) and twice on 2026-08-26, seven minutes apart. The
-        // compute and DRAM roofs reproduce to within 0.06%, but the short launch/reduction
-        // path does not: the two-kernel grid total spans 5.2086 to 5.5528 us, a 1.066x spread,
-        // and the grid increment behind it spans 1.128x. Seven back-to-back repeats cannot see
-        // that, so the within-run interquartile range must not be read as repeatability.
-        //
-        // The whole preset is therefore transcribed from ONE invocation, the median of the
-        // three by two-kernel grid total, rather than from per-rung medians. Per-rung medians
-        // accumulate to 5.2888 us, a grid cost no invocation ever produced; taking one run
-        // keeps reduction_cost_s() reproducing a total that was actually measured. The chosen
-        // run is the 10:57 set, which is also the one carrying the eight-participant P2P CSV,
-        // the topology matrix, the device UUIDs and the build configuration.
-        //
-        // The spread itself is not discarded. It is published as the 1gpu-1node quartiles in
-        // the H200 topology manifest, which records three invocations rather than one.
+        // The whole preset is transcribed from ONE invocation: the one whose two-kernel grid
+        // total is nearest the mean of all of them. Rung costs accumulate, so averaging rung
+        // by rung yields a ladder total no invocation produced, while transcribing one keeps
+        // reduction_cost_s() reproducing a total that was actually measured. A test checks it.
         "h200",
-        "NVIDIA H200 (gpu03)",
+        "NVIDIA H200 (gpu01)",
         "h200",
         132,            // SMs (GH100), driver-reported
         64,             // CC 9.0: 2048 resident threads / SM. Confirm with gpu-device-probe.
@@ -336,45 +307,48 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
         // 143771 MiB nvidia-smi shows. Rounded DOWN to a whole GiB so the footprint ceiling
         // stays conservative; the exact byte count needs gpu-device-probe and is not guessed.
         139L << 30,
-        // Measured, gpu-fma-loop on an idle device: 30.743 TFLOP/s FP64, 61.409 FP32, a
+        // Measured, gpu-fma-loop on an idle device: 30.750 TFLOP/s FP64, 61.414 FP32, a
         // 2.0:1 ratio confirming dedicated FP64 units. The positive arm, as the V100 is, but
         // 4.8x its FP64 rate against 5.0x its bandwidth, so the ridge barely moves.
-        3.0743e13,      // FP64 peak
-        6.1409e13,      // FP32 peak
+        3.0750e13,      // FP64 peak
+        6.1414e13,      // FP32 peak
         4814.0,         // theoretical HBM3e, as gpu-stream computes it from the driver's
                         // memory clock and bus width (datasheet class 4.8 TB/s)
         // Measured, gpu-stream, idle device. DRAM is the median of DRAM-clean sizes (>= 4x the
         // 89.4 MiB L2+L1 hierarchy), 84% of theoretical. Aggregate L1 is 29.4 MiB against a
         // 60 MiB L2, so unlike GA102 and GV100 the resident figure is L2-dominated.
-        4054.6,         // hbm_bw_gbs_achieved
-        13014.5,        // l2_bw_gbs_achieved  (cache/DRAM ratio 3.21x, against the V100's 4.43)
-        // `nvidia-smi topo -m` on gpu03: NV18 between every one of the 28 GPU pairs, so the
+        4053.1,         // hbm_bw_gbs_achieved
+        12988.1,        // l2_bw_gbs_achieved  (cache/DRAM ratio 3.20x, against the V100's 4.43)
+        // `nvidia-smi topo -m` on gpu01: NV18 between every one of the 28 GPU pairs, so the
         // local link graph is uniform and the label is a device-level fact here. CPU and NIC
         // placement is NOT uniform: GPUs 0-3 sit on NUMA 0 (CPU 0-47, 96-143) with mlx5_0..3
         // closest, GPUs 4-7 on NUMA 1 (CPU 48-95, 144-191) with mlx5_4..7. That asymmetry is
         // recorded in the topology manifest's link signature, where a subset can name it.
         "NV18",
         // Deliberately not measured on this preset. The all-reduce bus bandwidth over NV18 is
-        // keyed to the participant count, not to the link: 314.4 GB/s at four participants and
-        // 373.8 at eight, an 18.9% difference. Recording either here would let a four-GPU run
-        // borrow the eight-GPU figure, which is the exact substitution this port exists to
-        // prevent. Both live in the topology manifest instead.
+        // keyed to the participant count, not to the link: 274.6 GB/s at two participants,
+        // 315.9 at four and 373.9 at eight, a 36% span. Recording any one here would let a
+        // two-GPU run borrow the eight-GPU figure, which is the exact substitution this port
+        // exists to prevent. All three live in kGpuTopologies instead.
         0.0,
-        {-1, -1, -1, -1, false}, // gpu-device-probe has not yet run on gpu03
-        // Measured increments, calibrate-gpu-reduction, 10:57 invocation. WARP 0.4017 us;
-        // BLOCK +0.3989; GRID +2.5412 (from the two-kernel form at 5.2567 us, which again beat
-        // cooperative grid.sync() at 7.4079 us, so the model carries the two-kernel form).
+        // gpu-device-probe, all eight devices, which agreed. Capability flags, not evidence
+        // that a particular transfer overlapped.
+        {3, 1, 1, 1, true}, // async engines, concurrent kernels, overlap, unified addressing
+        // Measured increments, calibrate-gpu-reduction. WARP 0.4017 us; BLOCK +0.3989;
+        // GRID +2.5489 (from the two-kernel form at 5.3770 us, which again beat cooperative
+        // grid.sync() at 7.4889 us, so the model carries the two-kernel form). The entries
+        // accumulate to exactly the measured 5.3770 us total.
         //
         // DEVICE_P2P and NODE are deliberately zero and uncalibrated. Eight H200s on one node
-        // reduce at the same DEVICE_P2P rung as four and cost 2.011x as much (32.850 us
-        // against 16.336), so no single increment can serve both and this array, indexed by
-        // rung alone, cannot hold them. The measured totals live in the topology manifest,
-        // keyed by participant count. Leaving these zero is what makes a launch that asks for
-        // a link cost here fail loudly instead of pricing the grid rung under a link name.
-        {{4.0167e-7, 3.9894e-7, 2.5412e-6, 0.0, 0.0}},
-        // Launch is 36% of a grid reduction here, the widest margin of the three presets, so
-        // the ladder's rungs stay clearly separable (grid/block = 6.6x).
-        1.9150e-6,      // t_kernel_launch_s
+        // reduce at the same DEVICE_P2P rung as two and cost 3.71x as much (39.002 us against
+        // 10.510), so no single increment can serve both and this array, indexed by rung
+        // alone, cannot hold them. The measured totals live in kGpuTopologies, keyed by
+        // participant count. Leaving these zero is what makes a launch that asks for a link
+        // cost here fail loudly instead of pricing the grid rung under a link name.
+        {{4.0167e-7, 3.9893e-7, 2.5489e-6, 0.0, 0.0}},
+        // Launch is 38% of a grid reduction here, the widest margin of the three presets, so
+        // the ladder's rungs stay clearly separable (grid/block = 6.7x).
+        2.0274e-6,      // t_kernel_launch_s
         {{true, true, true, false, false}},   // the on-device rungs are measured
         // The on-device ladder is complete. Whether that is the whole ladder depends on the
         // allocation, which this preset does not know and must not assume: on a one-GPU shell
@@ -453,10 +427,8 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
  * can wrongly exclude a point that is really on the map, but it cannot wave a compute-bound
  * point onto one. That is why it is a fallback rather than a hard error.
  *
- * It is still a reason to measure. On the 3090 the margins are small enough, with MGS clearing
- * its ridge by under 2x, that the gap between 936 GB/s on paper and what the card sustains can
- * flip a verdict. `roofline_gated` marks the distinction so a provisional verdict is never
- * read as a final one.
+ * `roofline_gated` marks the distinction so a provisional verdict is never read as a final
+ * one.
  */
 [[nodiscard]] inline constexpr double achieved_or_peak_bw_gbs(const GpuMachine& gm) noexcept
 {
@@ -512,8 +484,7 @@ inline constexpr std::array<GpuMachine, 3> kGpuMachines {{
  *
  * The whole-device figure, and the one to quote when comparing machines. The V100's FP64 ridge
  * is ~7.8 FLOP/B and the 3090's ~0.59, a 13x separation produced almost entirely by the FP64
- * rate since the two bandwidths are within 4%. That separation is the study's controlled
- * variable.
+ * rate since the two bandwidths are within 4%.
  */
 [[nodiscard]] inline double ridge_ai(const GpuMachine& gm, Precision p) noexcept
 {
@@ -559,12 +530,10 @@ struct RooflineVerdict {
  * latency in the first place. Throttling FP64 does not move a point around the map, it throws
  * the point off the map, into a regime neither coordinate charts.
  *
- * Evaluated per kernel, not once per machine. The two-card contrast does not discriminate on
- * SpMV or MGS at all: their intensities, 0.135 and 0.375 FLOP/B, sit below even the 3090's
- * throttled ridge, so both cards are on-map for the baseline method. It discriminates on the
- * tall-skinny Gram matrix that CA introduces and MGS does not have, whose intensity is ~s/4
- * and which crosses the 3090's ridge at s ~ 2.4, far below the certified s_max = 9. A
- * machine-level verdict would have hidden that.
+ * Evaluated per kernel, not once per machine. SpMV and MGS, at 0.135 and 0.375 FLOP/B, sit
+ * below even the 3090's throttled ridge, so both cards are on-map for the baseline method.
+ * The tall-skinny Gram matrix CA introduces has intensity ~s/4 and crosses the 3090's ridge
+ * at s ~ 2.4, far below the certified s_max = 9. A machine-level verdict would hide that.
  *
  * A point failing this gate is off-map, not lower-left, and is reported as such.
  *
