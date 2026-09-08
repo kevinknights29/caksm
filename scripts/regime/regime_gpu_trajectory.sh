@@ -113,6 +113,7 @@ MEASURE_ARMS="${MEASURE_ARMS:-}"
 # count on each is a homogeneity check rather than a duplicate. Its rows are keyed
 # "<arm>@<host>" so they stay evidence and never place a point.
 PER_NODE_CHECK="${PER_NODE_CHECK:-0}"
+SKIPPED_ARMS=0
 VERIFY_TOPOLOGY="${VERIFY_TOPOLOGY:-0}"
 MEASURE="${MEASURE:-0}"
 # Under sbatch the job's stdout goes to slurm-<jobid>.out in the submission
@@ -338,9 +339,50 @@ measure_ladder() {   # <max> -> "1 2 4 ... <= max"
 # each rank driving the first `local` devices, so participants = nodes x local. A single device
 # on a single node takes the non-distributed binary, which is the one case that is not just a
 # smaller instance of the same launch.
+# The thinnest slab a decomposition produces, against the halo depth an arm needs.
+#
+# The integrator splits z as z_begin = rank * n / P, so the thinnest slab holds floor(n / P)
+# planes, and the halo exchange sends the neighbour's last `depth` owned planes from
+# input + (z_count - depth) * n^2. A slab thinner than the halo makes that offset negative and
+# reads before the start of its own buffer, which is a memory error rather than a numerical one.
+#
+# The default MEASURE_S=1 is safe at every grid in N1_LIST: the as-measured arm's halo is one
+# plane deep and the coarsest grid still owns one. A wider block is not: at n=25 over sixteen
+# participants the thinnest slab is a single plane against a three-deep halo.
+thinnest_slab() {   # <n> <participants>
+    echo $(( $1 / $2 ))
+}
+
+# A block of width s consumes columns 0..s-1, so it needs an s-1 deep halo. The as-measured arm
+# exchanges s and discards the extra column.
+halo_depth() {      # <arm> <width>
+    case "$1" in
+        exact-depth) echo $(( $2 - 1 )) ;;
+        *)           echo "$2" ;;
+    esac
+}
+
 launch_arm() {   # <nodes> <local> <n1> [nodelist]
     local nodes="$1" local_gpus="$2" n1="$3" nodelist="${4:-}"
-    local key="$(( nodes * local_gpus ))gpu-${nodes}node"
+    local participants=$(( nodes * local_gpus ))
+    local key="${participants}gpu-${nodes}node"
+    # The host goes into the key before the guard, so a refused per-node repeat is recorded
+    # against the host it would have run on rather than against the bare arrangement.
+    [[ -n "$nodelist" ]] && key="$key@$nodelist"
+
+    local depth thinnest
+    depth="$(halo_depth "$MEASURE_ARM" "$MEASURE_S")"
+    thinnest="$(thinnest_slab "$n1" "$participants")"
+    if [[ "$depth" -gt "$thinnest" ]]; then
+        # Recorded as a row rather than dropped, so the trajectory table shows a refused
+        # point instead of a silently absent one, and the figure blocks naming it.
+        printf '%s,%s,0,SKIPPED:halo%s-over-slab%s,0,"%s"\n' \
+            "$key" "$n1" "$depth" "$thinnest" "(not launched)" >> "$MEASURED_CSV"
+        printf '  %-16s n=%-4s SKIPPED: halo depth %s exceeds the thinnest slab (%s planes)\n' \
+            "$key" "$n1" "$depth" "$thinnest"
+        SKIPPED_ARMS=$((SKIPPED_ARMS + 1))
+        return 0
+    fi
     # Built in the shell rather than with `seq -s,`: BSD seq appends the separator after the
     # last element and GNU seq does not, so that would send "--devices 0,1," from a Mac and
     # "--devices 0,1" from the cluster, and the integrator rejects the empty token.
@@ -362,7 +404,6 @@ launch_arm() {   # <nodes> <local> <n1> [nodelist]
     fi
     if [[ -n "$nodelist" ]]; then
         launcher+=(--nodelist="$nodelist")
-        key="$key@$nodelist"
     fi
 
     if [[ "$nodes" -eq 1 && "$local_gpus" -eq 1 ]]; then
@@ -477,6 +518,10 @@ if [[ "$MEASURE" == "1" ]]; then
         fi
     done
     echo
+    if [[ "$SKIPPED_ARMS" -ne 0 ]]; then
+        echo "  $SKIPPED_ARMS point(s) refused: the halo was deeper than the thinnest slab."
+        echo "  Raise --n, lower MEASURE_S, or drop the widest arrangement."
+    fi
     echo "  [wrote $MEASURED_CSV]"
     echo
 fi
