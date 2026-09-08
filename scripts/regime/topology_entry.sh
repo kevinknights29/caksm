@@ -19,16 +19,17 @@
 #                   differ must name its devices, and a run that cannot is "unknown"
 #
 # Usage:
-#   scripts/regime/topology_entry.sh data/calibration/h200/2026-08-26T1057-job20170
+#   scripts/regime/topology_entry.sh <run directory>
 #
-# Paste the output into kGpuTopologies in include/gpu_topology.hpp, resolve the TODO markers,
-# and commit. A calibration entering the model stays a deliberate, reviewable edit, exactly as
-# it is for the presets in gpu_machine.hpp; what changes is that the numbers arrive correct.
+# calibrate_gpu_p2p.sh writes run directories as
+# data/calibration/<machine>/<timestamp>-job<jobid>-<N>nodes/.
+# They are not committed, so pass whichever one the job produced.
 set -uo pipefail
 
 if [[ $# -lt 1 ]]; then
     echo "usage: $0 RUN_DIR" >&2
-    echo "  e.g. $0 data/calibration/h200/2026-08-26T1057-job20170" >&2
+    echo "  RUN_DIR is a run directory written by calibrate_gpu_p2p.sh, e.g." >&2
+    echo "  data/calibration/<machine>/<timestamp>-job<jobid>-<N>nodes" >&2
     exit 2
 fi
 
@@ -40,6 +41,15 @@ if [[ ! -d "$RUN_DIR" ]]; then
     exit 1
 fi
 
+# calibrate_gpu_p2p.sh puts the collective CSVs in a p2p/ subdirectory, so accept either the
+# run directory or that subdirectory. Descending only when the top level holds no CSV of its
+# own keeps a flat archive working.
+if [[ -d "$RUN_DIR/p2p" ]] \
+   && ! compgen -G "$RUN_DIR/*participants_*node*.csv" >/dev/null \
+   && ! compgen -G "$RUN_DIR/calibrate_gpu_p2p_*.csv" >/dev/null; then
+    RUN_DIR="$RUN_DIR/p2p"
+fi
+
 # Repo-relative, since that is what the source column records.
 REL_DIR="$RUN_DIR"
 case "$RUN_DIR" in /*) REL_DIR="${RUN_DIR#"$WORK_DIR"/}" ;; esac
@@ -49,8 +59,8 @@ read_provenance() {   # <key> -> value, or empty
     awk -F= -v k="$1" '$1 == k { print $2; exit }' "$RUN_DIR/provenance.txt"
 }
 
-# An archive taken before the run-directory layout has no provenance.txt, so the same facts
-# are recovered from whatever the run did leave behind rather than reported as unknown.
+# A run without provenance.txt still has the facts in its logs, so they are recovered there
+# rather than reported as unknown.
 HOST="${HOST_OVERRIDE:-$(read_provenance host)}"
 [[ -z "$HOST" ]] && HOST="$(sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' "$RUN_DIR"/*.log 2>/dev/null \
                             | awk '/^ *host  *:/ { print $3; exit }')"
@@ -140,6 +150,14 @@ emit_entry() {   # <csv>
 
     IFS='|' read -r machine participants hosts tier repeats med q1 q3 bw contended <<< "$row"
     local local_gpus=$((participants / hosts))
+
+    # GPUs one process drives: the launch structure. No CSV column records it, so it comes
+    # from the file stem. The single-process path gives one process every local device; the
+    # MPI path gives each rank one.
+    local gpus_per_rank="$local_gpus"
+    case "$(basename "$csv")" in
+        node_*|*_mpi.csv) gpus_per_rank=1 ;;
+    esac
     local key="${participants}gpu-${hosts}node"
     local plural_g="s" plural_n="s"
     [[ "$participants" -eq 1 ]] && plural_g=""
@@ -186,7 +204,7 @@ emit_entry() {   # <csv>
     [[ "$HOST" == "TODO-host" ]] && cluster_todo="  // TODO cluster: the host was not recorded"
     echo "        \"$machine\", \"$machine-$HOST\",$cluster_todo"
     echo "        \"$key\", \"$participants GPU$plural_g, $hosts node$plural_n\","
-    echo "        $participants, $hosts, $local_gpus, \"$devices\", $tier_enum,"
+    echo "        $participants, $hosts, $local_gpus, $gpus_per_rank, \"$devices\", $tier_enum,"
     echo "        ${med}, ${q1}, ${q3},"
     echo "        ${bw}, ${repeats}, 1,  // TODO invocations: raise it if this pools several runs,"
     echo "                               // and widen the quartiles to their spread if you do"
@@ -203,8 +221,7 @@ echo "//   $REL_DIR"
 echo "// Paste into kGpuTopologies in include/gpu_topology.hpp and resolve every TODO."
 echo ""
 
-# New per-arrangement stems first, then the legacy fixed names, so an archive taken before the
-# run-directory layout still yields an entry.
+# Per-arrangement stems first, then the older fixed names, so both layouts yield an entry.
 shopt -s nullglob
 for csv in "$RUN_DIR"/device_*participants_*node*.csv "$RUN_DIR"/node_*participants_*node*.csv \
            "$RUN_DIR"/calibrate_gpu_p2p_device.csv "$RUN_DIR"/calibrate_gpu_p2p_node.csv; do
