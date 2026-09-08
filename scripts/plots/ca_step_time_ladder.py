@@ -38,17 +38,33 @@ WIDTH_LABEL = {1: "$s = 1$, one reduction per step",
 BAR = 0.36
 
 
-def draw() -> str | None:
-    all_runs = lib.load_runs(lib.STRONG)
+def draw(
+    source=lib.STRONG,
+    arrangements=lib.STRONG_TOPOLOGIES,
+    figure=FIGURE,
+) -> str | None:
+    """Draw the paired s=1/s=4 ladder for one machine's strong-scaling sweep.
+
+    The defaults are synge's, so calling it bare reproduces the published
+    figure. A second machine passes its own sweep directory and its own
+    arrangements, which is what keeps the two ladders separate rather than
+    merging two interconnects into one axis.
+
+    Args:
+        source: Directory of strong-scaling transcripts.
+        arrangements: ((world_gpus, nodes), label) pairs, in bar order.
+        figure: The Figure this writes to.
+    """
+    all_runs = lib.load_runs(source)
     if not all_runs:
-        return FIGURE.blocked(
-            "data/ca-integrator-strong-m39 is absent; run "
-            "scripts/regime/ca_strong_scaling.sh on Synge")
+        return figure.blocked(
+            f"{source.relative_to(lib.ROOT)} is absent; run "
+            "scripts/regime/ca_strong_scaling.sh")
 
     # The same gate the four-panel ladder applies, narrowed to the one arm and
     # option drawn here. A group missing either width would show one bar and
     # read as a measurement rather than as a hole.
-    topologies = [topology for topology, _ in lib.STRONG_TOPOLOGIES]
+    topologies = [topology for topology, _ in arrangements]
     expected = {(width, topology) for width in WIDTHS for topology in topologies}
     observed: dict[tuple, list[lib.Run]] = {}
     for run in all_runs:
@@ -65,7 +81,7 @@ def draw() -> str | None:
         or observed[key][0].run_status != "passed"
     ]
     if incomplete:
-        return FIGURE.blocked(
+        return figure.blocked(
             f"{len(incomplete)} of {len(expected)} {OPTION}/{ARM} points are "
             "missing, duplicated, contended, or lack a passed seven-repeat timing")
 
@@ -95,7 +111,7 @@ def draw() -> str | None:
                         color=ca.WIDTH_COLOR[WIDTHS[1]], weight="semibold")
 
     ax.set_xticks(positions)
-    ax.set_xticklabels([label for _, label in lib.STRONG_TOPOLOGIES],
+    ax.set_xticklabels([label for _, label in arrangements],
                        fontsize=9.0)
     ax.set_ylabel("cycle time (ms/step)")
     ax.set_ylim(0.0, ceiling * 1.26)
@@ -112,7 +128,7 @@ def draw() -> str | None:
          "speedup": ratios[i]}
         for i, t in enumerate(topologies)
     ]
-    FIGURE.write(fig, rows)
+    figure.write(fig, rows)
 
     print(f"  {OPTION}, {ARM} arm")
     for (gpus, nodes), r, s1, s4 in zip(topologies, ratios,

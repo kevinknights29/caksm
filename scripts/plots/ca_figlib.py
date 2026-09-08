@@ -347,16 +347,18 @@ class ParticipantModel:
     the same as fitting a curve and drawing it as a prediction.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, directory: Path = PARTICIPANTS) -> None:
         self.collectives: dict[int, dict[str, Latency]] = {}
         self.halos: dict[int, dict[tuple[int, int], Latency]] = {}
         self.sources: list[Path] = []
-        for participants, path in (
-            (2, PARTICIPANTS / "node_2participants.csv"),
-            (4, PARTICIPANTS / "node_4participants.csv"),
-        ):
-            if not path.exists():
+        # Discovered rather than listed. A cluster that offers eight or sixteen
+        # participants writes node_8participants.csv beside the others, and a
+        # fixed list would price it at zero instead of reading it.
+        for path in sorted(directory.glob("node_*participants.csv")):
+            match = re.fullmatch(r"node_(\d+)participants\.csv", path.name)
+            if match is None:
                 continue
+            participants = int(match.group(1))
             self.sources.append(path)
             self.collectives[participants] = {}
             self.halos[participants] = {}

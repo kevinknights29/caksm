@@ -33,12 +33,34 @@ ARM_SHORT = {"as-measured": "as measured", "exact-depth": "exact depth"}
 BAR = 0.38
 
 
-def draw() -> str | None:
-    all_exact_runs = [r for r in lib.load_runs(lib.EXACT) if r.world_gpus > 1]
+def draw(
+    source=lib.EXACT,
+    rungs=((2, 77), (4, 97)),
+    nodes_expected=2,
+    figure=FIGURE,
+    participants_dir=lib.PARTICIPANTS,
+) -> str | None:
+    """Draw the decomposition for one machine's exact-depth sweep.
+
+    The defaults are synge's, so calling it bare reproduces the published
+    figure. A second machine passes its own sweep directory, its own
+    (participants, grid) rungs and its own participant calibration, which is
+    what keeps the two figures separate rather than merging two interconnects
+    into one panel.
+
+    Args:
+        source: Directory of exact-depth transcripts.
+        rungs: The (participants, grid) pairs the sweep is expected to hold.
+        nodes_expected: Node count every distributed rung must report, or None
+            to accept whatever the transcript says.
+        figure: The Figure this writes to.
+        participants_dir: Directory holding the participant calibration.
+    """
+    all_exact_runs = [r for r in lib.load_runs(source) if r.world_gpus > 1]
     expected_exact = {
         (arm, gpus, n, option, width)
         for arm in ("as-measured", "exact-depth")
-        for gpus, n in ((2, 77), (4, 97))
+        for gpus, n in rungs
         for option in ("basket", "rainbow")
         for width in (1, 4)
     }
@@ -55,7 +77,7 @@ def draw() -> str | None:
             and run.recordable
             and run.cycle_ms is not None
             and run.repeats >= 7
-            and run.nodes == 2
+            and (nodes_expected is None or run.nodes == nodes_expected)
             and not (run.run_status == "passed" and run.stopped)
         )
 
@@ -65,7 +87,7 @@ def draw() -> str | None:
         or not complete_classified_run(observed_exact[key][0])
     ]
     if incomplete:
-        return FIGURE.blocked(
+        return figure.blocked(
             f"the correction sweep is incomplete, contended, or unclassified: "
             f"{len(incomplete)} of {len(expected_exact)} required arm/topology/"
             "option/width points do not carry exactly one idle seven-repeat "
@@ -86,18 +108,26 @@ def draw() -> str | None:
         for key in expected_exact if observed_exact[key][0].stopped
     )
     if not runs:
-        return FIGURE.blocked(
+        return figure.blocked(
             "no usable distributed transcript carries a timing distribution")
 
-    model = lib.ParticipantModel()
+    model = lib.ParticipantModel(participants_dir)
     if not model.available:
-        return FIGURE.blocked(
-            "data/ca-participant-calibration-quiet is absent, and the "
-            "decomposition's reduction and halo terms come from it")
+        return figure.blocked(
+            f"{participants_dir.name} is absent, and the decomposition's "
+            "reduction and halo terms come from it")
+    missing_counts = sorted(
+        {gpus for gpus, _ in rungs} - set(model.collectives))
+    if missing_counts:
+        return figure.blocked(
+            "the participant calibration measured "
+            f"{sorted(model.collectives)} participants, but this sweep needs "
+            f"{missing_counts}. An unmeasured count prices every collective at "
+            "zero, which would report the whole cycle as local work")
 
     floors = {id(run): lib.modeled_floors(model, run) for run in runs}
     if not all(f["exact_halo_account"] for f in floors.values()):
-        return FIGURE.blocked(
+        return figure.blocked(
             "the available transcripts predate the build/transition halo-depth "
             "histogram; rerun scripts/regime/ca_exact_depth_weak.sh before "
             "pricing halo latency")
@@ -240,7 +270,7 @@ def draw() -> str | None:
             f"{gpus} GPUs {option} s={width} {ARM_SHORT[arm]}"
             for gpus, option, width, arm in withheld))
 
-    FIGURE.write(fig, rows)
+    figure.write(fig, rows)
     return None
 
 
