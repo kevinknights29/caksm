@@ -6,36 +6,34 @@
  * while the on-device rungs need only CUDA. The on-device ladder can therefore be calibrated
  * on any node, and a missing NCCL does not block Phase A.
  *
- * These two rungs are the reason synge is in the study. A single V100's reduction is on-die
- * and near-free, so a single GPU can test theta_v but cannot test the horizontal mechanism or
- * the Upper-Right corner at all. Holding N and the device fixed and changing only which rung
- * the reduction crosses traverses the horizontal axis directly, which turns theta_h from a
- * shaded prediction into a measured crossing.
+ * A single GPU's reduction is on-die and near-free, so one device can test theta_v but not
+ * the horizontal mechanism. Holding N and the device fixed and changing only which rung the
+ * reduction crosses traverses the horizontal axis directly, which turns theta_h from a shaded
+ * prediction into a measured crossing.
  *
- * Two modes, following synge's actual layout:
+ * Two modes:
  *
- *   single-process, multi-device (DEVICE_P2P).  Both V100s sit on one node, so
- *       `ncclCommInitAll` drives both from one process with no MPI involved. Phase 0 predicts
- *       this is the rung that carries the operator at production resolution into Upper-Right,
- *       and it is reachable with nothing but CUDA and NCCL in a `-N 1` allocation.
+ *   single-process, multi-device (DEVICE_P2P).  `ncclCommInitAll` drives the local GPUs from
+ *       one process with no MPI involved, so the rung is reachable with nothing but CUDA and
+ *       NCCL in a one-node allocation. `--devices` selects which of them take part.
  *
- *   MPI, one rank per node (NODE).  Compiled only when MPI is found (CAKSM_HAVE_MPI). The
- *       fabric rung needs a launcher, and it is the one rung whose absence does not block the
- *       headline result.
+ *   MPI, one rank per GPU (NODE).  Compiled only when MPI is found (CAKSM_HAVE_MPI); the
+ *       fabric rung needs a launcher.
+ *
+ * The modes differ in LAUNCH STRUCTURE as well as in reach, and on a node with NVLink that is
+ * worth more than several of the effects the ladder exists to separate. Neither may stand in
+ * for the other, which is why gpu_topology.hpp records which one produced each row.
  *
  * NCCL, not a hand-rolled ring, in either mode: the reduction timed must be the one a real
  * implementation would call. A bespoke P2P reduction would measure a primitive nobody uses,
  * and R_h's non-circularity rests on the calibrated constant being the slope of code that
  * actually runs.
  *
- * On synge the intra-node link is `SYS`, PCIe plus a cross-socket UPI hop with no NVLink, so
- * the DEVICE_P2P rung is a genuine cross-socket crossing rather than a token one.
- *
  * Usage:
  *   # DEVICE_P2P: no launcher, no MPI, one node
- *   ./calibrate-gpu-p2p --tier device-p2p --csv ...
- *   # NODE: one rank per node (needs an MPI build)
- *   srun -N 2 -n 2 --gpus-per-node=1 ./calibrate-gpu-p2p --tier node --csv ...
+ *   ./calibrate-gpu-p2p --tier device-p2p --devices 0,1,2,3 --csv ...
+ *   # NODE: one rank per GPU (needs an MPI build)
+ *   srun -N 2 -n 16 --mpi=pmix ./calibrate-gpu-p2p --tier node --csv ...
  *
  * @author Kevin Knights
  * @date 2026-07-21
@@ -121,6 +119,10 @@ struct Args {
     long long   bw_bytes = 64LL << 20;
     bool        production = false;
     std::vector<int> devices{0};
+    /// Whether --devices was supplied. The default above is a single device, which is
+    /// indistinguishable from an explicit "--devices 0", so the flag rather than the value
+    /// decides whether the caller chose a subset.
+    bool        devices_given = false;
     std::string csv_path;
 };
 
@@ -171,7 +173,10 @@ struct Args {
         else if (arg == "--halo-iters") a.halo_iters = std::stoll(next());
         else if (arg == "--repeats")  a.repeats  = std::stoi(next());
         else if (arg == "--bw-bytes") a.bw_bytes = std::stoll(next());
-        else if (arg == "--devices")  a.devices  = parse_devices(next());
+        else if (arg == "--devices") {
+            a.devices = parse_devices(next());
+            a.devices_given = true;
+        }
         else if (arg == "--production") a.production = true;
         else if (arg == "--csv")      a.csv_path = next();
         else if (arg == "--help") {
@@ -426,21 +431,18 @@ void write_production_csv(const Args& a, const ProductionResult& result)
 /**
  * @brief Drive every local GPU from one process with ncclCommInitAll.
  *
- * No launcher and no MPI. On synge both V100s are on one node, so this is the whole of the
- * DEVICE_P2P rung, which Phase 0 predicts carries the production operator into Upper-Right.
- * Keeping MPI off its critical path means the headline measurement depends on CUDA and NCCL
- * only.
+ * No launcher and no MPI, so this rung depends on CUDA and NCCL only. `devs` names the
+ * devices to drive; the caller has already checked that each is visible and distinct.
  *
  * The all-reduces are issued inside ncclGroupStart/End so the devices participate in one
  * collective rather than deadlocking on each other, and every stream is synchronized before
  * the clock stops: a collective costs what its slowest participant costs, not the first to
  * return.
  */
-[[nodiscard]] Result run_single_process(const Args& a, int ndev, char* device_name,
-                                        std::size_t device_name_len)
+[[nodiscard]] Result run_single_process(const Args& a, const std::vector<int>& devs,
+                                        char* device_name, std::size_t device_name_len)
 {
-    std::vector<int> devs(static_cast<std::size_t>(ndev));
-    std::iota(devs.begin(), devs.end(), 0);
+    const int ndev = static_cast<int>(devs.size());
 
     std::vector<ncclComm_t>  comms(static_cast<std::size_t>(ndev));
     std::vector<cudaStream_t> streams(static_cast<std::size_t>(ndev));
@@ -449,7 +451,7 @@ void write_production_csv(const Args& a, const ProductionResult& result)
 
     const long long bw_elems = a.bw_bytes / 8;
     for (int d = 0; d < ndev; ++d) {
-        CUDA_CHECK(cudaSetDevice(d));
+        CUDA_CHECK(cudaSetDevice(devs[static_cast<std::size_t>(d)]));
         CUDA_CHECK(cudaStreamCreate(&streams[static_cast<std::size_t>(d)]));
         CUDA_CHECK(cudaMalloc(&lat[static_cast<std::size_t>(d)], sizeof(double)));
         CUDA_CHECK(cudaMalloc(&bw[static_cast<std::size_t>(d)],
@@ -460,14 +462,14 @@ void write_production_csv(const Args& a, const ProductionResult& result)
     }
 
     cudaDeviceProp prop{};
-    CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, devs.front()));
     std::snprintf(device_name, device_name_len, "%s", prop.name);
 
     NCCL_CHECK(ncclCommInitAll(comms.data(), ndev, devs.data()));
 
     auto timed = [&](long long count, long long iters) -> double {
         for (int d = 0; d < ndev; ++d) {
-            CUDA_CHECK(cudaSetDevice(d));
+            CUDA_CHECK(cudaSetDevice(devs[static_cast<std::size_t>(d)]));
             CUDA_CHECK(cudaStreamSynchronize(streams[static_cast<std::size_t>(d)]));
         }
         const Clock::time_point t0 = Clock::now();
@@ -484,7 +486,7 @@ void write_production_csv(const Args& a, const ProductionResult& result)
             NCCL_CHECK(ncclGroupEnd());
         }
         for (int d = 0; d < ndev; ++d) {
-            CUDA_CHECK(cudaSetDevice(d));
+            CUDA_CHECK(cudaSetDevice(devs[static_cast<std::size_t>(d)]));
             CUDA_CHECK(cudaStreamSynchronize(streams[static_cast<std::size_t>(d)]));
         }
         return Sec(Clock::now() - t0).count() / static_cast<double>(iters);
@@ -511,7 +513,7 @@ void write_production_csv(const Args& a, const ProductionResult& result)
     r.hosts = 1;
 
     for (int d = 0; d < ndev; ++d) {
-        CUDA_CHECK(cudaSetDevice(d));
+        CUDA_CHECK(cudaSetDevice(devs[static_cast<std::size_t>(d)]));
         CUDA_CHECK(cudaFree(lat[static_cast<std::size_t>(d)]));
         CUDA_CHECK(cudaFree(bw[static_cast<std::size_t>(d)]));
         CUDA_CHECK(cudaStreamDestroy(streams[static_cast<std::size_t>(d)]));
@@ -1083,25 +1085,50 @@ int main(int argc, char** argv)
         rung = distinct_hosts > 1 ? "node" : "device-p2p";
 #endif
     } else {
-        int ndev = 0;
-        CUDA_CHECK(cudaGetDeviceCount(&ndev));
+        int visible = 0;
+        CUDA_CHECK(cudaGetDeviceCount(&visible));
+
+        // The subset this run drives. An explicit --devices selects it; without one, every
+        // visible device takes part, and that choice is printed rather than assumed, because
+        // a participant count nobody stated is a participant count nobody can reproduce.
+        std::vector<int> devs;
+        if (a.devices_given) {
+            devs = a.devices;
+            for (const int d : devs)
+                if (d < 0 || d >= visible)
+                    die("--devices names a GPU that is not visible to this process");
+            std::vector<int> ordered = devs;
+            std::sort(ordered.begin(), ordered.end());
+            if (std::adjacent_find(ordered.begin(), ordered.end()) != ordered.end())
+                die("--devices must not repeat a GPU: two participants on one device is not a"
+                    " crossing");
+        } else {
+            devs.resize(static_cast<std::size_t>(visible));
+            std::iota(devs.begin(), devs.end(), 0);
+        }
+        const int ndev = static_cast<int>(devs.size());
         if (ndev < 2)
-            die("Need at least 2 visible GPUs for the DEVICE_P2P rung: it is a crossing, and\n"
-                "one device has nothing to cross. Check CUDA_VISIBLE_DEVICES and that the\n"
-                "allocation requested --gpus-per-node=2.");
+            die("Need at least 2 GPUs for the DEVICE_P2P rung: it is a crossing, and one\n"
+                "device has nothing to cross. Check --devices, CUDA_VISIBLE_DEVICES, and that\n"
+                "the allocation actually holds more than one GPU.");
+        std::printf("  driving %d of %d visible device(s): ", ndev, visible);
+        for (int i = 0; i < ndev; ++i)
+            std::printf("%s%d", i ? "," : "", devs[static_cast<std::size_t>(i)]);
+        std::printf("%s\n", a.devices_given ? "  (--devices)" : "  (every visible device)");
 
         // Every participating device must be idle: a collective costs what its slowest
         // participant costs, so one contended GPU contaminates the whole measurement.
         for (int d = 0; d < ndev; ++d) {
-            CUDA_CHECK(cudaSetDevice(d));
+            const int device = devs[static_cast<std::size_t>(d)];
+            CUDA_CHECK(cudaSetDevice(device));
             const DeviceContention c = check_device_contention();
             if (c.contended) {
-                std::printf("  device %d:", d);
+                std::printf("  device %d:", device);
                 report_contention(c);
                 contended = true;
             }
         }
-        r = run_single_process(a, ndev, device_name, sizeof(device_name));
+        r = run_single_process(a, devs, device_name, sizeof(device_name));
         rung = "device-p2p";
     }
 

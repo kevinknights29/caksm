@@ -10,7 +10,7 @@
 # and changing only which rung the reduction crosses is the swept horizontal axis.
 #
 # The collective cost is keyed to the PARTICIPANT COUNT, not to the rung. Eight H200s on one
-# node cost 2.011x what four of the same node cost, at the same DEVICE_P2P rung. So this script
+# node cost 1.890x what four of the same node cost, at the same DEVICE_P2P rung. So this script
 # sweeps counts rather than taking one measurement per rung, and every count lands in its own
 # file. An unmeasured count is left absent; nothing here interpolates one.
 #
@@ -18,7 +18,7 @@
 # allocation exposes: the device rung walks the powers of two up to the visible GPU count, and
 # the fabric rung walks ranks per node the same way over however many nodes were allocated. On
 # synge (2 GPUs, 2 nodes) that is exactly the arrangements synge has always measured; on an
-# eight-GPU node it is 2, 4 and 8; on anything larger it adapts without an edit.
+# eight-GPU node it is 2 through 8; on anything larger it adapts without an edit.
 #
 # Usage:
 #   # inside an allocation, both rungs, sweep derived from the allocation
@@ -65,6 +65,10 @@ REQUIRE_COMPLETE_SWEEP="${REQUIRE_COMPLETE_SWEEP:-0}"
 REQUIRE_PROBE="${REQUIRE_PROBE:-0}"
 REQUIRE_NCCL_TRANSPORT="${REQUIRE_NCCL_TRANSPORT:-}"
 REQUIRE_IDLE="${REQUIRE_IDLE:-0}"
+# Run the multi-rank launch on a single node, where it measures the device rung rather than
+# the fabric. It changes only the launch structure, which is what separates that structure
+# from the node split when two arrangements differ in both.
+MPI_ON_ONE_NODE="${MPI_ON_ONE_NODE:-0}"
 
 if [[ ! -x "$P2P" ]]; then
     echo "Error: calibrate-gpu-p2p not found at $P2P"
@@ -101,12 +105,19 @@ for flag in "$REQUIRE_COMPLETE_SWEEP" "$REQUIRE_PROBE" "$REQUIRE_IDLE"; do
         || { echo "Error: requirement flags must be 0 or 1." >&2; exit 1; }
 done
 
-# The powers of two up to a bound. The participant counts a sweep should walk: doubling is what
-# separates one arrangement from the next on the horizontal axis, and an arithmetic sweep would
-# spend most of its runs where the collective barely moves.
-power_ladder() {   # <max> -> "1 2 4 ... <= max"
-    local max="$1" k=1 out=()
-    while (( k <= max )); do out+=("$k"); k=$((k * 2)); done
+# Every count from `lo` to `max`. The sweep is dense rather than doubling because these arms are
+# nearly free -- a whole eight-GPU job, single-device calibration and device probe included, ran
+# in 34 seconds -- while a sparse sweep quietly assumes the shape of the curve it exists to
+# measure. Three points (2, 4, 8) fit an affine law and a p^0.95 power law equally well, to
+# within 3%, so they cannot establish that the collective is linear in participant count; seven
+# can. A dense sweep is also the only one that can see a discontinuity at a count that does not
+# factor as a power of two, which is where NCCL might switch algorithm or channel layout.
+#
+# The expensive sweep is the other one: scripts/regime/regime_gpu_trajectory.sh runs a full
+# solver per arm and keeps doubling on purpose.
+participant_counts() {   # <lo> <max> -> "lo lo+1 ... max"
+    local lo="$1" max="$2" k out=()
+    for (( k = lo; k <= max; ++k )); do out+=("$k"); done
     echo "${out[*]}"
 }
 
@@ -119,10 +130,10 @@ first_devices() {  # <n> -> "0,1,..."
 # Participant counts for the intra-node rung. Starts at two: the rung is a crossing, and one
 # device has nothing to cross.
 if [[ -z "${LOCAL_GPUS:-}" ]]; then
-    LOCAL_GPUS="$(power_ladder "$VISIBLE" | sed 's/^1 //; s/^1$//')"
+    LOCAL_GPUS="$(participant_counts 2 "$VISIBLE")"
 fi
 # Ranks per node for the fabric rung, one rank per GPU throughout, so participants = ranks.
-RANKS_PER_NODE="${RANKS_PER_NODE:-$(power_ladder "$VISIBLE")}"
+RANKS_PER_NODE="${RANKS_PER_NODE:-$(participant_counts 1 "$VISIBLE")}"
 
 # A launcher that exits 0 without writing a table has measured nothing. Trusting the exit
 # status would report a row that does not exist, which is the failure this layout exists to
@@ -205,6 +216,10 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     # Raw, escape bytes and all. The manifest parser strips ANSI before reading the table; an
     # edited copy is no longer evidence.
     nvidia-smi topo -m                                        > "$RUN_DIR/topology.txt"  2>&1
+    # The matrix gives the link COUNT; this gives each link's rate and whether it is up, which
+    # is what attributes an intra-node rung to NVLink rather than inferring it from bandwidth.
+    # On a host without NVLink the tool's own message is the evidence, so it is kept.
+    nvidia-smi nvlink -s                                      > "$RUN_DIR/nvlink.txt"    2>&1
     nvidia-smi --query-gpu=index,uuid,name --format=csv        > "$RUN_DIR/devices.csv"   2>&1
 fi
 
@@ -267,11 +282,17 @@ fi
 # MPI_COMM_WORLD size 1. Each then drives its own node's GPUs and produces a DEVICE_P2P number
 # that would be recorded against the NODE rung, a wrong constant that looks right. The binary
 # refuses that outright, but the fix belongs here.
-echo "### 2/2  NODE: the cluster fabric"
-echo
 if [[ "$NODES" -lt 2 ]]; then
-    echo "  SKIPPED: $NODES node(s). There is no fabric to cross from one host; allocate"
-    echo "  more nodes to reach this rung."
+    echo "### 2/2  DEVICE_P2P again, through the multi-rank launch structure"
+else
+    echo "### 2/2  NODE: the cluster fabric"
+fi
+echo
+if [[ "$NODES" -lt 2 && "$MPI_ON_ONE_NODE" != "1" ]]; then
+    echo "  SKIPPED: $NODES node(s). There is no fabric to cross from one host; allocate more"
+    echo "  nodes to reach that rung, or set MPI_ON_ONE_NODE=1 to run the multi-rank launch"
+    echo "  here, which measures the device rung a second way and is the control for the"
+    echo "  launch-structure confound."
     NODE_STATUS=2
 elif ! command -v srun >/dev/null 2>&1; then
     echo "  SKIPPED: no srun. The fabric rung needs a launcher."
@@ -298,20 +319,31 @@ fi
 run_node_geometry() {   # <nodes> <ranks-per-node>
     local nodes="$1" rpn="$2"
     if [[ ! "$nodes" =~ ^[0-9]+$ || ! "$rpn" =~ ^[0-9]+$ \
-            || "$nodes" -lt 2 || "$rpn" -lt 1 ]]; then
+            || "$nodes" -lt 1 || "$rpn" -lt 1 ]]; then
         echo "     FAILED: invalid node geometry '$nodes nodes x $rpn ranks'."
         return 1
     fi
     local participants=$((nodes * rpn))
-    local csv="$RUN_DIR/node_${participants}participants_${nodes}nodes.csv"
-    local log="$RUN_DIR/node_${participants}participants_${nodes}nodes.log"
-    local nccl="$RUN_DIR/node_${participants}participants_${nodes}nodes_nccl.log"
+    # One node is not the fabric. The binary decides the rung from the rank hostnames and
+    # refuses a --tier that disagrees, which is the check that stops a single-node latency
+    # being recorded against the NODE rung. The stem differs too: same devices, same split,
+    # different launch structure from the single-process file of that count, and telling the
+    # two apart is the entire purpose of running this.
+    local tier="node" stem="node_${participants}participants_${nodes}nodes"
+    if [[ "$nodes" -lt 2 ]]; then
+        tier="device-p2p"
+        stem="device_${participants}participants_1node_mpi"
+    fi
+    local csv="$RUN_DIR/${stem}.csv"
+    local log="$RUN_DIR/${stem}.log"
+    local nccl="$RUN_DIR/${stem}_nccl.log"
     local nccl_base="${nccl%.log}"
     local launcher=""
     local stderr=""
     local debug_file=""
 
-    echo "  -- $participants participant(s): $rpn rank(s) x $nodes node(s) --"
+    echo "  -- $participants participant(s): $rpn rank(s) x $nodes node(s), 1 GPU per rank"\
+"  [$tier] --"
 
     # Two ranks on one device is not a participant count. local_rank % ndev wraps, so the extra
     # ranks reduce over a GPU another rank already holds, and the row would name a crossing
@@ -329,7 +361,7 @@ run_node_geometry() {   # <nodes> <ranks-per-node>
        srun --nodes="$nodes" --ntasks="$participants" --ntasks-per-node="$rpn" \
             --mpi="$SRUN_MPI" ${SRUN_EXTRA} \
             --export=ALL \
-            "$P2P" --machine "$MACHINE" --tier node \
+            "$P2P" --machine "$MACHINE" --tier "$tier" \
                    --iters "$ITERS" --repeats "$REPEATS" --bw-bytes "$BW_BYTES" \
                    --csv "$csv" > "$log" 2> "$stderr"; then
         launcher="srun"
@@ -340,7 +372,7 @@ run_node_geometry() {   # <nodes> <ranks-per-node>
         if PMIX_MCA_gds=hash NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET \
            NCCL_DEBUG_FILE="$debug_file" \
            mpirun -np "$participants" --map-by "ppr:$rpn:node" \
-               "$P2P" --machine "$MACHINE" --tier node \
+               "$P2P" --machine "$MACHINE" --tier "$tier" \
                       --iters "$ITERS" --repeats "$REPEATS" --bw-bytes "$BW_BYTES" \
                       --csv "$csv" > "$log" 2> "$stderr"; then
             launcher="mpirun"
